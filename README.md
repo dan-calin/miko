@@ -1,270 +1,240 @@
 # Miko — Voice AI Agent
 
-Asistent vocal personal pentru Windows 11, alimentat de Google Gemini Live. Vorbești în română, Miko răspunde instant și execută comenzi pe PC, Discord, web și fișiere.
+A personal voice assistant for Windows 11, powered by **Google Gemini Live**.
+Speak naturally and Miko responds instantly and executes commands across your
+PC, Discord, the web, and your files. Miko understands both **English and
+Romanian** — if you speak English, it replies in English.
 
-> **English version** at the bottom of this file.
-
----
-
-## Cuprins
-
-1. [Cerințe preliminare](#cerinte)
-2. [Instalare](#instalare)
-3. [Configurare Discord Bot](#discord-setup)
-4. [Prima pornire](#prima-pornire)
-5. [Comenzi vocale](#comenzi-vocale)
-6. [Depanare](#depanare)
-7. [English Setup Guide](#english-guide)
+> A modern take on JARVIS: loyal, direct, fast, with a bit of humor.
 
 ---
 
-## Cerințe preliminare {#cerinte}
+## Contents
 
-| Cerință | Versiune minimă | Notă |
-|---------|-----------------|------|
+1. [Prerequisites](#prerequisites)
+2. [Installation](#installation)
+3. [Discord bot setup](#discord-bot-setup)
+4. [First run](#first-run)
+5. [Voice commands](#voice-commands)
+6. [Architecture](#architecture)
+7. [Troubleshooting](#troubleshooting)
+
+---
+
+## Prerequisites
+
+| Requirement | Minimum version | Note |
+|-------------|-----------------|------|
 | Python | 3.11+ | [python.org](https://python.org) |
-| FFmpeg | orice versiune stabilă | Adaugă în PATH! |
-| Google Gemini API Key | — | [aistudio.google.com](https://aistudio.google.com/apikey) |
-| Windows 11 | — | Doar Windows (pycaw, winsound) |
-| Microfon + Boxe | — | Necesare pentru voice I/O |
+| FFmpeg | any stable build | Must be on your `PATH` |
+| Google Gemini API key | — | [aistudio.google.com](https://aistudio.google.com/apikey) |
+| Windows 11 | — | Windows-only (uses `pycaw`, `winsound`) |
+| Microphone + speakers | — | Required for voice I/O |
 
-### Instalare FFmpeg
+### Installing FFmpeg
 
-1. Descarcă de la [ffmpeg.org/download.html](https://ffmpeg.org/download.html) (Windows builds)
-2. Extrage arhiva (ex: `C:\ffmpeg\`)
-3. Adaugă `C:\ffmpeg\bin` în variabila de sistem `PATH`
-4. Testează: `ffmpeg -version` în CMD
+1. Download from [ffmpeg.org/download.html](https://ffmpeg.org/download.html) (Windows builds).
+2. Extract the archive (e.g. `C:\ffmpeg\`).
+3. Add `C:\ffmpeg\bin` to your system `PATH`.
+4. Verify with `ffmpeg -version` in a terminal.
 
 ---
 
-## Instalare {#instalare}
+## Installation
 
 ```bash
-# 1. Clonează/descarcă proiectul în folderul dorit
-cd "C:\Users\TuNume\Desktop\Jarvis V2"
+# 1. Clone or download the project
+cd "C:\Users\YourName\Desktop\Jarvis V2"
 
-# 2. Creează un virtual environment (recomandat)
+# 2. Create a virtual environment (recommended)
 python -m venv venv
 venv\Scripts\activate
 
-# 3. Instalează dependențele
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Configurează variabilele de mediu
+# 4. Configure environment variables
 copy .env.example .env
 notepad .env
 ```
 
-Editează `.env` și completează cel puțin `LLM_API_KEY`.
+Edit `.env` and fill in at least `LLM_API_KEY`. See `.env.example` for every
+supported setting.
 
 ---
 
-## Configurare Discord Bot {#discord-setup}
+## Discord bot setup
 
-Dacă vrei să folosești funcțiile Discord (muzică în voice, DM-uri, notificări):
+Only needed if you want the Discord features (music in a voice channel, DMs,
+notifications):
 
-1. Mergi la [discord.com/developers/applications](https://discord.com/developers/applications)
-2. Click **New Application** → dă un nume (ex: "Miko")
-3. Du-te la **Bot** → **Add Bot** → confirmă
-4. Sub **Token**, click **Reset Token** și copiază token-ul în `.env` la `DISCORD_TOKEN`
-5. La **Privileged Gateway Intents**, activează:
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications).
+2. Click **New Application** and give it a name (e.g. "Miko").
+3. Open **Bot → Add Bot** and confirm.
+4. Under **Token**, click **Reset Token** and copy it into `.env` as `DISCORD_TOKEN`.
+5. Under **Privileged Gateway Intents**, enable:
    - ✅ Server Members Intent
    - ✅ Message Content Intent
    - ✅ Presence Intent
-6. Du-te la **OAuth2 → URL Generator**:
+6. Under **OAuth2 → URL Generator**:
    - Scopes: `bot`
-   - Bot Permissions: `Send Messages`, `Read Message History`, `Connect`, `Speak`, `Use Voice Activity`
-7. Copiază URL-ul generat, deschide-l în browser, și adaugă botul pe serverul tău
-8. Copiează ID-ul serverului tău în `.env` la `DISCORD_GUILD_ID`
-   (Activează Developer Mode în Discord → click dreapta pe server → Copy Server ID)
+   - Bot permissions: `Send Messages`, `Read Message History`, `Connect`, `Speak`, `Use Voice Activity`
+7. Open the generated URL in a browser and add the bot to your server.
+8. Copy your server ID into `.env` as `DISCORD_GUILD_ID`.
+   (Enable Developer Mode in Discord → right-click the server → Copy Server ID.)
 
 ---
 
-## Prima pornire {#prima-pornire}
+## First run
 
 ```bash
-# Activează virtualenv dacă nu e activ
+# Activate the virtualenv if it isn't already
 venv\Scripts\activate
 
-# Pornește Miko
+# Start Miko
 python main.py
 ```
 
-La prima pornire:
-- Se aude un **bip dublu** când conexiunea la Gemini Live este stabilită
-- Miko spune **"Conectat! Vorbește..."**
-- Indexarea fișierelor rulează în fundal (poate dura 2-5 minute, în funcție de disc)
-- Miko este în modul **ACTIV** — fiecare propoziție este procesată
+On first launch:
+
+- A **double beep** plays once the connection to Gemini Live is established.
+- Miko announces that it's **connected and listening**.
+- File indexing runs in the background (2–5 minutes depending on your disk).
+- Miko starts in **ACTIVE** mode — every sentence you speak is processed.
 
 ---
 
-## Comenzi vocale {#comenzi-vocale}
+## Voice commands
 
-### Moduri de funcționare
+> The examples below are in English. The equivalent Romanian phrasing works too.
 
-| Comandă vocală | Efect |
-|----------------|-------|
-| `Miko, intră în stand-by` | Trece în STANDBY — răspunde doar la "Miko" |
-| `Miko, ieși din stand-by` | Revine în modul ACTIV |
-| `Miko, intră în modul conversație` | Modul AUTO — răspunde natural |
-| `Miko, oprește modul conversație` | Iese din AUTO |
+### Modes
 
-### Control sistem
+| Voice command | Effect |
+|---------------|--------|
+| `Miko, go to standby` | Enter STANDBY — only responds to the wake word "Miko" |
+| `Miko, wake up` | Return to ACTIVE mode |
+| `Miko, enter conversation mode` | AUTO mode — responds naturally to everything |
+| `Miko, stop conversation mode` | Leave AUTO mode |
 
-| Comandă vocală | Efect |
-|----------------|-------|
-| `Miko, deschide Chrome` | Pornește Chrome |
-| `Miko, deschide Documents` | Deschide folderul Documents |
-| `Miko, fă un screenshot` | Screenshot salvat pe Desktop |
-| `Miko, blochează ecranul` | Lock screen |
-| `Miko, ce informații ai despre sistem?` | CPU, RAM, baterie, disc |
-| `Miko, setează un reminder în 10 minute — apel cu Ion` | Reminder cu notificare |
+### System control
 
-### Volum și media
+| Voice command | Effect |
+|---------------|--------|
+| `Miko, open Chrome` | Launch an application |
+| `Miko, open Documents` | Open the Documents folder |
+| `Miko, take a screenshot` | Save a screenshot to the Desktop |
+| `Miko, lock the screen` | Lock Windows |
+| `Miko, what's my system status?` | CPU, RAM, battery, disk |
+| `Miko, set a reminder in 10 minutes — call John` | Reminder with a notification |
 
-| Comandă vocală | Efect |
-|----------------|-------|
-| `Miko, dă volumul la 50` | Setează volum la 50% |
-| `Miko, dă mai tare` | Volume up x3 |
-| `Miko, dă mai încet` | Volume down x3 |
-| `Miko, pune pe mut` | Mute |
-| `Miko, play / pauză / next` | Control media sistem |
+### Volume & media
 
-### Muzică pe Discord (voice channel)
+| Voice command | Effect |
+|---------------|--------|
+| `Miko, set volume to 50` | Set volume to 50% |
+| `Miko, turn it up` | Volume up ×3 |
+| `Miko, turn it down` | Volume down ×3 |
+| `Miko, mute` | Mute |
+| `Miko, play / pause / next` | System media control |
 
-| Comandă vocală | Efect |
-|----------------|-------|
-| `Miko, pune Linkin Park pe Discord` | Caută și redă pe voice |
-| `Miko, adaugă la coadă Eminem` | Adaugă în playlist |
-| `Miko, skip` / `Miko, next` | Sare melodia curentă |
-| `Miko, pauză` / `Miko, resume` | Pauză / reluare |
-| `Miko, oprește muzica` | Stop + golește coada |
-| `Miko, ce melodii urmează?` | Afișează coada |
-| `Miko, intră pe voice` | Se alătură canalului tău |
-| `Miko, ieși de pe voice` | Deconectare |
+### Music on Discord (voice channel)
 
-### Cercetare web
+| Voice command | Effect |
+|---------------|--------|
+| `Miko, play Linkin Park on Discord` | Search and play in the voice channel |
+| `Miko, queue up Eminem` | Add to the playlist |
+| `Miko, skip` / `Miko, next` | Skip the current track |
+| `Miko, pause` / `Miko, resume` | Pause / resume |
+| `Miko, stop the music` | Stop and clear the queue |
+| `Miko, what's up next?` | Show the queue |
+| `Miko, join voice` | Join your voice channel |
+| `Miko, leave voice` | Disconnect |
 
-| Comandă vocală | Efect |
-|----------------|-------|
-| `Miko, caută cele mai bune restaurante din Cluj` | Căutare DuckDuckGo + rezumat |
-| `Miko, ce știi despre inteligența artificială?` | Căutare + rezumat |
-| `Miko, deschide Google în browser` | Deschide URL |
+### Web research
 
-### Notițe
+| Voice command | Effect |
+|---------------|--------|
+| `Miko, find the best restaurants in town` | DuckDuckGo search + summary |
+| `Miko, what do you know about artificial intelligence?` | Search + summary |
+| `Miko, open Google in the browser` | Open a URL |
 
-| Comandă vocală | Efect |
-|----------------|-------|
-| `Miko, notează că am o întâlnire mâine la 14:00` | Creează notiță |
-| `Miko, citește notița de azi` | Citește ultima notiță din zi |
-| `Miko, arată-mi notițele recente` | Lista notițelor |
-| `Miko, caută în notițe: proiect` | Căutare în notițe |
+### Notes
 
-### Fișiere
+| Voice command | Effect |
+|---------------|--------|
+| `Miko, note that I have a meeting tomorrow at 2 PM` | Create a note |
+| `Miko, read today's note` | Read the latest note from today |
+| `Miko, show me recent notes` | List notes |
+| `Miko, search notes for: project` | Search within notes |
 
-| Comandă vocală | Efect |
-|----------------|-------|
-| `Miko, găsește fișierul budget.xlsx` | Caută în index SQLite |
-| `Miko, unde e documentul cu CV-ul meu?` | Caută PDF-uri / docx |
-| `Miko, listează fișierele din Documents` | Conținut folder |
-| `Miko, reconstruiește indexul de fișiere` | Re-indexare completă |
+### Files
+
+| Voice command | Effect |
+|---------------|--------|
+| `Miko, find the file budget.xlsx` | Search the SQLite index |
+| `Miko, where's my CV document?` | Search PDFs / docx |
+| `Miko, list the files in Documents` | Folder contents |
+| `Miko, rebuild the file index` | Full re-index |
 
 ### Discord messaging
 
-| Comandă vocală | Efect |
-|----------------|-------|
-| `Miko, trimite-i un mesaj lui Ion: "Vin la 8"` | DM cu confirmare |
-| `Miko, citește mesajele de pe Discord` | Ultimele DM-uri |
-| `Miko, cheamă-l pe Ion pe voice` | Invitație + join |
+| Voice command | Effect |
+|---------------|--------|
+| `Miko, send John a message: "I'll be there at 8"` | DM with confirmation |
+| `Miko, read my Discord messages` | Latest DMs |
+| `Miko, invite John to voice` | Invitation + join |
 
 ---
 
-## Depanare {#depanare}
-
-### Miko nu răspunde la voce
-- Verifică microfonul în Settings → Sound → Input
-- Asigură-te că `sounddevice` are acces la microfon
-- Verifică că `LLM_API_KEY` este corect în `.env`
-
-### Eroare `No module named 'pycaw'`
-```bash
-pip install pycaw comtypes
-```
-
-### Discord bot nu se conectează
-- Verifică `DISCORD_TOKEN` în `.env`
-- Asigură-te că botul are Privileged Intents activate în Developer Portal
-- Botul trebuie să fie pe serverul specificat în `DISCORD_GUILD_ID`
-
-### Muzica pe Discord nu funcționează
-- Verifică că FFmpeg este instalat și în PATH: `ffmpeg -version`
-- Asigură-te că ești conectat la un voice channel înainte de comandă
-- Verifică că `PyNaCl` este instalat: `pip install PyNaCl`
-
-### `UnicodeEncodeError` în consolă
-- Rulează în Windows Terminal (nu CMD clasic)
-- Sau setează `PYTHONIOENCODING=utf-8` în variabilele de sistem
-
-### Indexarea fișierelor este lentă
-- Normal la prima pornire — poate dura 3-10 minute pe disc-uri mari
-- Ulterior se face incremental (la 30 min) și este rapid
-
----
-
----
-
-## English Setup Guide {#english-guide}
-
-### Prerequisites
-
-- Python 3.11+
-- FFmpeg (add to PATH)
-- Google Gemini API key from [aistudio.google.com](https://aistudio.google.com/apikey)
-- Windows 11
-
-### Quick Start
-
-```bash
-cd "C:\Users\YourName\Desktop\Jarvis V2"
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env
-# Edit .env with your keys
-python main.py
-```
-
-### Discord Bot Setup
-
-1. Create app at [discord.com/developers/applications](https://discord.com/developers/applications)
-2. Add a Bot, copy the Token → paste in `.env` as `DISCORD_TOKEN`
-3. Enable **Server Members Intent**, **Message Content Intent**, **Presence Intent**
-4. Invite bot using OAuth2 URL Generator (scopes: `bot`, permissions: Send Messages, Connect, Speak)
-5. Copy your server ID → paste in `.env` as `DISCORD_GUILD_ID`
-
-### Architecture Overview
+## Architecture
 
 ```
 main.py
 ├── AudioHandler (Gemini Live WebSocket)
-│   ├── Microphone capture (sounddevice, 16kHz)
-│   ├── Audio playback (sounddevice, 24kHz)
-│   ├── ModeManager (ACTIVE/STANDBY/AUTO filtering)
+│   ├── Microphone capture (sounddevice, 16 kHz)
+│   ├── Audio playback (sounddevice, 24 kHz)
+│   ├── ModeManager (ACTIVE / STANDBY / AUTO filtering)
 │   └── CommandRouter (tool dispatch + safety)
 ├── DiscordBot thread (own asyncio loop)
 ├── DiscordPoll thread (checks DMs every 2s)
 ├── FileIndexer thread (SQLite, full + incremental)
-└── MemoryExtractor thread (every 5 turns, facts from speech)
+└── MemoryExtractor thread (every 5 turns, extracts facts from speech)
 ```
 
-### Voice Commands (English)
+Miko also ships a **FastAPI tool server** (`tool_server.py`) that exposes all of
+Miko's tools over HTTP so external agents can call them. It serves tool schemas
+in OpenAI / Anthropic / Gemini formats and guards execution with an optional
+bearer token (`TOOL_SERVER_KEY`) and a confirmation gate for destructive actions.
 
-Miko understands both Romanian and English. If you speak English, it will respond in English.
+---
 
-- `Miko, open Chrome` — Launch application
-- `Miko, set volume to 60` — Volume control  
-- `Miko, play Coldplay on Discord` — Music in voice channel
-- `Miko, search for Python tutorials` — Web search
-- `Miko, take a screenshot` — Screenshot to Desktop
-- `Miko, go to standby` — Enter STANDBY mode
-- `Miko, wake up` — Exit STANDBY mode
+## Troubleshooting
+
+### Miko doesn't respond to voice
+- Check the microphone under Settings → Sound → Input.
+- Make sure `sounddevice` has microphone access.
+- Confirm `LLM_API_KEY` is correct in `.env`.
+
+### `No module named 'pycaw'`
+```bash
+pip install pycaw comtypes
+```
+
+### Discord bot won't connect
+- Check `DISCORD_TOKEN` in `.env`.
+- Make sure the Privileged Intents are enabled in the Developer Portal.
+- The bot must be a member of the server set in `DISCORD_GUILD_ID`.
+
+### Discord music doesn't work
+- Verify FFmpeg is installed and on PATH: `ffmpeg -version`.
+- Make sure you're in a voice channel before issuing the command.
+- Confirm `PyNaCl` is installed: `pip install PyNaCl`.
+
+### `UnicodeEncodeError` in the console
+- Run in Windows Terminal (not the classic CMD).
+- Or set `PYTHONIOENCODING=utf-8` in your system variables.
+
+### File indexing is slow
+- Normal on first run — it can take 3–10 minutes on large disks.
+- After that it runs incrementally (every 30 min) and is fast.
