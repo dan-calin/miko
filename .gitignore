@@ -1,0 +1,27 @@
+# ── Secrets (NEVER commit) ──────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Python ──────────────────────────────────────────────────────────────────
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── Runtime / personal data (NOT for a public repo) ─────────────────────────
+logs/
+data/*.db
+data/*.json
+data/queue_state.json
+memory/long_term.json
+**/*.log
+
+# ── Local tooling ───────────────────────────────────────────────────────────
+.claude/
+
+# ── OS ──────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
