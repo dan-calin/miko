@@ -53,5 +53,8 @@ caldav>=1.3.0
 icalendar>=5.0.0
 msal>=1.26.0
 
+# ── Personal Discord account control (local RPC) ──────────────────────────────
+pypresence>=4.3.0
+
 # ── Fuzzy matching (for file search) ─────────────────────────────────────────
 rapidfuzz>=3.9.0

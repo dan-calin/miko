@@ -407,6 +407,23 @@ class CommandRouter:
                 from modules.calendar import delete_event
                 return delete_event(**args)
 
+            # ── Personal Discord account (RPC) ───────────────────────────────
+            if tool_name == "join_voice_as_me":
+                from modules.discord_rpc import join_voice_as_me
+                return join_voice_as_me(**args)
+
+            if tool_name == "leave_voice_as_me":
+                from modules.discord_rpc import leave_voice_as_me
+                return leave_voice_as_me()
+
+            if tool_name == "set_my_voice":
+                from modules.discord_rpc import set_my_voice
+                return set_my_voice(**args)
+
+            if tool_name == "discord_rpc_login":
+                from modules.discord_rpc import discord_rpc_login
+                return discord_rpc_login()
+
             # ── Unknown ──────────────────────────────────────────────────────
             logger.warning(f"Unknown tool: {tool_name}")
             return f"Nu cunosc tool-ul '{tool_name}', sefu."

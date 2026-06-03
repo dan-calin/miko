@@ -46,6 +46,11 @@ class AudioHandler:
         self.audio_in_queue: asyncio.Queue | None    = None
         self.out_queue: asyncio.Queue | None         = None
 
+        # Dedicated pool for (possibly slow) tool dispatch — RPC handshakes, HTTP
+        # token refreshes, UI automation — so they never starve audio-I/O threads.
+        from concurrent.futures import ThreadPoolExecutor
+        self._tool_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ToolExec")
+
     # ── Public thread-safe API ────────────────────────────────────────────────
 
     def speak_text(self, text: str) -> None:
@@ -117,7 +122,7 @@ class AudioHandler:
         loop = asyncio.get_event_loop()
 
         result = await loop.run_in_executor(
-            None, lambda: self._router.dispatch(name, args)
+            self._tool_executor, lambda: self._router.dispatch(name, args)
         )
 
         # Handle ConfirmationPending sentinel
@@ -366,5 +371,12 @@ class AudioHandler:
                 logger.error(f"Session error: {e}")
                 traceback.print_exc()
 
+            # Visible + audible feedback so the user knows it's auto-recovering,
+            # not dead. (Gemini Live preview drops connections periodically.)
+            print("[Miko] Conexiune întreruptă — mă reconectez în 3 secunde...")
+            try:
+                winsound.Beep(440, 200)
+            except Exception:
+                pass
             logger.info("Reconnecting in 3 seconds...")
             await asyncio.sleep(3)

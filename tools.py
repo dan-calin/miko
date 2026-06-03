@@ -60,6 +60,7 @@ ALL_TOOL_DECLARATIONS: list = (
     + _safe_import("modules.file_indexer")
     + _safe_import("modules.journey")
     + _safe_import("modules.calendar")
+    + _safe_import("modules.discord_rpc")
 )
 
 def _to_anthropic_tool(decl: dict) -> dict:

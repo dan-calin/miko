@@ -397,6 +397,36 @@ def _find_owner_voice_channel(owner_name: str) -> Optional[discord.VoiceChannel]
     return None
 
 
+def resolve_voice_channel(name: str) -> Optional[tuple]:
+    """
+    Resolve a voice-channel name to (guild_id, channel_id, channel_name).
+    Used by the personal-account RPC controller. Returns None if not found.
+    """
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return None
+    name_l = (name or "").lower().strip()
+    if not name_l:
+        return None
+    # Exact match first
+    for ch in guild.voice_channels:
+        if ch.name.lower() == name_l:
+            return (guild.id, ch.id, ch.name)
+    # Partial match fallback
+    for ch in guild.voice_channels:
+        if name_l in ch.name.lower():
+            return (guild.id, ch.id, ch.name)
+    return None
+
+
+def list_voice_channels() -> list:
+    """Return a list of voice-channel names in the guild (for diagnostics)."""
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return []
+    return [ch.name for ch in guild.voice_channels]
+
+
 # ── Public blocking API ───────────────────────────────────────────────────────
 
 def get_pending_messages() -> list[tuple[str, str, bool, any]]:

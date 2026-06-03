@@ -319,12 +319,11 @@ def _ms_create_event(title: str, start_dt: datetime, end_dt: datetime, descripti
 def list_events(days_ahead: int = 7, source: str = "all") -> str:
     events = []
     errors = []
+    ms_login = None  # set if Teams needs the one-time Microsoft device login
 
     if source in ("all", "icloud"):
         try:
             events += _icloud_list_events(days_ahead)
-        except RuntimeError as e:
-            errors.append(f"iCloud: {e}")
         except Exception as e:
             errors.append(f"iCloud: {e}")
 
@@ -332,21 +331,29 @@ def list_events(days_ahead: int = 7, source: str = "all") -> str:
         try:
             events += _ms_list_events(days_ahead)
         except _DeviceCodeRequired as e:
-            return (
-                f"Autentificare Microsoft necesară.\n"
-                f"1. Mergi la: {e.verification_uri}\n"
-                f"2. Introdu codul: {e.user_code}\n"
-                f"Apoi încearcă din nou comanda."
+            ms_login = (
+                f"Pentru calendarul Teams, autentifică-te o singură dată: "
+                f"mergi la {e.verification_uri} și introdu codul {e.user_code}."
             )
-        except RuntimeError as e:
-            errors.append(f"Teams: {e}")
+            # Only block the whole response if Teams was specifically requested.
+            if source == "teams":
+                return (
+                    f"Autentificare Microsoft necesară pentru Teams.\n"
+                    f"1. Mergi la: {e.verification_uri}\n"
+                    f"2. Introdu codul: {e.user_code}\n"
+                    f"Apoi încearcă din nou comanda."
+                )
         except Exception as e:
             errors.append(f"Teams: {e}")
 
-    if not events and errors:
-        return "Eroare la accesarea calendarelor: " + "; ".join(errors)
     if not events:
-        return f"Nu ai niciun eveniment în următoarele {days_ahead} zile."
+        if errors:
+            msg = "Eroare la accesarea calendarelor: " + "; ".join(errors)
+        else:
+            msg = f"Nu ai niciun eveniment în următoarele {days_ahead} zile."
+        if ms_login:
+            msg += f"\n{ms_login}"
+        return msg
 
     events.sort(key=lambda x: x["start"])
     lines = [f"Evenimente — următoarele {days_ahead} zile ({len(events)}):"]
@@ -358,6 +365,8 @@ def list_events(days_ahead: int = 7, source: str = "all") -> str:
 
     if errors:
         lines.append(f"\nAvertisment: {'; '.join(errors)}")
+    if ms_login:
+        lines.append(f"\n{ms_login}")
     return "\n".join(lines)
 
 
