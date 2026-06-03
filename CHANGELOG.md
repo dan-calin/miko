@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bilingual support with a language toggle** (`MIKO_LANGUAGE=en|ro`, default `en`).
+  Adds an English system prompt (`core/prompt_en.txt`) selected at runtime, and English
+  translations of the spoken confirmation prompts, safety/cancel messages, mode-change
+  announcements (`core/mode_manager.py`), the phone-commander language rule, and the
+  startup/reconnect console lines. `config.py` gains a `language` field; `ModeManager`
+  and `CommandRouter` are language-aware.
+
+### Other additions
+
 - **MiniMax / Anthropic / OpenAI backends for the phone commander.**
   `modules/phone_commander.py` now auto-selects its LLM backend: Anthropic-compatible
   endpoints (e.g. MiniMax `…/anthropic`), OpenAI-compatible endpoints, or Gemini as
@@ -62,6 +71,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Microsoft Graph scope error on AAD tenants: use the full
   `https://graph.microsoft.com/Calendars.ReadWrite` scope and let MSAL add
   `offline_access` itself.
+- Asking about iCloud events no longer triggers a Microsoft login prompt: the Teams
+  device-login requirement is now a footnote (or only blocks when Teams is specifically
+  requested), instead of masking iCloud results.
+- iCloud `create_event` `403 Forbidden`: iCloud returns read-only calendars (subscribed,
+  holidays, birthdays) too. Now ranks/falls through to a writable calendar, and honors
+  `ICLOUD_CALENDAR_NAME` to pin a specific one.
+- Calendar events created at the wrong time (off by the UTC offset, e.g. BST +1h): the
+  spoken time is now interpreted in the system's local timezone before converting to UTC.
+- Confirmation replies are now understood naturally (`core/wake_word.py`): besides "da",
+  Miko accepts "yes", "sure", "trimite-l", "hai, fă-o", "go ahead", and cancels on "nu",
+  "lasă", "stop", "cancel", etc. "nu trimite" correctly cancels (first intent wins).
 
 ### Dependencies
 

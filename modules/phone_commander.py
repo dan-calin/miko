@@ -40,8 +40,11 @@ _SYSTEM_PROMPT_TEMPLATE = (
     "Be concise — phone screens are small. Execute commands directly.\n"
     "For journey/maps results, always include the Google Maps link.\n"
     "When the user replies with a number (e.g. '1', '2', '3'), treat it as selecting that item from the previous list.\n"
-    "Respond in Romanian unless the user writes in English."
+    "{lang_rule}"
 )
+
+_LANG_RULE_EN = "Respond in English unless the user writes in Romanian."
+_LANG_RULE_RO = "Respond in Romanian unless the user writes in English."
 
 
 class PhoneCommander:
@@ -62,7 +65,11 @@ class PhoneCommander:
         return "anthropic" in getattr(self._config, "minimax_base_url", "").lower()
 
     def _system_prompt(self) -> str:
-        return _SYSTEM_PROMPT_TEMPLATE.format(owner_name=self._config.owner_name)
+        lang = getattr(self._config, "language", "en")
+        lang_rule = _LANG_RULE_EN if lang == "en" else _LANG_RULE_RO
+        return _SYSTEM_PROMPT_TEMPLATE.format(
+            owner_name=self._config.owner_name, lang_rule=lang_rule
+        )
 
     # ── History helpers ────────────────────────────────────────────────────────
 

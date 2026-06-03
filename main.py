@@ -55,6 +55,7 @@ def _print_banner():
     print(f"   Voice AI Agent v2.0 — {CONFIG.owner_name}'s Personal Assistant")
     print(f"   Model : {CONFIG.live_model}")
     print(f"   Voice : {CONFIG.voice_name}")
+    print(f"   Lang  : {CONFIG.language}")
     print(f"   Mode  : {mode}")
     print(f"   Discord: {'enabled' if CONFIG.discord_token else 'disabled (no token)'}")
     print("=" * 62)
@@ -165,7 +166,7 @@ def main():
     from core.command_router import CommandRouter
     from core.audio_handler import AudioHandler
 
-    mode_manager   = ModeManager()
+    mode_manager   = ModeManager(language=CONFIG.language)
     command_router = CommandRouter(CONFIG, speak_callback=None)
 
     audio_handler  = AudioHandler(

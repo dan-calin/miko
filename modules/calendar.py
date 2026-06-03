@@ -127,11 +127,47 @@ def _icloud_list_events(days_ahead: int) -> list[dict]:
     return events
 
 
+def _icloud_writable_calendars(principal) -> list:
+    """
+    Order iCloud calendars so the most likely writable one is tried first.
+    iCloud also returns read-only calendars (subscribed, holidays, birthdays)
+    which reject writes with 403 Forbidden — push those to the back.
+    Honors ICLOUD_CALENDAR_NAME if set (exact or partial, case-insensitive).
+    """
+    calendars = principal.calendars()
+    if not calendars:
+        return []
+
+    preferred = os.getenv("ICLOUD_CALENDAR_NAME", "").lower().strip()
+    read_only_hint = ("holiday", "sărbători", "sarbatori", "birthday",
+                      "zile de naștere", "subscribed", "abonat", "us ", "uk ")
+
+    def _rank(cal) -> int:
+        try:
+            name = (cal.name or "").lower()
+        except Exception:
+            name = ""
+        if preferred and preferred in name:
+            return 0
+        # Prefer calendars that explicitly support events
+        try:
+            comps = [c.upper() for c in (cal.get_supported_components() or [])]
+            if comps and "VEVENT" not in comps:
+                return 9  # can't hold events at all
+        except Exception:
+            pass
+        if any(h in name for h in read_only_hint):
+            return 8
+        return 5
+
+    return sorted(calendars, key=_rank)
+
+
 def _icloud_create_event(title: str, start_dt: datetime, end_dt: datetime, description: str) -> str:
     import uuid
     client    = _icloud_client()
     principal = client.principal()
-    calendars = principal.calendars()
+    calendars = _icloud_writable_calendars(principal)
     if not calendars:
         raise RuntimeError("No iCloud calendars found.")
 
@@ -147,8 +183,23 @@ def _icloud_create_event(title: str, start_dt: datetime, end_dt: datetime, descr
         f"SUMMARY:{title}\r\nDESCRIPTION:{description}\r\n"
         "END:VEVENT\r\nEND:VCALENDAR\r\n"
     )
-    calendars[0].save_event(ical)
-    return uid
+
+    # Try writable calendars in order; skip ones that reject the write (403).
+    last_err = None
+    for cal in calendars:
+        try:
+            cal.save_event(ical)
+            return uid
+        except Exception as e:
+            last_err = e
+            if "forbidden" in str(e).lower() or "authorization" in str(e).lower():
+                continue  # read-only calendar — try the next one
+            raise
+    raise RuntimeError(
+        f"Niciun calendar iCloud nu acceptă scrierea. "
+        f"Setează ICLOUD_CALENDAR_NAME în .env cu numele unui calendar editabil. "
+        f"(ultima eroare: {last_err})"
+    )
 
 
 def _icloud_delete_event(uid: str) -> bool:
@@ -383,9 +434,12 @@ def create_event(
     source: str = "teams",
 ) -> str:
     try:
-        start_dt = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+        naive = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
     except ValueError:
         return "Format invalid. Folosește data YYYY-MM-DD și ora HH:MM."
+    # The spoken time is the user's LOCAL time. Interpret it in the system's
+    # local timezone, then convert to UTC for storage (fixes DST/BST offsets).
+    start_dt = naive.astimezone(timezone.utc)
 
     end_dt = start_dt + timedelta(minutes=duration_minutes)
 

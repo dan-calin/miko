@@ -51,6 +51,10 @@ class CommandRouter:
         self._pending: Optional[ConfirmationPending] = None
         self._lock = threading.Lock()
 
+    def _t(self, en: str, ro: str) -> str:
+        """Pick the string for the configured language (default English)."""
+        return en if getattr(self._config, "language", "en") == "en" else ro
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     @property
@@ -60,7 +64,10 @@ class CommandRouter:
                 logger.info("Confirmation timed out — auto-cancelling")
                 self._pending = None
                 if self.speak_callback:
-                    self.speak_callback("Confirmarea a expirat. Am anulat operațiunea, sefu.")
+                    self.speak_callback(self._t(
+                        "The confirmation timed out. I cancelled the operation, boss.",
+                        "Confirmarea a expirat. Am anulat operațiunea, sefu.",
+                    ))
             return self._pending is not None
 
     def check_and_resolve_confirmation(self, text: str) -> Optional[str]:
@@ -80,10 +87,10 @@ class CommandRouter:
             self._pending = None
 
         if pending is None:
-            return "Nu există nicio operațiune în așteptare."
+            return self._t("There's no pending operation.", "Nu există nicio operațiune în așteptare.")
 
         if not confirmed:
-            return "Am anulat operațiunea, sefu."
+            return self._t("Cancelled, boss.", "Am anulat operațiunea, sefu.")
 
         # Execute the previously-held tool call
         return self._dispatch_module(pending.tool_name, pending.args)
@@ -99,7 +106,10 @@ class CommandRouter:
         safe, reason = self._safety_check(tool_name, args)
         if not safe:
             logger.warning(f"Safety block: {tool_name} — {reason}")
-            return f"Operațiunea a fost blocată din motive de securitate: {reason}"
+            return self._t(
+                f"The operation was blocked for security reasons: {reason}",
+                f"Operațiunea a fost blocată din motive de securitate: {reason}",
+            )
 
         # Layer 2 — confirmation gate
         if tool_name in REQUIRES_CONFIRMATION:
@@ -149,24 +159,33 @@ class CommandRouter:
 
     def _build_confirmation_prompt(self, tool_name: str, args: dict) -> str:
         if tool_name == "delete_file":
-            path = args.get("path", args.get("name", "fișierul"))
-            return (
-                f"Ești sigur că vrei să ștergi '{path}'? "
-                "Spune 'da' pentru a confirma sau 'nu' pentru a anula."
+            path = args.get("path", args.get("name", "the file"))
+            return self._t(
+                f"Are you sure you want to delete '{path}'? Say 'yes' to confirm or 'no' to cancel.",
+                f"Ești sigur că vrei să ștergi '{path}'? Spune 'da' pentru a confirma sau 'nu' pentru a anula.",
             )
         if tool_name in ("send_discord_dm", "send_discord_channel"):
-            recipient = args.get("recipient_name", args.get("channel_name", "destinatar"))
+            recipient = args.get("recipient_name", args.get("channel_name", "recipient"))
             message   = args.get("message", "")
-            return (
+            return self._t(
+                f"Do you want me to send {recipient} the message: \"{message}\"? "
+                "Say 'yes' to confirm or 'no' to cancel.",
                 f"Vrei să trimit mesajul lui {recipient}: \"{message}\"? "
-                "Spune 'da' pentru a confirma sau 'nu' pentru a anula."
+                "Spune 'da' pentru a confirma sau 'nu' pentru a anula.",
             )
         if tool_name == "shutdown_computer":
-            return "Ești sigur că vrei să oprești calculatorul? Spune 'da' sau 'nu'."
+            return self._t(
+                "Are you sure you want to shut down the computer? Say 'yes' or 'no'.",
+                "Ești sigur că vrei să oprești calculatorul? Spune 'da' sau 'nu'.",
+            )
         if tool_name == "restart_computer":
-            return "Ești sigur că vrei să repornești calculatorul? Spune 'da' sau 'nu'."
-        return (
-            f"Confirmi executarea '{tool_name}'? Spune 'da' pentru a confirma sau 'nu' pentru a anula."
+            return self._t(
+                "Are you sure you want to restart the computer? Say 'yes' or 'no'.",
+                "Ești sigur că vrei să repornești calculatorul? Spune 'da' sau 'nu'.",
+            )
+        return self._t(
+            f"Confirm running '{tool_name}'? Say 'yes' to confirm or 'no' to cancel.",
+            f"Confirmi executarea '{tool_name}'? Spune 'da' pentru a confirma sau 'nu' pentru a anula.",
         )
 
     # ── Module dispatch ───────────────────────────────────────────────────────

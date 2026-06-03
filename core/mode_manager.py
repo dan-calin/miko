@@ -35,8 +35,17 @@ _MODE_TRANSITIONS = {
     # (current_mode, trigger_fn) -> new_mode
 }
 
-# Romanian verbal acknowledgements for each transition
-_TRANSITION_ACK = {
+# Verbal acknowledgements for each transition (per language)
+_TRANSITION_ACK_EN = {
+    (Mode.ACTIVE,  Mode.STANDBY): "Going to standby. Call my name when you need me.",
+    (Mode.STANDBY, Mode.ACTIVE):  "Out of standby. Listening to everything.",
+    (Mode.STANDBY, Mode.AUTO):    "Entering conversation mode. Talk naturally.",
+    (Mode.ACTIVE,  Mode.AUTO):    "Entering conversation mode. Talk naturally.",
+    (Mode.AUTO,    Mode.ACTIVE):  "Left conversation mode. Listening to everything.",
+    (Mode.AUTO,    Mode.STANDBY): "Going to standby. Call my name when you need me.",
+}
+
+_TRANSITION_ACK_RO = {
     (Mode.ACTIVE,  Mode.STANDBY): "Intru în stand-by. Strig-mă pe nume când ai nevoie.",
     (Mode.STANDBY, Mode.ACTIVE):  "Am ieșit din stand-by. Ascult tot.",
     (Mode.STANDBY, Mode.AUTO):    "Intru în modul conversație. Vorbește natural.",
@@ -47,10 +56,13 @@ _TRANSITION_ACK = {
 
 
 class ModeManager:
-    def __init__(self, speak_callback: Optional[Callable[[str], None]] = None):
+    def __init__(self, speak_callback: Optional[Callable[[str], None]] = None,
+                 language: str = "en"):
         self._mode = Mode.ACTIVE
         self._lock = threading.Lock()
         self._speak = speak_callback  # Set after AudioHandler is created
+        self._language = language
+        self._ack = _TRANSITION_ACK_EN if language == "en" else _TRANSITION_ACK_RO
         self._standby_window_until: float = 0.0  # epoch; >now means follow-up commands allowed
 
     def set_speak_callback(self, cb: Callable[[str], None]) -> None:
@@ -70,7 +82,7 @@ class ModeManager:
             if new_mode == Mode.STANDBY:
                 self._standby_window_until = 0.0  # close any open window on STANDBY entry
 
-        ack = _TRANSITION_ACK.get((old, new_mode))
+        ack = self._ack.get((old, new_mode))
         logger.info(f"Mode: {old.value} → {new_mode.value}")
         if ack and self._speak:
             self._speak(ack)
@@ -136,13 +148,26 @@ class ModeManager:
     def get_mode_prompt_addendum(self) -> str:
         """Dynamic text appended to the system prompt on each reconnect."""
         mode = self.mode
+        is_en = self._language == "en"
         if mode == Mode.STANDBY:
+            if is_en:
+                return (
+                    "\n\n[CURRENT MODE: STANDBY]\n"
+                    "You are in STANDBY. Do NOT respond to ANYTHING you hear in the background. "
+                    "Respond ONLY when you directly hear 'Miko' or 'Hey Miko'."
+                )
             return (
                 "\n\n[MODUL CURENT: STANDBY]\n"
                 "Ești în STANDBY. NU răspunzi la NIMIC din ce auzi ambiental. "
                 "Răspunzi EXCLUSIV când auzi direct 'Miko' sau 'Hey Miko'."
             )
         if mode == Mode.AUTO:
+            if is_en:
+                return (
+                    "\n\n[CURRENT MODE: AUTO / CONVERSATION]\n"
+                    "You are in conversation mode. Respond to direct commands and questions. "
+                    "Ignore background conversations not addressed to you."
+                )
             return (
                 "\n\n[MODUL CURENT: AUTO / CONVERSAȚIE]\n"
                 "Ești în modul conversație. Răspunzi la comenzi directe și întrebări. "

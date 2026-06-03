@@ -74,19 +74,55 @@ def detect_exit_auto(text: str) -> bool:
     return bool(_MODE_EXIT_AUTO.search(_normalize(text)))
 
 
+# Natural affirmations / negations (diacritics already stripped before matching).
+# Matched on word boundaries so "trimite-l", "fa-o", "okay", "yeah" all count.
+_AFFIRM = re.compile(
+    r"\b("
+    r"da+|asa|exact|corect|"                       # da, daa, așa, exact, corect
+    r"sigur|sigur\s*ca\s*da|bineinteles|evident|normal|firesc|"
+    r"confirm|confirma|aprob\w*|"
+    r"ok|okay|okey|oki|bine|bun|perfect|super|misto|"
+    r"trimite\w*|trimitel|trimiteo|"               # trimite / trimite-l / trimite-o
+    r"fa[\s\-]*o|fai|fa|"                           # fă, fă-o, fai
+    r"hai|haide|haida|da[\s\-]*i\s*drumul|mergi|merge|continua|"
+    r"yes|yeah|yep|yup|sure|go|go\s*ahead|do\s*it|send\s*it|send|proceed"
+    r")\b",
+    re.IGNORECASE,
+)
+_NEGATE = re.compile(
+    r"\b("
+    r"nu+|no|nope|nah|"
+    r"stop|stai|asteapta|"                          # stop, stai, așteaptă
+    r"cancel|anuleaz\w*|anulat|renunt\w*|"
+    r"las\w*|opreste\w*|abort|"                      # lasă, las-o, oprește
+    r"ba\s*nu|ba"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 def is_confirmation(text: str) -> bool | None:
     """
-    Returns True for 'da'/'yes', False for 'nu'/'no', None for neither.
-    Used to resolve ConfirmationPending.
+    Interprets a free-form reply to a yes/no confirmation prompt.
+    Returns True for an affirmation, False for a negation, None if ambiguous
+    (e.g. both present, or neither) so the caller keeps waiting.
+
+    Accepts natural phrasing in Romanian and English — "da", "trimite-l",
+    "hai, fă-o", "sure, go ahead", "yeah", as well as "nu", "lasă", "stop", etc.
     """
     norm = _normalize(text).lower().strip(" .,!?")
-    if norm in ("da", "da sefu", "da boss", "yes", "confirm", "confirma", "sigur"):
+    if not norm:
+        return None
+
+    aff = _AFFIRM.search(norm)
+    neg = _NEGATE.search(norm)
+
+    if aff and not neg:
         return True
-    if norm in ("nu", "nu sefu", "nu boss", "no", "anuleaza", "anulat", "cancel"):
+    if neg and not aff:
         return False
-    # Partial match
-    if re.search(r"\bda\b", norm) and not re.search(r"\bnu\b", norm):
-        return True
-    if re.search(r"\bnu\b", norm) and not re.search(r"\bda\b", norm):
-        return False
+    if aff and neg:
+        # Both present ("nu trimite", "da de ce nu") — the one that comes
+        # FIRST wins, since that's the leading intent of the reply.
+        return aff.start() < neg.start()
     return None

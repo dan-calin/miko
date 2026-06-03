@@ -35,6 +35,7 @@ class MikoConfig:
     live_model: str
     voice_name: str
     owner_name: str
+    language: str  # "en" or "ro" — default user-facing language
 
     # ── Audio ─────────────────────────────────────────────────────────────────
     send_sample_rate: int
@@ -101,6 +102,7 @@ def load_config() -> MikoConfig:
         ),
         voice_name=os.getenv("MIKO_VOICE", "Aoede"),
         owner_name=os.getenv("OWNER_NAME", "Roxan"),
+        language=(os.getenv("MIKO_LANGUAGE", "en").strip().lower() or "en"),
         send_sample_rate=16000,
         receive_sample_rate=24000,
         chunk_size=1600,

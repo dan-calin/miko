@@ -82,17 +82,28 @@ class AudioHandler:
         mem_str = format_memory_for_prompt(memory)
         now_str = datetime.now().strftime("%A, %d %B %Y — %H:%M")
 
-        prompt_path = self._config.base_dir / "core" / "prompt.txt"
+        is_en = getattr(self._config, "language", "en") == "en"
+        prompt_file = "prompt_en.txt" if is_en else "prompt.txt"
+        prompt_path = self._config.base_dir / "core" / prompt_file
         try:
             base = prompt_path.read_text(encoding="utf-8")
             base = base.replace("{owner_name}", self._config.owner_name)
         except Exception:
-            base = (
-                f"Ești Miko, asistentul personal al lui {self._config.owner_name}. "
-                "Vorbești în română, ești direct și prietenos."
-            )
+            if is_en:
+                base = (
+                    f"You are Miko, {self._config.owner_name}'s personal assistant. "
+                    "You speak English, you're direct and friendly."
+                )
+            else:
+                base = (
+                    f"Ești Miko, asistentul personal al lui {self._config.owner_name}. "
+                    "Vorbești în română, ești direct și prietenos."
+                )
 
-        sys_prompt = f"[DATA ȘI ORA CURENTA]\nAcum este: {now_str}\n\n"
+        if is_en:
+            sys_prompt = f"[CURRENT DATE AND TIME]\nIt is now: {now_str}\n\n"
+        else:
+            sys_prompt = f"[DATA ȘI ORA CURENTA]\nAcum este: {now_str}\n\n"
         if mem_str:
             sys_prompt += mem_str + "\n"
         sys_prompt += base
@@ -351,7 +362,8 @@ class AudioHandler:
                     self.audio_in_queue = asyncio.Queue()
                     self.out_queue      = asyncio.Queue(maxsize=20)
 
-                    print("[Miko] Conectat! Vorbește...")
+                    print("[Miko] Connected! Speak..." if self._config.language == "en"
+                          else "[Miko] Conectat! Vorbește...")
                     try:
                         winsound.Beep(880, 80)
                         time.sleep(0.05)
@@ -365,7 +377,8 @@ class AudioHandler:
                     tg.create_task(self._play_audio())
 
             except KeyboardInterrupt:
-                print("\n[Miko] La revedere!")
+                print("\n[Miko] Goodbye!" if self._config.language == "en"
+                      else "\n[Miko] La revedere!")
                 return
             except Exception as e:
                 logger.error(f"Session error: {e}")
@@ -373,7 +386,8 @@ class AudioHandler:
 
             # Visible + audible feedback so the user knows it's auto-recovering,
             # not dead. (Gemini Live preview drops connections periodically.)
-            print("[Miko] Conexiune întreruptă — mă reconectez în 3 secunde...")
+            print("[Miko] Connection dropped — reconnecting in 3 seconds..." if self._config.language == "en"
+                  else "[Miko] Conexiune întreruptă — mă reconectez în 3 secunde...")
             try:
                 winsound.Beep(440, 200)
             except Exception:

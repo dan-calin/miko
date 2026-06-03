@@ -2,8 +2,10 @@
 
 A personal voice assistant for Windows 11, powered by **Google Gemini Live**.
 Speak naturally and Miko responds instantly and executes commands across your
-PC, Discord, your calendars, the web, and your files. Miko understands both
-**English and Romanian** — if you speak English, it replies in English.
+PC, Discord, your calendars, the web, and your files. Miko is **bilingual** —
+set `MIKO_LANGUAGE=en` or `ro` (default English); the prompts, spoken
+confirmations, and mode announcements all follow your choice, and Miko will still
+switch to the other language on the fly if you speak it.
 
 > A modern take on JARVIS: loyal, direct, fast, with a bit of humor.
 
@@ -75,6 +77,11 @@ notepad .env
 
 Edit `.env` and fill in at least `LLM_API_KEY`. See `.env.example` for every
 supported setting.
+
+**Language:** set `MIKO_LANGUAGE=en` for English (default) or `MIKO_LANGUAGE=ro`
+for Romanian. This controls the system prompt, spoken confirmations, and mode
+announcements. Regardless of the setting, Miko will reply in whichever of the two
+languages you actually speak.
 
 ---
 
