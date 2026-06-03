@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Miko — Chat</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --border: #2a3240;
+    --text: #e6edf3; --muted: #8b949e; --accent: #6ea8fe; --accent2: #3b82f6;
+    --user: #1f6feb33; --tool: #2d333b; --danger: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header .logo { font-weight: 700; font-size: 18px; letter-spacing: .5px; }
+  header .logo span { color: var(--accent); }
+  header .spacer { flex: 1; }
+  select, input[type=text], input[type=password] {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 10px; font-size: 13px; outline: none;
+  }
+  select:focus, input:focus { border-color: var(--accent2); }
+  .toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+  .toggle input { accent-color: var(--accent2); width: 16px; height: 16px; }
+  button {
+    background: var(--accent2); color: #fff; border: 0; border-radius: 8px;
+    padding: 8px 14px; font-size: 14px; cursor: pointer; font-weight: 600;
+  }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  #settings {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  #settings label { font-size: 12px; color: var(--muted); margin-right: 4px; }
+  #base-url-wrap { display: none; }
+
+  #chat { flex: 1; overflow-y: auto; padding: 24px 0; }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 0 16px; }
+  .msg { display: flex; gap: 12px; margin-bottom: 22px; }
+  .msg .avatar {
+    width: 30px; height: 30px; border-radius: 7px; flex-shrink: 0;
+    display: grid; place-items: center; font-weight: 700; font-size: 13px;
+  }
+  .msg.user .avatar { background: var(--user); color: var(--accent); }
+  .msg.bot .avatar { background: var(--accent2); color: #fff; }
+  .msg .body { flex: 1; padding-top: 3px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg .who { font-weight: 600; margin-bottom: 2px; font-size: 13px; color: var(--muted); }
+  .tools { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .tool-chip {
+    font-size: 11px; background: var(--tool); color: var(--accent);
+    border: 1px solid var(--border); border-radius: 20px; padding: 2px 10px;
+  }
+  .err { color: var(--danger); }
+  .thinking { color: var(--muted); font-style: italic; }
+
+  footer { padding: 14px 16px 18px; background: var(--bg); border-top: 1px solid var(--border); }
+  .input-row { max-width: 820px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; }
+  textarea {
+    flex: 1; resize: none; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
+    font: inherit; max-height: 180px; outline: none;
+  }
+  textarea:focus { border-color: var(--accent2); }
+  .hint { max-width: 820px; margin: 6px auto 0; font-size: 11px; color: var(--muted); text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">MIKO <span>chat</span></div>
+  <div class="spacer"></div>
+  <label class="toggle" title="Allow Miko to run sensitive actions (delete, send messages, shutdown, etc.)">
+    <input type="checkbox" id="allow-actions" /> Allow actions
+  </label>
+  <button class="ghost" id="clear-btn">Clear</button>
+</header>
+
+<div id="settings">
+  <div><label>Provider</label><select id="provider"></select></div>
+  <div><label>Model</label>
+    <input type="text" id="model" list="model-list" style="width:200px" placeholder="model name" />
+    <datalist id="model-list"></datalist>
+  </div>
+  <div id="base-url-wrap"><label>Base URL</label>
+    <input type="text" id="base-url" style="width:240px" placeholder="https://…/v1" />
+  </div>
+  <div><label>API key</label>
+    <input type="password" id="api-key" style="width:200px" placeholder="(uses .env if blank)" />
+  </div>
+  <div id="key-status" style="font-size:12px;color:var(--muted)"></div>
+</div>
+
+<div id="chat"><div class="wrap" id="messages"></div></div>
+
+<footer>
+  <div class="input-row">
+    <textarea id="input" rows="1" placeholder="Message Miko…  (Enter to send, Shift+Enter for newline)"></textarea>
+    <button id="send-btn">Send</button>
+  </div>
+  <div class="hint">Miko has full access to your tools. Sensitive actions need “Allow actions” enabled.</div>
+</footer>
+
+<script>
+const $ = s => document.querySelector(s);
+const messagesEl = $('#messages'), chatEl = $('#chat');
+let MODELS = {};
+
+// ── Session + persisted settings ──────────────────────────────────────────
+let sessionId = localStorage.getItem('miko_session');
+if (!sessionId) { sessionId = 'web-' + Math.random().toString(36).slice(2); localStorage.setItem('miko_session', sessionId); }
+const keys = JSON.parse(localStorage.getItem('miko_keys') || '{}');     // {provider: apiKey}
+const cfg  = JSON.parse(localStorage.getItem('miko_cfg')  || '{}');     // {provider, model, baseUrl, allow}
+
+function saveCfg() {
+  cfg.provider = $('#provider').value;
+  cfg.model = $('#model').value;
+  cfg.baseUrl = $('#base-url').value;
+  cfg.allow = $('#allow-actions').checked;
+  localStorage.setItem('miko_cfg', JSON.stringify(cfg));
+  keys[cfg.provider] = $('#api-key').value;
+  localStorage.setItem('miko_keys', JSON.stringify(keys));
+}
+
+// ── Load providers ─────────────────────────────────────────────────────────
+async function loadModels() {
+  MODELS = await (await fetch('/chat/models')).json();
+  const sel = $('#provider');
+  sel.innerHTML = '';
+  for (const [id, p] of Object.entries(MODELS)) {
+    const o = document.createElement('option');
+    o.value = id; o.textContent = p.label;
+    sel.appendChild(o);
+  }
+  sel.value = cfg.provider && MODELS[cfg.provider] ? cfg.provider : 'gemini';
+  onProviderChange();
+}
+
+function onProviderChange() {
+  const p = MODELS[$('#provider').value];
+  const dl = $('#model-list'); dl.innerHTML = '';
+  (p.models || []).forEach(m => { const o = document.createElement('option'); o.value = m; dl.appendChild(o); });
+  $('#model').value = (cfg.provider === $('#provider').value && cfg.model) ? cfg.model : (p.models[0] || '');
+  $('#base-url-wrap').style.display = p.needs_base_url ? '' : 'none';
+  $('#base-url').value = (cfg.provider === $('#provider').value && cfg.baseUrl) ? cfg.baseUrl : (p.needs_base_url ? '' : p.base_url);
+  $('#api-key').value = keys[$('#provider').value] || '';
+  $('#key-status').textContent = p.has_env_key ? '✓ key in .env' : (keys[$('#provider').value] ? '✓ key set' : '⚠ no key');
+}
+
+// ── Rendering ──────────────────────────────────────────────────────────────
+function addMsg(role, text, tools) {
+  const m = document.createElement('div');
+  m.className = 'msg ' + (role === 'user' ? 'user' : 'bot');
+  const who = role === 'user' ? 'You' : 'Miko';
+  const av = role === 'user' ? 'U' : 'M';
+  m.innerHTML = `<div class="avatar">${av}</div><div class="body"><div class="who">${who}</div><div class="text"></div><div class="tools"></div></div>`;
+  m.querySelector('.text').textContent = text;
+  if (tools && tools.length) {
+    m.querySelector('.tools').innerHTML = tools.map(t => `<span class="tool-chip">🔧 ${t}</span>`).join('');
+  }
+  messagesEl.appendChild(m);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return m;
+}
+
+// ── Send ───────────────────────────────────────────────────────────────────
+async function send() {
+  const input = $('#input');
+  const text = input.value.trim();
+  if (!text) return;
+  saveCfg();
+  input.value = ''; input.style.height = 'auto';
+  addMsg('user', text);
+  const thinking = addMsg('bot', 'Miko is thinking…');
+  thinking.querySelector('.text').classList.add('thinking');
+  $('#send-btn').disabled = true;
+
+  try {
+    const res = await fetch('/chat/message', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: sessionId, message: text,
+        provider: $('#provider').value, model: $('#model').value,
+        api_key: $('#api-key').value, base_url: $('#base-url').value,
+        allow_actions: $('#allow-actions').checked,
+      }),
+    });
+    const data = await res.json();
+    const t = thinking.querySelector('.text');
+    t.classList.remove('thinking');
+    if (data.error) { t.classList.add('err'); t.textContent = '⚠ ' + data.error; }
+    else {
+      t.textContent = data.reply || '(no response)';
+      if (data.tools_used && data.tools_used.length)
+        thinking.querySelector('.tools').innerHTML = data.tools_used.map(x => `<span class="tool-chip">🔧 ${x}</span>`).join('');
+    }
+  } catch (e) {
+    const t = thinking.querySelector('.text'); t.classList.remove('thinking'); t.classList.add('err');
+    t.textContent = '⚠ Network error: ' + e.message;
+  } finally {
+    $('#send-btn').disabled = false;
+    chatEl.scrollTop = chatEl.scrollHeight;
+    input.focus();
+  }
+}
+
+async function clearChat() {
+  await fetch('/chat/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
+  messagesEl.innerHTML = '';
+}
+
+// ── Events ─────────────────────────────────────────────────────────────────
+$('#provider').addEventListener('change', () => { onProviderChange(); saveCfg(); });
+$('#model').addEventListener('change', saveCfg);
+$('#api-key').addEventListener('change', saveCfg);
+$('#base-url').addEventListener('change', saveCfg);
+$('#allow-actions').addEventListener('change', saveCfg);
+$('#send-btn').addEventListener('click', send);
+$('#clear-btn').addEventListener('click', clearChat);
+const input = $('#input');
+input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 180) + 'px'; });
+input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+
+$('#allow-actions').checked = !!cfg.allow;
+loadModels().then(() => input.focus());
+</script>
+</body>
+</html>

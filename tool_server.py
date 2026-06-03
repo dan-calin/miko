@@ -92,6 +92,63 @@ def _build_app():
         from tools import ALL_TOOL_DECLARATIONS_OPENAI
         return ALL_TOOL_DECLARATIONS_OPENAI
 
+    # ── Chat UI ─────────────────────────────────────────────────────────────────
+    @app.get("/chat")
+    def chat_page():
+        from fastapi.responses import HTMLResponse, PlainTextResponse
+        from pathlib import Path
+        html_path = Path(__file__).resolve().parent / "webui" / "chat.html"
+        try:
+            return HTMLResponse(html_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            return PlainTextResponse(f"Chat UI not found: {e}", status_code=500)
+
+    @app.get("/chat/models")
+    def chat_models(_=Depends(_auth)):
+        from chat_backend import list_models
+        return list_models()
+
+    @app.post("/chat/message")
+    async def chat_message(request: Request, _=Depends(_auth)):
+        from chat_backend import chat
+        from config import CONFIG
+
+        if _router is None:
+            raise HTTPException(status_code=503, detail="Router not initialised — Miko not fully started yet")
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        message = (body.get("message") or "").strip()
+        if not message:
+            return JSONResponse({"error": "Empty message."}, status_code=400)
+
+        result = chat(
+            router=_router,
+            session_id=body.get("session_id", "default"),
+            message=message,
+            provider=body.get("provider", "gemini"),
+            model=body.get("model", ""),
+            api_key=body.get("api_key", ""),
+            base_url=body.get("base_url", ""),
+            allow_actions=bool(body.get("allow_actions", False)),
+            owner_name=CONFIG.owner_name,
+            language=getattr(CONFIG, "language", "en"),
+        )
+        return JSONResponse(result)
+
+    @app.post("/chat/reset")
+    async def chat_reset(request: Request, _=Depends(_auth)):
+        from chat_backend import reset_session
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        reset_session(body.get("session_id", "default"))
+        return {"ok": True}
+
     # ── Tool execution ─────────────────────────────────────────────────────────
     @app.post("/tools/{tool_name}")
     async def call_tool(tool_name: str, request: Request, _=Depends(_auth)):

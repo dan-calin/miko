@@ -1,0 +1,334 @@
+"""
+chat_backend.py — Model-agnostic chat with Miko's tools.
+
+Powers the web Chat UI. Lets the user talk to Miko by text using the provider of
+their choice (Gemini, MiniMax/Anthropic, OpenAI, DeepSeek, Kimi, or a custom
+OpenAI-compatible endpoint). Miko's full tool set is exposed to the model, so it
+can control the PC, Discord, calendars, etc. — the same tools the voice agent uses.
+
+Three wire protocols cover every provider:
+  - "gemini"    → google-genai
+  - "anthropic" → anthropic SDK (Messages API)         [MiniMax /anthropic]
+  - "openai"    → openai SDK (Chat Completions)         [OpenAI, DeepSeek, Kimi, custom]
+
+Tool execution goes through CommandRouter. Read-only tools always run; sensitive
+tools (delete, send message, shutdown, …) require the per-session "allow actions"
+flag, since a text UI has no voice-confirmation step.
+"""
+
+import json
+import logging
+import os
+import threading
+
+logger = logging.getLogger("miko.chat")
+
+_MAX_ROUNDS = 6
+_MAX_HISTORY = 30  # neutral messages kept per session
+
+# Per-session neutral history: {session_id: [{"role": "user"|"assistant", "content": str}]}
+_history: dict[str, list] = {}
+_lock = threading.Lock()
+
+
+# ── Provider presets ──────────────────────────────────────────────────────────
+# env_key: the .env variable holding the API key (used if the UI doesn't supply one).
+PROVIDERS = {
+    "gemini": {
+        "label": "Google Gemini",
+        "protocol": "gemini",
+        "base_url": "",
+        "env_key": "LLM_API_KEY",
+        "models": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
+    },
+    "minimax": {
+        "label": "MiniMax",
+        "protocol": "anthropic",
+        "base_url": "https://api.minimax.io/anthropic",
+        "env_key": "MINIMAX_API_KEY",
+        "models": ["MiniMax-M2.7", "MiniMax-Text-01"],
+    },
+    "openai": {
+        "label": "OpenAI",
+        "protocol": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "env_key": "OPENAI_API_KEY",
+        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"],
+    },
+    "deepseek": {
+        "label": "DeepSeek",
+        "protocol": "openai",
+        "base_url": "https://api.deepseek.com",
+        "env_key": "DEEPSEEK_API_KEY",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
+    },
+    "kimi": {
+        "label": "Kimi (Moonshot)",
+        "protocol": "openai",
+        "base_url": "https://api.moonshot.ai/v1",
+        "env_key": "MOONSHOT_API_KEY",
+        "models": ["kimi-k2-0905-preview", "moonshot-v1-8k", "moonshot-v1-32k"],
+    },
+    "custom": {
+        "label": "Custom (OpenAI-compatible)",
+        "protocol": "openai",
+        "base_url": "",
+        "env_key": "",
+        "models": [],
+    },
+}
+
+
+def list_models() -> dict:
+    """Return provider presets + whether each has a key configured in .env."""
+    out = {}
+    for pid, p in PROVIDERS.items():
+        out[pid] = {
+            "label": p["label"],
+            "protocol": p["protocol"],
+            "base_url": p["base_url"],
+            "models": p["models"],
+            "has_env_key": bool(p["env_key"] and os.getenv(p["env_key"], "")),
+            "needs_base_url": pid == "custom",
+        }
+    return out
+
+
+# ── System prompt ─────────────────────────────────────────────────────────────
+
+def _system_prompt(owner_name: str, language: str) -> str:
+    if language == "ro":
+        return (
+            f"Ești Miko, asistentul personal al lui {owner_name}, accesibil printr-un chat text. "
+            "Ai acces la unelte care controlează PC-ul Windows al userului, Discord, calendarele, "
+            "căutarea web, notițe și fișiere. Folosește uneltele când e nevoie; nu inventa rezultate. "
+            "Răspunde scurt și la obiect. Răspunde în română dacă userul scrie în română."
+        )
+    return (
+        f"You are Miko, {owner_name}'s personal assistant, reachable through a text chat. "
+        "You have tools that control the user's Windows PC, Discord, calendars, web search, "
+        "notes, and files. Use the tools when needed; never make up results. Be concise and "
+        "direct. Reply in the language the user writes in."
+    )
+
+
+# ── History helpers ───────────────────────────────────────────────────────────
+
+def _get_history(session_id: str) -> list:
+    with _lock:
+        return list(_history.get(session_id, []))
+
+
+def _save_history(session_id: str, user_msg: str, assistant_msg: str) -> None:
+    with _lock:
+        h = _history.setdefault(session_id, [])
+        h.append({"role": "user", "content": user_msg})
+        h.append({"role": "assistant", "content": assistant_msg})
+        if len(h) > _MAX_HISTORY:
+            del h[: len(h) - _MAX_HISTORY]
+
+
+def reset_session(session_id: str) -> None:
+    with _lock:
+        _history.pop(session_id, None)
+
+
+# ── Tool execution ────────────────────────────────────────────────────────────
+
+def _run_tool(router, name: str, args: dict, allow_actions: bool, used: list) -> str:
+    from core.command_router import REQUIRES_CONFIRMATION
+
+    used.append(name)
+    safe, reason = router._safety_check(name, args)
+    if not safe:
+        return f"[blocked for security: {reason}]"
+    if name in REQUIRES_CONFIRMATION and not allow_actions:
+        return (
+            f"[blocked] '{name}' is a sensitive action. The user must enable "
+            "'Allow actions' in the chat UI before this can run."
+        )
+    try:
+        return str(router._dispatch_module(name, args))
+    except Exception as e:
+        logger.error(f"chat tool error {name}: {e}", exc_info=True)
+        return f"[error running {name}: {e}]"
+
+
+# ── Public entry point ────────────────────────────────────────────────────────
+
+def chat(router, session_id: str, message: str, provider: str, model: str,
+         api_key: str = "", base_url: str = "", allow_actions: bool = False,
+         owner_name: str = "Roxan", language: str = "en") -> dict:
+    """Run one chat turn. Returns {"reply": str, "tools_used": [...], "error": str|None}."""
+    preset = PROVIDERS.get(provider)
+    if not preset:
+        return {"reply": "", "tools_used": [], "error": f"Unknown provider '{provider}'."}
+
+    key = (api_key or "").strip() or os.getenv(preset["env_key"], "")
+    if not key:
+        return {"reply": "", "tools_used": [],
+                "error": f"No API key for {preset['label']}. Enter one in the UI or set "
+                         f"{preset['env_key']} in .env."}
+
+    base = (base_url or "").strip() or preset["base_url"]
+    if not model:
+        model = (preset["models"] or [""])[0]
+    if not model:
+        return {"reply": "", "tools_used": [], "error": "No model specified."}
+
+    system = _system_prompt(owner_name, language)
+    history = _get_history(session_id)
+    used: list = []
+
+    try:
+        if preset["protocol"] == "gemini":
+            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used)
+        elif preset["protocol"] == "anthropic":
+            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used)
+        else:
+            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used)
+    except Exception as e:
+        logger.error(f"chat() error ({provider}/{model}): {e}", exc_info=True)
+        return {"reply": "", "tools_used": used, "error": str(e)}
+
+    _save_history(session_id, message, reply)
+    return {"reply": reply, "tools_used": used, "error": None}
+
+
+# ── OpenAI-compatible (OpenAI, DeepSeek, Kimi, custom) ────────────────────────
+
+def _run_openai(router, key, base, model, system, history, message, allow_actions, used) -> str:
+    from openai import OpenAI
+    from tools import ALL_TOOL_DECLARATIONS_OPENAI
+
+    client = OpenAI(api_key=key, base_url=base or None)
+    messages = [{"role": "system", "content": system}]
+    messages += [{"role": m["role"], "content": m["content"]} for m in history]
+    messages.append({"role": "user", "content": message})
+    tools = ALL_TOOL_DECLARATIONS_OPENAI or None
+
+    for _ in range(_MAX_ROUNDS):
+        kwargs = {"model": model, "messages": messages}
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        resp = client.chat.completions.create(**kwargs)
+        msg = resp.choices[0].message
+        tool_calls = msg.tool_calls or []
+
+        if not tool_calls:
+            return (msg.content or "").strip() or "(no response)"
+
+        messages.append({
+            "role": "assistant",
+            "content": msg.content or "",
+            "tool_calls": [
+                {"id": tc.id, "type": "function",
+                 "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                for tc in tool_calls
+            ],
+        })
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                args = {}
+            result = _run_tool(router, tc.function.name, args, allow_actions, used)
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
+    final = client.chat.completions.create(model=model, messages=messages)
+    return (final.choices[0].message.content or "").strip() or "(done)"
+
+
+# ── Anthropic-compatible (MiniMax /anthropic) ────────────────────────────────
+
+def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used) -> str:
+    import anthropic
+    from tools import ALL_TOOL_DECLARATIONS_ANTHROPIC
+
+    client = anthropic.Anthropic(api_key=key, base_url=base or None)
+    messages = [{"role": m["role"], "content": m["content"]} for m in history]
+    messages.append({"role": "user", "content": message})
+    tools = ALL_TOOL_DECLARATIONS_ANTHROPIC or None
+
+    for _ in range(_MAX_ROUNDS):
+        kwargs = {"model": model, "max_tokens": 4096, "system": system, "messages": messages}
+        if tools:
+            kwargs["tools"] = tools
+        resp = client.messages.create(**kwargs)
+
+        tool_use = [b for b in resp.content if b.type == "tool_use"]
+        if not tool_use:
+            texts = [b.text for b in resp.content if hasattr(b, "text")]
+            return " ".join(texts).strip() or "(no response)"
+
+        assistant_content = []
+        for b in resp.content:
+            if b.type == "text":
+                assistant_content.append({"type": "text", "text": b.text})
+            elif b.type == "tool_use":
+                assistant_content.append({
+                    "type": "tool_use", "id": b.id, "name": b.name,
+                    "input": dict(b.input) if b.input else {},
+                })
+        messages.append({"role": "assistant", "content": assistant_content})
+
+        results = []
+        for block in tool_use:
+            args = dict(block.input) if block.input else {}
+            result = _run_tool(router, block.name, args, allow_actions, used)
+            results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
+        messages.append({"role": "user", "content": results})
+
+    final = client.messages.create(model=model, max_tokens=1024, system=system, messages=messages)
+    texts = [b.text for b in final.content if hasattr(b, "text")]
+    return " ".join(texts).strip() or "(done)"
+
+
+# ── Gemini ────────────────────────────────────────────────────────────────────
+
+def _run_gemini(router, key, model, system, history, message, allow_actions, used) -> str:
+    from google import genai
+    from google.genai import types
+    from tools import ALL_TOOL_DECLARATIONS
+
+    client = genai.Client(api_key=key)
+    contents = [
+        types.Content(
+            role=("model" if m["role"] == "assistant" else "user"),
+            parts=[types.Part(text=m["content"])],
+        )
+        for m in history
+    ]
+    contents.append(types.Content(role="user", parts=[types.Part(text=message)]))
+
+    gen_config = types.GenerateContentConfig(
+        system_instruction=system,
+        tools=[types.Tool(function_declarations=ALL_TOOL_DECLARATIONS)] if ALL_TOOL_DECLARATIONS else [],
+    )
+
+    for _ in range(_MAX_ROUNDS):
+        resp = client.models.generate_content(model=model, contents=contents, config=gen_config)
+        candidate = resp.candidates[0] if resp.candidates else None
+        if not candidate or not candidate.content or not candidate.content.parts:
+            break
+
+        parts = candidate.content.parts
+        fc_parts = [p for p in parts if p.function_call is not None]
+        if not fc_parts:
+            texts = [p.text for p in parts if p.text]
+            return " ".join(texts).strip() or "(no response)"
+
+        contents.append(candidate.content)
+        response_parts = []
+        for part in fc_parts:
+            fc = part.function_call
+            args = dict(fc.args) if fc.args else {}
+            result = _run_tool(router, fc.name, args, allow_actions, used)
+            response_parts.append(
+                types.Part(function_response=types.FunctionResponse(
+                    name=fc.name, response={"result": result}))
+            )
+        contents.append(types.Content(role="user", parts=response_parts))
+
+    return "(done)"

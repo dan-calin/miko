@@ -5,6 +5,24 @@ All notable changes to Miko are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Web Chat UI — "Miko as a tool inside a chat app"** (`chat_backend.py`,
+  `webui/chat.html`, routes in `tool_server.py`). A ChatGPT-style page served at
+  `GET /chat` where you type to Miko with her full tool set available to the model.
+  - Model-agnostic backend with three wire protocols (gemini / anthropic / openai)
+    covering **Google Gemini, MiniMax, OpenAI, DeepSeek, Kimi (Moonshot)**, and a
+    **custom** OpenAI-compatible endpoint (LM Studio, Ollama, …).
+  - Per-session history, provider/model/key picked in the UI (keys persisted to the
+    browser's localStorage) or read from `.env`.
+  - Safety: read-only tools always run; sensitive tools require an in-UI
+    "Allow actions" toggle (no spoken confirmation in a text chat).
+  - New endpoints: `GET /chat`, `GET /chat/models`, `POST /chat/message`,
+    `POST /chat/reset`. New optional env keys: `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`,
+    `MOONSHOT_API_KEY`.
+
 ## [0.2.0] — 2026-06-03
 
 ### Added

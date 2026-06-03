@@ -198,6 +198,28 @@ without Miko listening. Tool schemas are served at `GET /tools?format=openai|ant
 Set `TOOL_SERVER_KEY` to require a bearer token. Trusted local agents may send
 `X-Bypass-Confirmation: true` to skip the voice-confirmation gate on destructive tools.
 
+### Chat UI (Miko as a tool inside a chat app)
+
+The tool server also hosts a **ChatGPT-style web UI** where you can type to Miko and
+pick your model. Open it at:
+
+```
+http://localhost:7832/chat
+```
+
+(Available whenever `python main.py` or `python start_tools_server.py` is running.)
+
+- **Pick a provider per chat:** Google Gemini, MiniMax (Anthropic-compatible), OpenAI,
+  DeepSeek, Kimi (Moonshot), or a **custom** OpenAI-compatible endpoint (LM Studio,
+  Ollama, etc.) — enter any base URL + model.
+- **API keys** come from `.env` (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`,
+  …) or you can type them into the UI (stored only in your browser's localStorage).
+- **Miko's full tool set** is available to the model — it can control the PC, Discord,
+  calendars, notes, files, and more, mid-conversation.
+- **Safety:** read-only tools always run; sensitive actions (delete, send message,
+  shutdown, …) only run when you tick **“Allow actions”** in the UI, since a text chat
+  has no spoken confirmation step.
+
 ---
 
 ## First run
