@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New endpoints: `GET /chat`, `GET /chat/models`, `POST /chat/message`,
     `POST /chat/reset`. New optional env keys: `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`,
     `MOONSHOT_API_KEY`.
+  - **In-UI `.env` editor**: enter a provider API key in the sidebar and click
+    "save to .env" to persist it to the project's `.env` (survives restarts), instead
+    of only living in the browser. New endpoints `GET /chat/env` / `POST /chat/env`
+    (only the chat-provider keys are editable; writes preserve comments and unrelated
+    keys, and update the live process env immediately). Suited to a self-hosted,
+    single-user tool — keys are stored in plain text in the already-git-ignored `.env`.
+  - **Redesigned UI** (dark "operator console" theme): IBM Plex Sans/Mono, a fixed
+    left rail (wordmark, model picker grouped by provider, key + status, Allow-Actions
+    toggle, reset) and a centered conversation column with a Miko glyph, tool chips,
+    thinking dots, and an auto-growing composer. Ported from a Figma Make design to a
+    single self-contained `webui/chat.html`; the JS request/response contract is
+    unchanged.
 
 ## [0.2.0] — 2026-06-03
 

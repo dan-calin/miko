@@ -1,309 +1,608 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Miko</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700;800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --bg:       #0e1013;
-    --bg-glow:  #161a20;
-    --panel:    #14171c;
-    --surface:  #181c22;
-    --raise:    #1d222a;
-    --text:     #e8e6e1;
-    --text-dim: #9097a0;
-    --text-faint:#5d646e;
-    --accent:   #d59a55;
-    --accent-hi:#e7b06b;
-    --accent-deep:#a9742f;
-    --line:     rgba(255,255,255,.07);
-    --line-2:   rgba(255,255,255,.14);
-    --display: "Bricolage Grotesque", system-ui, sans-serif;
-    --sans:    "Hanken Grotesk", system-ui, sans-serif;
-    --mono:    "JetBrains Mono", ui-monospace, monospace;
+    --bg:         #0b0b0b;
+    --surface:    #131313;
+    --surface2:   #191919;
+    --surface3:   #212121;
+    --border:     #252525;
+    --borderMid:  #2d2d2d;
+    --text:       #d0d0d0;
+    --text2:      #818181;
+    --text3:      #4c4c4c;
+    --amber:      #c4a257;
+    --amberDim:   #624f25;
+    --green:      #3a8a5a;
+    --greenBright:#4bbf76;
+    --font: 'IBM Plex Sans', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', 'Courier New', monospace;
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; }
+  html, body { height: 100%; margin: 0; }
   body {
-    margin: 0; display: flex; flex-direction: column;
-    color: var(--text); font-family: var(--sans); font-weight: 400;
-    background:
-      radial-gradient(80% 50% at 50% -8%, var(--bg-glow), transparent 70%),
-      radial-gradient(60% 50% at 100% 100%, #15120e, transparent 60%),
-      var(--bg);
-    position: relative; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: var(--font); font-size: 14px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
   }
-  body::before { /* fine grain for depth */
-    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .035;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  #app { display: flex; height: 100%; width: 100%; overflow: hidden; }
+
+  @keyframes miko-pulse {
+    0%, 60%, 100% { opacity: 0.2; transform: scale(0.75); }
+    30%           { opacity: 1;   transform: scale(1);    }
+  }
+  .mk-dot { animation: miko-pulse 1.5s ease-in-out infinite; }
+  .mk-dot:nth-child(2) { animation-delay: 0.18s; }
+  .mk-dot:nth-child(3) { animation-delay: 0.36s; }
+
+  ::placeholder { color: var(--text3); }
+  ::-webkit-scrollbar       { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── Sidebar ─────────────────────────────────────────────── */
+  aside {
+    width: 264px; min-width: 264px; background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; height: 100%; overflow: hidden;
+  }
+  .wordmark { display: flex; align-items: center; gap: 10px; padding: 22px 20px 20px; }
+  .wordmark span {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.22em;
+    color: var(--text); font-weight: 500;
+  }
+  .rule { height: 1px; background: var(--border); }
+  .scroll { flex: 1; overflow-y: auto; }
+  .section { padding: 16px 20px; }
+  .seclabel {
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.15em;
+    color: var(--text3); margin-bottom: 8px; text-transform: uppercase;
   }
 
-  /* ── Header ─────────────────────────────────────────────────────────── */
-  header {
-    position: relative; z-index: 3; display: flex; align-items: center; gap: 16px;
-    padding: 17px 28px 15px; border-bottom: 1px solid var(--line);
-    background: linear-gradient(var(--panel), transparent);
-    opacity: 0; animation: drop .65s .05s cubic-bezier(.2,.8,.2,1) forwards;
+  /* Model dropdown */
+  .drop { position: relative; }
+  .drop-btn {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 3px;
+    padding: 7px 10px; cursor: pointer; color: var(--text);
+    font-family: var(--font); font-size: 13px; text-align: left;
   }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .mark {
-    width: 11px; height: 11px; background: var(--accent); border-radius: 2px;
-    transform: rotate(45deg); box-shadow: 0 0 14px 1px var(--accent-deep);
-    animation: pulse 3.6s ease-in-out infinite;
+  .pcode {
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.05em;
+    color: var(--text3); background: var(--surface3); border: 1px solid var(--border);
+    border-radius: 2px; padding: 1px 5px; flex-shrink: 0;
   }
-  .brand .name {
-    font-family: var(--display); font-weight: 800; font-size: 22px; letter-spacing: 1px;
+  .drop-btn .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chev { color: var(--text3); font-size: 11px; flex-shrink: 0; transition: transform 130ms ease; }
+  .drop.open .chev { transform: rotate(180deg); }
+  .drop-menu {
+    position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+    background: var(--surface2); border: 1px solid var(--borderMid);
+    border-radius: 3px; z-index: 200; overflow: hidden auto; max-height: 340px; display: none;
   }
-  .brand .sub {
-    font-family: var(--mono); font-size: 11px; color: var(--text-faint);
-    letter-spacing: 1px; padding-top: 4px;
+  .drop.open .drop-menu { display: block; }
+  .grp-head {
+    display: flex; align-items: center; gap: 7px;
+    padding: 9px 10px 5px; font-family: var(--mono); font-size: 8.5px;
+    letter-spacing: 0.12em; color: var(--text3); text-transform: uppercase;
   }
-  .spacer { flex: 1; }
-  .switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; font-size: 13px; color: var(--text-dim); }
-  .switch input { display: none; }
-  .switch .track {
-    width: 38px; height: 20px; border-radius: 20px; border: 1.5px solid var(--line-2);
-    position: relative; transition: .25s;
+  .mopt {
+    display: block; width: 100%; padding: 7px 10px 7px 25px; cursor: pointer;
+    font-family: var(--font); font-size: 13px; background: transparent; color: var(--text2);
+    border: none; text-align: left; transition: background 110ms, color 110ms;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .switch .track::after {
-    content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px;
-    border-radius: 50%; background: var(--text-dim); transition: .25s;
-  }
-  .switch input:checked + .track { border-color: var(--accent); background: #d59a5522; }
-  .switch input:checked + .track::after { left: 20px; background: var(--accent-hi); box-shadow: 0 0 8px var(--accent); }
-  .btn {
-    font-family: var(--sans); font-size: 13px; letter-spacing: .3px; cursor: pointer;
-    background: transparent; color: var(--text-dim);
-    border: 1px solid var(--line-2); border-radius: 6px; padding: 7px 14px; transition: .2s;
-  }
-  .btn:hover { color: var(--accent-hi); border-color: var(--accent-deep); }
+  .mopt:hover, .mopt.active { background: var(--surface3); color: var(--text); }
 
-  /* ── Settings ───────────────────────────────────────────────────────── */
-  #settings {
-    position: relative; z-index: 3; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 24px;
-    padding: 13px 28px 15px; border-bottom: 1px solid var(--line);
-    opacity: 0; animation: drop .65s .14s cubic-bezier(.2,.8,.2,1) forwards;
+  .field {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 3px; padding: 7px 10px; color: var(--text);
+    font-family: var(--mono); font-size: 12px; outline: none;
+    letter-spacing: 0.04em; transition: border-color 120ms;
   }
-  .field { display: flex; flex-direction: column; gap: 4px; }
-  .field label {
-    font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-faint);
-  }
-  .field input, .field select {
-    font-family: var(--mono); font-size: 13px; color: var(--text);
-    background: transparent; border: 0; border-bottom: 1.5px solid var(--line-2);
-    padding: 4px 2px; outline: none; transition: border-color .2s; border-radius: 0;
-  }
-  .field input:focus, .field select:focus { border-color: var(--accent); }
-  .field select { cursor: pointer; }
-  .field select option { background: var(--surface); color: var(--text); }
-  #base-url-wrap { display: none; }
-  #key-status { font-family: var(--mono); font-size: 11px; color: var(--text-dim); padding-bottom: 5px; }
+  .field:focus { border-color: var(--borderMid); }
+  .field + .field { margin-top: 8px; }
 
-  /* ── Chat ───────────────────────────────────────────────────────────── */
-  #chat { position: relative; z-index: 1; flex: 1; overflow-y: auto; }
-  .wrap { max-width: 770px; margin: 0 auto; padding: 30px 24px 12px; }
-  .msg { position: relative; margin-bottom: 24px; padding: 2px 0 2px 18px; animation: rise .5s cubic-bezier(.2,.8,.2,1) backwards; }
-  .msg::before { content: ""; position: absolute; left: 0; top: 5px; bottom: 5px; width: 2px; border-radius: 2px; }
-  .msg.user::before { background: var(--line-2); }
-  .msg.bot::before  { background: var(--accent); box-shadow: 0 0 10px var(--accent-deep); }
-  .msg .tag {
-    font-family: var(--mono); font-size: 11px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px;
+  .key-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; }
+  .keystat { font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; color: var(--text3); }
+  .keystat.ok   { color: var(--green); }
+  .keystat.warn { color: var(--amberDim); }
+  .savebtn {
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em;
+    color: var(--text3); background: transparent; border: none; cursor: pointer;
+    padding: 0; transition: color 120ms; white-space: nowrap;
   }
-  .msg.user .tag { color: var(--text-faint); }
-  .msg.bot  .tag { color: var(--accent); }
-  .msg .text { font-size: 15.5px; line-height: 1.74; white-space: pre-wrap; word-wrap: break-word; color: var(--text); }
-  .msg.user .text { color: #cfd3d8; }
-  .tools { margin-top: 11px; display: flex; flex-wrap: wrap; gap: 7px; }
-  .tool-chip {
-    font-family: var(--mono); font-size: 11px; color: var(--accent-hi);
-    border: 1px solid var(--accent-deep); border-radius: 4px; padding: 2px 9px; background: #d59a5510;
-  }
-  .text.err { color: #e0795f; font-family: var(--mono); font-size: 13.5px; }
-  .text.thinking { color: var(--text-dim); font-style: italic; }
-  .text.thinking::after { content: "•"; animation: dots 1.2s steps(4,end) infinite; }
+  .savebtn:hover { color: var(--amber); }
+  .savebtn:disabled { color: var(--text3); opacity: 0.4; cursor: default; }
+  .savebtn.saved { color: var(--green); }
 
-  /* ── Composer ───────────────────────────────────────────────────────── */
-  footer {
-    position: relative; z-index: 3; padding: 15px 24px 20px; border-top: 1px solid var(--line);
-    background: linear-gradient(transparent, var(--panel));
-    opacity: 0; animation: drop .65s .22s cubic-bezier(.2,.8,.2,1) forwards;
+  /* Allow Actions toggle */
+  .aa-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .aa-desc { font-size: 12px; color: var(--text2); line-height: 1.5; }
+  .toggle {
+    width: 38px; min-width: 38px; height: 22px; flex-shrink: 0;
+    border-radius: 2px; margin-top: 2px; background: var(--surface3);
+    border: 1px solid var(--border); cursor: pointer; position: relative;
+    transition: background 150ms, border-color 150ms; padding: 0;
   }
-  .composer { max-width: 770px; margin: 0 auto; display: flex; gap: 12px; align-items: flex-end; }
-  .field-wrap {
-    flex: 1; background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
-    padding: 4px 14px; transition: border-color .2s;
+  .toggle .knob {
+    position: absolute; top: 3px; left: 3px; width: 14px; height: 14px;
+    border-radius: 1px; background: var(--text3);
+    transition: left 150ms, background 150ms; display: block;
   }
-  .field-wrap:focus-within { border-color: var(--accent-deep); }
-  textarea {
-    width: 100%; resize: none; font-family: var(--sans); font-size: 15px; color: var(--text);
-    background: transparent; border: 0; padding: 9px 0; max-height: 168px; outline: none; line-height: 1.5;
+  .toggle.on { background: #182e21; border-color: var(--green); }
+  .toggle.on .knob { left: 19px; background: var(--greenBright); }
+
+  .aa-warn {
+    margin-top: 12px; padding: 9px 10px; background: #120d06; border: 1px solid #3a2600;
+    border-radius: 3px; font-size: 11px; color: #967230; line-height: 1.55;
+    display: none; gap: 8px; align-items: flex-start;
   }
-  textarea::placeholder { color: var(--text-faint); }
+  .aa-warn.show { display: flex; }
+  .aa-warn .dot { color: var(--amber); flex-shrink: 0; font-size: 6.5px; margin-top: 4px; }
+
+  .reset-wrap { border-top: 1px solid var(--border); }
+  .reset {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 12px 20px; background: transparent; border: none;
+    color: var(--text3); font-family: var(--font); font-size: 12px;
+    cursor: pointer; text-align: left; transition: color 120ms;
+  }
+  .reset:hover { color: var(--text2); }
+  .reset .ic { font-family: var(--mono); font-size: 15px; line-height: 1; margin-top: -1px; }
+
+  /* ── Main ────────────────────────────────────────────────── */
+  main { flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden; min-width: 0; }
+  .thread { flex: 1; overflow-y: auto; scrollbar-width: thin; }
+  .thread-inner { max-width: 720px; margin: 0 auto; padding: 40px 40px 24px; }
+
+  .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 14px; }
+  .empty .greet { font-size: 16px; color: var(--text2); letter-spacing: -0.01em; margin-bottom: 4px; text-align: center; }
+  .empty .sub   { font-size: 13px; color: var(--text3); text-align: center; }
+
+  .row { display: flex; gap: 14px; padding: 11px 0; }
+  .row.bot  { border-bottom: 1px solid var(--borderMid); }
+  .row.user { flex-direction: row-reverse; margin-bottom: 3px; }
+  .glyph {
+    flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--amberDim);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 10px; color: var(--amber);
+    border-radius: 2px; margin-top: 2px;
+  }
+  .content { flex: 1; min-width: 0; }
+  .user-bubble-wrap { display: flex; justify-content: flex-end; }
+  .user-bubble {
+    max-width: 80%; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 3px; padding: 9px 13px; font-size: 14px; line-height: 1.65;
+    color: var(--text); white-space: pre-wrap; word-break: break-word;
+  }
+  .bot-text { display: flex; flex-direction: column; gap: 9px; }
+  .bot-text .para { display: flex; flex-direction: column; gap: 2px; }
+  .bot-text .line { line-height: 1.7; color: var(--text); word-wrap: break-word; }
+  .bot-text strong { font-weight: 500; color: var(--text); }
+  .bot-text.err .line { color: #b06a4a; }
+
+  .tools { display: flex; gap: 6px; margin-top: 11px; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 2px;
+    font-family: var(--mono); font-size: 9px; color: var(--text3); letter-spacing: 0.08em;
+  }
+  .chip .di { color: var(--amberDim); font-size: 6.5px; }
+
+  .stamp { margin-top: 6px; font-family: var(--mono); font-size: 9px; color: var(--text3); letter-spacing: 0.05em; }
+  .row.user .stamp { text-align: right; }
+
+  .think-dots { display: flex; gap: 5px; align-items: center; padding: 5px 0; }
+  .think-dots .d { width: 5px; height: 5px; border-radius: 50%; background: var(--amberDim); }
+
+  /* Composer */
+  .composer { border-top: 1px solid var(--border); padding: 16px 40px; background: var(--bg); }
+  .composer-inner { max-width: 720px; margin: 0 auto; }
+  .inputbar {
+    display: flex; gap: 10px; align-items: flex-end;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px 10px 10px 14px;
+  }
+  #input {
+    flex: 1; background: transparent; border: none; outline: none; resize: none;
+    font-family: var(--font); font-size: 14px; color: var(--text);
+    line-height: 1.65; min-height: 24px; max-height: 180px; overflow: auto;
+  }
   .send {
-    font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: .5px;
-    color: #14100a; background: var(--accent); border: 0; border-radius: 10px;
-    padding: 12px 20px; cursor: pointer; transition: .18s; display: flex; align-items: center; gap: 7px;
+    flex-shrink: 0; width: 30px; height: 30px; background: var(--surface3);
+    border: 1px solid var(--border); border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: default; color: var(--text3);
+    transition: background 130ms, border-color 130ms, color 130ms;
   }
-  .send:hover { background: var(--accent-hi); box-shadow: 0 4px 18px -4px var(--accent-deep); transform: translateY(-1px); }
-  .send:active { transform: translateY(0); }
-  .send:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; transform: none; }
-  .hint { max-width: 770px; margin: 10px auto 0; font-size: 11px; color: var(--text-faint); text-align: center; letter-spacing: .2px; }
-  .hint b { color: var(--accent); font-weight: 600; }
+  .send.can { background: var(--amber); border-color: var(--amber); color: #0b0b0b; cursor: pointer; }
+  .send.can:hover { background: #d4b063; border-color: #d4b063; }
 
-  #chat::-webkit-scrollbar { width: 10px; }
-  #chat::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 6px; }
-  #chat::-webkit-scrollbar-track { background: transparent; }
-
-  @keyframes drop  { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
-  @keyframes rise  { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
-  @keyframes pulse { 0%,100% { box-shadow: 0 0 14px 1px var(--accent-deep); } 50% { box-shadow: 0 0 22px 4px var(--accent-deep); } }
-  @keyframes dots  { 0%{content:"•";} 25%{content:"• •";} 50%{content:"• • •";} 75%{content:"• • • •";} 100%{content:"•";} }
+  .hints {
+    display: flex; align-items: center; gap: 8px; margin-top: 8px;
+    font-family: var(--mono); font-size: 9px; color: var(--text3); letter-spacing: 0.05em;
+  }
+  .hints .sep { color: var(--border); }
+  .hints .live, .hints .live-sep { display: none; }
+  .hints .live { color: var(--greenBright); }
 </style>
 </head>
 <body>
-<header>
-  <div class="brand">
-    <span class="mark"></span>
-    <span class="name">MIKO</span>
-    <span class="sub">/ assistant</span>
-  </div>
-  <div class="spacer"></div>
-  <label class="switch" title="Allow Miko to run sensitive actions (delete, send, shutdown…)">
-    <input type="checkbox" id="allow-actions" /><span class="track"></span> Allow actions
-  </label>
-  <button class="btn" id="clear-btn">Clear</button>
-</header>
-
-<div id="settings">
-  <div class="field"><label>Provider</label><select id="provider"></select></div>
-  <div class="field"><label>Model</label>
-    <input type="text" id="model" list="model-list" style="width:190px" placeholder="model" />
-    <datalist id="model-list"></datalist>
-  </div>
-  <div class="field" id="base-url-wrap"><label>Base URL</label>
-    <input type="text" id="base-url" style="width:230px" placeholder="https://…/v1" />
-  </div>
-  <div class="field"><label>API key</label>
-    <input type="password" id="api-key" style="width:190px" placeholder="uses .env if blank" />
-  </div>
-  <div id="key-status"></div>
-</div>
-
-<div id="chat"><div class="wrap" id="messages"></div></div>
-
-<footer>
-  <div class="composer">
-    <div class="field-wrap">
-      <textarea id="input" rows="1" placeholder="Message Miko…   (Enter to send · Shift+Enter for a new line)"></textarea>
+<div id="app">
+  <!-- ── Sidebar ─────────────────────────────────────────── -->
+  <aside>
+    <div class="wordmark">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <rect x="3.6" y="3.6" width="8.8" height="8.8" stroke="#c4a257" stroke-width="1.15" transform="rotate(45 8 8)" />
+        <rect x="6.6" y="6.6" width="2.8" height="2.8" fill="#c4a257" />
+      </svg>
+      <span>MIKO</span>
     </div>
-    <button class="send" id="send-btn">Send <span style="font-size:15px">↵</span></button>
-  </div>
-  <div class="hint">Miko wields your full toolset. Sensitive actions require <b>Allow actions</b>.</div>
-</footer>
+    <div class="rule"></div>
+
+    <div class="scroll">
+      <!-- Model -->
+      <div class="section">
+        <div class="seclabel">Model</div>
+        <div class="drop" id="drop">
+          <button class="drop-btn" id="drop-btn" type="button">
+            <span class="pcode" id="cur-code">···</span>
+            <span class="label" id="cur-label">Loading…</span>
+            <span class="chev">▾</span>
+          </button>
+          <div class="drop-menu" id="drop-menu"></div>
+        </div>
+        <input class="field" id="model" type="text" placeholder="model id" spellcheck="false" autocomplete="off" style="margin-top:8px" />
+      </div>
+
+      <!-- API key -->
+      <div class="section" style="padding-top:0">
+        <div class="seclabel" id="key-label">API Key</div>
+        <input class="field" id="api-key" type="password" placeholder="sk-···" spellcheck="false" autocomplete="off" />
+        <div id="base-url-wrap" style="display:none">
+          <input class="field" id="base-url" type="text" placeholder="https://host/v1" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="key-row">
+          <span class="keystat warn" id="key-status">⚠ no key</span>
+          <button class="savebtn" id="save-env" type="button">↳ save to .env</button>
+        </div>
+      </div>
+      <div class="rule"></div>
+
+      <!-- Allow actions -->
+      <div class="section">
+        <div class="aa-row">
+          <div style="flex:1">
+            <div class="seclabel" style="margin-bottom:5px">Allow Actions</div>
+            <div class="aa-desc" id="aa-desc">Observe-only. No writes or sends.</div>
+          </div>
+          <button class="toggle" id="allow-actions" role="switch" aria-checked="false" type="button">
+            <span class="knob"></span>
+          </button>
+        </div>
+        <div class="aa-warn" id="aa-warn">
+          <span class="dot">●</span>
+          <span>Actions are live. Miko may send messages, modify files, and interact with connected services on your behalf.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="reset-wrap">
+      <button class="reset" id="clear-btn" type="button">
+        <span class="ic">↺</span> Reset conversation
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── Main ────────────────────────────────────────────── -->
+  <main>
+    <div class="thread" id="chat">
+      <div class="thread-inner" id="messages"></div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-inner">
+        <div class="inputbar">
+          <textarea id="input" rows="1" placeholder="Message Miko…"></textarea>
+          <button class="send" id="send-btn" type="button" aria-label="Send message">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+              <path d="M1.5 1.5L11.5 6.5L1.5 11.5V7.8L8.8 6.5L1.5 5.2V1.5Z" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+        <div class="hints">
+          <span>↵ Send</span>
+          <span class="sep">·</span>
+          <span>⇧ ↵ New line</span>
+          <span class="sep live-sep">·</span>
+          <span class="live" id="hint-live">● Actions live</span>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
 
 <script>
 const $ = s => document.querySelector(s);
 const messagesEl = $('#messages'), chatEl = $('#chat');
-let MODELS = {}, msgIndex = 0;
+let MODELS = {}, ENV = {};   // ENV: { ENV_VAR_NAME: value } loaded from .env
+
+const PCODE = { gemini:'GEM', minimax:'MMX', openai:'OAI', deepseek:'DSK', kimi:'KMI', custom:'CST' };
+const codeFor = id => PCODE[id] || id.slice(0,3).toUpperCase();
 
 let sessionId = localStorage.getItem('miko_session');
 if (!sessionId) { sessionId = 'web-' + Math.random().toString(36).slice(2); localStorage.setItem('miko_session', sessionId); }
-const keys = JSON.parse(localStorage.getItem('miko_keys') || '{}');
+const keys = JSON.parse(localStorage.getItem('miko_keys') || '{}');   // per-provider, browser-local override
 const cfg  = JSON.parse(localStorage.getItem('miko_cfg')  || '{}');
+let curProvider = cfg.provider || 'gemini';
+
+function envKeyName(id) { return (MODELS[id] && MODELS[id].env_key) || ''; }
 
 function saveCfg() {
-  cfg.provider = $('#provider').value; cfg.model = $('#model').value;
-  cfg.baseUrl = $('#base-url').value; cfg.allow = $('#allow-actions').checked;
+  cfg.provider = curProvider;
+  cfg.model    = $('#model').value;
+  cfg.baseUrl  = $('#base-url').value;
+  cfg.allow    = $('#allow-actions').classList.contains('on');
   localStorage.setItem('miko_cfg', JSON.stringify(cfg));
-  keys[cfg.provider] = $('#api-key').value;
+  keys[curProvider] = $('#api-key').value;
   localStorage.setItem('miko_keys', JSON.stringify(keys));
 }
 
 async function loadModels() {
-  MODELS = await (await fetch('/chat/models')).json();
-  const sel = $('#provider'); sel.innerHTML = '';
+  const [m, e] = await Promise.all([
+    fetch('/chat/models').then(r => r.json()),
+    fetch('/chat/env').then(r => r.json()).catch(() => ({})),
+  ]);
+  MODELS = m; ENV = e || {};
+  if (!MODELS[curProvider]) curProvider = 'gemini';
+  buildMenu();
+  applyProvider(curProvider, cfg.model);
+}
+
+function buildMenu() {
+  const menu = $('#drop-menu'); menu.innerHTML = '';
   for (const [id, p] of Object.entries(MODELS)) {
-    const o = document.createElement('option'); o.value = id; o.textContent = p.label; sel.appendChild(o);
+    const head = document.createElement('div');
+    head.className = 'grp-head';
+    head.innerHTML = `<span class="pcode">${codeFor(id)}</span>${p.label}`;
+    menu.appendChild(head);
+    const models = (p.models && p.models.length) ? p.models : ['(enter custom model)'];
+    models.forEach(m => {
+      const opt = document.createElement('button');
+      opt.type = 'button'; opt.className = 'mopt'; opt.textContent = m;
+      opt.dataset.provider = id;
+      opt.dataset.model = (p.models && p.models.length) ? m : '';
+      opt.addEventListener('click', () => {
+        applyProvider(id, opt.dataset.model);
+        $('#drop').classList.remove('open');
+        saveCfg();
+        if (id === 'custom') $('#model').focus();
+      });
+      menu.appendChild(opt);
+    });
   }
-  sel.value = cfg.provider && MODELS[cfg.provider] ? cfg.provider : 'gemini';
-  onProviderChange();
 }
 
-function onProviderChange() {
-  const id = $('#provider').value, p = MODELS[id];
-  const dl = $('#model-list'); dl.innerHTML = '';
-  (p.models || []).forEach(m => { const o = document.createElement('option'); o.value = m; dl.appendChild(o); });
-  $('#model').value = (cfg.provider === id && cfg.model) ? cfg.model : (p.models[0] || '');
-  $('#base-url-wrap').style.display = p.needs_base_url ? 'flex' : 'none';
+// Resolve the key to show for a provider: browser override first, then .env value.
+function keyFor(id) {
+  if (keys[id]) return keys[id];
+  const en = envKeyName(id);
+  return (en && ENV[en]) ? ENV[en] : '';
+}
+
+function applyProvider(id, model) {
+  curProvider = id;
+  const p = MODELS[id];
+  $('#cur-code').textContent = codeFor(id);
+  const chosen = model || (cfg.provider === id && cfg.model) || (p.models[0] || '');
+  $('#model').value = chosen;
+  $('#cur-label').textContent = chosen || p.label;
+  $('#key-label').textContent = 'API Key — ' + p.label;
+  $('#api-key').value = keyFor(id);
+  $('#base-url-wrap').style.display = p.needs_base_url ? 'block' : 'none';
   $('#base-url').value = (cfg.provider === id && cfg.baseUrl) ? cfg.baseUrl : (p.needs_base_url ? '' : p.base_url);
-  $('#api-key').value = keys[id] || '';
-  $('#key-status').textContent = p.has_env_key ? '✓ key in .env' : (keys[id] ? '✓ key set' : '⚠ no key');
+  resetSaveBtn();
+  updateKeyStatus();
+  document.querySelectorAll('.mopt').forEach(o =>
+    o.classList.toggle('active', o.dataset.provider === id && o.textContent === chosen));
 }
 
-function addMsg(role, text) {
-  const m = document.createElement('div');
-  m.className = 'msg ' + (role === 'user' ? 'user' : 'bot');
-  m.style.animationDelay = (msgIndex++ % 2 === 0 ? 0 : 0.04) + 's';
-  m.innerHTML = `<div class="tag">${role === 'user' ? 'You' : 'Miko'}</div><div class="text"></div><div class="tools"></div>`;
-  m.querySelector('.text').textContent = text;
-  messagesEl.appendChild(m);
-  chatEl.scrollTop = chatEl.scrollHeight;
-  return m;
-}
-function setTools(node, tools) {
-  if (tools && tools.length)
-    node.querySelector('.tools').innerHTML = tools.map(t => `<span class="tool-chip">${t}</span>`).join('');
+function updateKeyStatus() {
+  const p = MODELS[curProvider], el = $('#key-status');
+  const en = envKeyName(curProvider);
+  const inEnv = en && ENV[en];
+  if (inEnv && $('#api-key').value === ENV[en]) { el.textContent = '✓ saved in .env'; el.className = 'keystat ok'; }
+  else if ($('#api-key').value) { el.textContent = '• key set (this browser)'; el.className = 'keystat'; }
+  else if (p.has_env_key) { el.textContent = '✓ key in .env'; el.className = 'keystat ok'; }
+  else { el.textContent = '⚠ no key'; el.className = 'keystat warn'; }
 }
 
+function resetSaveBtn() {
+  const b = $('#save-env'), en = envKeyName(curProvider);
+  b.classList.remove('saved');
+  b.disabled = !en;                       // custom provider has no env key
+  b.textContent = en ? '↳ save to .env' : 'no .env slot';
+}
+
+async function saveToEnv() {
+  const en = envKeyName(curProvider);
+  if (!en) return;
+  const val = $('#api-key').value;
+  const b = $('#save-env'); b.disabled = true; b.textContent = 'saving…';
+  try {
+    const res = await (await fetch('/chat/env', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [en]: val }),
+    })).json();
+    if (res.env) ENV = res.env;
+    b.classList.add('saved'); b.textContent = '✓ saved';
+    // also refresh has_env_key flags
+    MODELS = await (await fetch('/chat/models')).json();
+    updateKeyStatus();
+    setTimeout(() => { b.classList.remove('saved'); b.textContent = '↳ save to .env'; b.disabled = false; }, 1800);
+  } catch (e) {
+    b.textContent = 'failed'; setTimeout(resetSaveBtn, 1800);
+  }
+}
+
+// ── Messages ───────────────────────────────────────────────
+function fmtTime(d) { return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+
+function renderBotText(host, content) {
+  host.innerHTML = '';
+  content.split('\n\n').forEach(para => {
+    const pe = document.createElement('div'); pe.className = 'para';
+    para.split('\n').forEach(line => {
+      const le = document.createElement('div'); le.className = 'line';
+      line.split(/(\*\*[^*]+\*\*)/g).forEach(part => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          const s = document.createElement('strong'); s.textContent = part.slice(2, -2); le.appendChild(s);
+        } else { le.appendChild(document.createTextNode(part)); }
+      });
+      pe.appendChild(le);
+    });
+    host.appendChild(pe);
+  });
+}
+
+function addUser(text) {
+  const row = document.createElement('div'); row.className = 'row user';
+  const c = document.createElement('div'); c.className = 'content';
+  const wrap = document.createElement('div'); wrap.className = 'user-bubble-wrap';
+  const b = document.createElement('div'); b.className = 'user-bubble'; b.textContent = text;
+  wrap.appendChild(b); c.appendChild(wrap);
+  const st = document.createElement('div'); st.className = 'stamp'; st.textContent = fmtTime(new Date());
+  c.appendChild(st); row.appendChild(c);
+  messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function addBot() {
+  const row = document.createElement('div'); row.className = 'row bot';
+  const g = document.createElement('div'); g.className = 'glyph'; g.textContent = 'M';
+  const c = document.createElement('div'); c.className = 'content';
+  const tx = document.createElement('div'); tx.className = 'bot-text';
+  const tl = document.createElement('div'); tl.className = 'tools';
+  const st = document.createElement('div'); st.className = 'stamp';
+  c.append(tx, tl, st); row.append(g, c);
+  messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
+  return { tx, tl, st };
+}
+
+function thinking() {
+  const row = document.createElement('div'); row.className = 'row';
+  const g = document.createElement('div'); g.className = 'glyph'; g.textContent = 'M';
+  const d = document.createElement('div'); d.className = 'think-dots';
+  d.innerHTML = '<span class="d mk-dot"></span><span class="d mk-dot"></span><span class="d mk-dot"></span>';
+  row.append(g, d);
+  messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
+  return row;
+}
+
+function emptyState() {
+  messagesEl.innerHTML = `
+    <div class="empty">
+      <svg width="26" height="26" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <rect x="3.6" y="3.6" width="8.8" height="8.8" stroke="#c4a257" stroke-width="1.15" transform="rotate(45 8 8)" />
+        <rect x="6.6" y="6.6" width="2.8" height="2.8" fill="#c4a257" />
+      </svg>
+      <div>
+        <div class="greet">${greeting()}.</div>
+        <div class="sub">What would you like to do?</div>
+      </div>
+    </div>`;
+}
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+}
+
+// ── Send ───────────────────────────────────────────────────
 async function send() {
   const input = $('#input'), text = input.value.trim();
-  if (!text) return;
+  if (!text || $('#send-btn').dataset.busy === '1') return;
   saveCfg();
-  input.value = ''; input.style.height = 'auto';
-  addMsg('user', text);
-  const node = addMsg('bot', 'Miko is composing');
-  node.querySelector('.text').classList.add('thinking');
-  $('#send-btn').disabled = true;
+  if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
+  input.value = ''; input.style.height = 'auto'; refreshSend();
+  addUser(text);
+  const trow = thinking();
+  $('#send-btn').dataset.busy = '1';
   try {
     const data = await (await fetch('/chat/message', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: sessionId, message: text,
-        provider: $('#provider').value, model: $('#model').value,
+        provider: curProvider, model: $('#model').value,
         api_key: $('#api-key').value, base_url: $('#base-url').value,
-        allow_actions: $('#allow-actions').checked,
+        allow_actions: $('#allow-actions').classList.contains('on'),
       }),
     })).json();
-    const t = node.querySelector('.text'); t.classList.remove('thinking');
-    if (data.error) { t.classList.add('err'); t.textContent = '⚠ ' + data.error; }
-    else { t.textContent = data.reply || '(no response)'; setTools(node, data.tools_used); }
+    trow.remove();
+    const { tx, tl, st } = addBot();
+    if (data.error) { tx.className = 'bot-text err'; renderBotText(tx, '⚠ ' + data.error); }
+    else {
+      renderBotText(tx, data.reply || '(no response)');
+      if (data.tools_used && data.tools_used.length)
+        tl.innerHTML = data.tools_used.map(t => `<span class="chip"><span class="di">◈</span>${t}</span>`).join('');
+    }
+    st.textContent = fmtTime(new Date());
   } catch (e) {
-    const t = node.querySelector('.text'); t.classList.remove('thinking'); t.classList.add('err');
-    t.textContent = '⚠ Network error: ' + e.message;
+    trow.remove();
+    const { tx, st } = addBot();
+    tx.className = 'bot-text err'; renderBotText(tx, '⚠ Network error: ' + e.message);
+    st.textContent = fmtTime(new Date());
   } finally {
-    $('#send-btn').disabled = false; chatEl.scrollTop = chatEl.scrollHeight; input.focus();
+    $('#send-btn').dataset.busy = '0'; chatEl.scrollTop = chatEl.scrollHeight; input.focus();
   }
 }
 
 async function clearChat() {
   await fetch('/chat/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
-  messagesEl.innerHTML = '';
+  emptyState();
 }
 
-$('#provider').addEventListener('change', () => { onProviderChange(); saveCfg(); });
-['#model', '#api-key', '#base-url'].forEach(s => $(s).addEventListener('change', saveCfg));
-$('#allow-actions').addEventListener('change', saveCfg);
+function refreshSend() { $('#send-btn').classList.toggle('can', $('#input').value.trim().length > 0); }
+
+function setAllow(on) {
+  const t = $('#allow-actions');
+  t.classList.toggle('on', on);
+  t.setAttribute('aria-checked', on ? 'true' : 'false');
+  $('#aa-desc').textContent = on
+    ? 'Miko can send, write, and interact with connected services.'
+    : 'Observe-only. No writes or sends.';
+  $('#aa-warn').classList.toggle('show', on);
+  $('#hint-live').style.display = on ? 'inline' : 'none';
+  document.querySelector('.live-sep').style.display = on ? 'inline' : 'none';
+}
+
+// ── Wiring ─────────────────────────────────────────────────
+$('#drop-btn').addEventListener('click', () => $('#drop').classList.toggle('open'));
+document.addEventListener('mousedown', e => { if (!$('#drop').contains(e.target)) $('#drop').classList.remove('open'); });
+$('#model').addEventListener('input', () => { $('#cur-label').textContent = $('#model').value || MODELS[curProvider].label; });
+$('#model').addEventListener('change', saveCfg);
+$('#api-key').addEventListener('input', updateKeyStatus);
+$('#api-key').addEventListener('change', saveCfg);
+$('#base-url').addEventListener('change', saveCfg);
+$('#save-env').addEventListener('click', saveToEnv);
+$('#allow-actions').addEventListener('click', () => { setAllow(!$('#allow-actions').classList.contains('on')); saveCfg(); });
 $('#send-btn').addEventListener('click', send);
 $('#clear-btn').addEventListener('click', clearChat);
+
 const input = $('#input');
-input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 168) + 'px'; });
+input.addEventListener('input', () => {
+  input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 180) + 'px'; refreshSend();
+});
 input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 
-$('#allow-actions').checked = !!cfg.allow;
+setAllow(!!cfg.allow);
+emptyState();
 loadModels().then(() => input.focus());
 </script>
 </body>

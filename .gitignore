@@ -22,6 +22,9 @@ memory/long_term.json
 # ── Local tooling ───────────────────────────────────────────────────────────
 .claude/
 
+# ── Design source bundles (Figma Make exports — reference only) ──────────────
+Web Chat Interface Design/
+
 # ── OS ──────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

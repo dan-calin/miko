@@ -139,6 +139,23 @@ def _build_app():
         )
         return JSONResponse(result)
 
+    @app.get("/chat/env")
+    def chat_env_get(_=Depends(_auth)):
+        from chat_backend import read_env_keys
+        return read_env_keys()
+
+    @app.post("/chat/env")
+    async def chat_env_set(request: Request, _=Depends(_auth)):
+        from chat_backend import write_env_keys
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "Expected a JSON object of KEY: value."}, status_code=400)
+        updated = write_env_keys(body)
+        return {"ok": True, "env": updated}
+
     @app.post("/chat/reset")
     async def chat_reset(request: Request, _=Depends(_auth)):
         from chat_backend import reset_session

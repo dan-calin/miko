@@ -88,10 +88,75 @@ def list_models() -> dict:
             "protocol": p["protocol"],
             "base_url": p["base_url"],
             "models": p["models"],
+            "env_key": p["env_key"],
             "has_env_key": bool(p["env_key"] and os.getenv(p["env_key"], "")),
             "needs_base_url": pid == "custom",
         }
     return out
+
+
+# ── .env read/write (settings panel) ──────────────────────────────────────────
+# The Chat UI can read and persist API keys straight into the project's .env so
+# they survive restarts. This is a self-hosted, single-user tool — keys live in
+# plain text in .env (already git-ignored), same as if you edited the file by hand.
+
+from pathlib import Path
+
+_ENV_PATH = Path(__file__).resolve().parent / ".env"
+
+# Only these keys are exposed to the UI editor — the chat provider API keys.
+EDITABLE_ENV_KEYS = [
+    "LLM_API_KEY", "MINIMAX_API_KEY", "OPENAI_API_KEY",
+    "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY",
+]
+
+
+def read_env_keys() -> dict:
+    """Return current values for the editable env keys (from the live process env)."""
+    return {k: os.getenv(k, "") for k in EDITABLE_ENV_KEYS}
+
+
+def write_env_keys(updates: dict) -> dict:
+    """
+    Persist the given {KEY: value} pairs to .env (creating it if needed) and update
+    the live process env so the change takes effect immediately. Only keys in
+    EDITABLE_ENV_KEYS are honoured. Returns the updated values.
+    """
+    clean = {k: str(v) for k, v in (updates or {}).items() if k in EDITABLE_ENV_KEYS}
+    if not clean:
+        return read_env_keys()
+
+    # Read existing lines (preserve comments / ordering / unrelated keys).
+    lines = []
+    if _ENV_PATH.exists():
+        lines = _ENV_PATH.read_text(encoding="utf-8").splitlines()
+
+    seen = set()
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        name = stripped.split("=", 1)[0].strip()
+        if name in clean:
+            lines[i] = f"{name}={clean[name]}"
+            seen.add(name)
+
+    # Append any keys that weren't already present.
+    missing = [k for k in clean if k not in seen]
+    if missing:
+        if lines and lines[-1].strip():
+            lines.append("")
+        for k in missing:
+            lines.append(f"{k}={clean[k]}")
+
+    _ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # Reflect immediately in the running process.
+    for k, v in clean.items():
+        os.environ[k] = v
+
+    logger.info(f"[chat] wrote {len(clean)} key(s) to .env: {list(clean.keys())}")
+    return read_env_keys()
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
