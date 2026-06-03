@@ -7,6 +7,19 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet" />
+<!-- CodeMirror 5 — editor with syntax highlighting (degrades to a plain textarea if it fails to load) -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/markdown/markdown.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/shell/shell.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
 <style>
   :root {
     --bg:         #0b0b0b;
@@ -233,6 +246,118 @@
   .hints .sep { color: var(--border); }
   .hints .live, .hints .live-sep { display: none; }
   .hints .live { color: var(--greenBright); }
+
+  /* File chips (links to files Miko created/edited) */
+  .files { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .file-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 2px;
+    font-family: var(--mono); font-size: 10px; color: var(--text2); letter-spacing: 0.04em;
+    cursor: pointer; transition: border-color 120ms, color 120ms;
+  }
+  .file-chip:hover { border-color: var(--amberDim); color: var(--text); }
+  .file-chip .fi { color: var(--amber); font-size: 9px; }
+  .file-chip .open { color: var(--text3); font-size: 9px; }
+
+  /* Workspace toggle in sidebar */
+  .ws-toggle {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 12px 20px; background: transparent; border: none; border-bottom: 1px solid var(--border);
+    color: var(--text2); font-family: var(--font); font-size: 12px;
+    cursor: pointer; text-align: left; transition: color 120ms;
+  }
+  .ws-toggle:hover { color: var(--text); }
+  .ws-toggle .ic { font-family: var(--mono); font-size: 13px; color: var(--amberDim); }
+
+  /* ── Workspace overlay (file explorer + editor) ─────────────── */
+  #workspace {
+    position: fixed; inset: 0; z-index: 500; background: var(--bg);
+    display: none; flex-direction: column;
+  }
+  #workspace.open { display: flex; }
+  .ws-head {
+    display: flex; align-items: center; gap: 12px; padding: 14px 18px;
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .ws-head .title {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em;
+    color: var(--text2); text-transform: uppercase; flex: 1;
+  }
+  .ws-head .title b { color: var(--text); font-weight: 500; }
+  .ws-close {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 3px;
+    color: var(--text2); width: 28px; height: 26px; cursor: pointer; font-size: 15px;
+    line-height: 1; transition: color 120ms, border-color 120ms;
+  }
+  .ws-close:hover { color: var(--text); border-color: var(--borderMid); }
+  .ws-body { flex: 1; display: flex; min-height: 0; }
+
+  /* Explorer */
+  .ws-explorer {
+    width: 290px; min-width: 290px; border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; background: var(--surface); min-height: 0;
+  }
+  .ws-roots { display: flex; flex-wrap: wrap; gap: 5px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .ws-root {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.04em;
+    padding: 3px 8px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 2px; color: var(--text2); cursor: pointer; transition: all 120ms;
+  }
+  .ws-root:hover { color: var(--text); border-color: var(--borderMid); }
+  .ws-crumb {
+    padding: 9px 14px; font-family: var(--mono); font-size: 10px; color: var(--text3);
+    border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; direction: rtl; text-align: left;
+  }
+  .ws-list { flex: 1; overflow-y: auto; padding: 6px 0; }
+  .ws-item {
+    display: flex; align-items: center; gap: 9px; padding: 6px 14px; cursor: pointer;
+    font-size: 12.5px; color: var(--text2); transition: background 100ms, color 100ms;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ws-item:hover { background: var(--surface2); color: var(--text); }
+  .ws-item.active { background: var(--surface3); color: var(--text); }
+  .ws-item .ic { font-family: var(--mono); font-size: 11px; flex-shrink: 0; width: 12px; }
+  .ws-item.dir .ic { color: var(--amber); }
+  .ws-item.file .ic { color: var(--text3); }
+  .ws-item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .ws-empty { padding: 18px 14px; color: var(--text3); font-size: 12px; }
+
+  /* Editor */
+  .ws-editor { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .ed-head {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .ed-name { font-family: var(--mono); font-size: 12px; color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ed-badge {
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 2px; border: 1px solid var(--border); color: var(--text3);
+  }
+  .ed-badge.dirty { color: var(--amber); border-color: var(--amberDim); }
+  .ed-save {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em;
+    padding: 5px 12px; border-radius: 3px; cursor: pointer;
+    background: var(--surface3); border: 1px solid var(--border); color: var(--text3);
+    transition: all 130ms;
+  }
+  .ed-save.can { background: var(--amber); border-color: var(--amber); color: #0b0b0b; }
+  .ed-save.can:hover { background: #d4b063; }
+  .ed-save.saved { background: #182e21; border-color: var(--green); color: var(--greenBright); }
+  .ed-host { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #0d0d0d; }
+  .ed-host .CodeMirror {
+    height: 100%; font-family: var(--mono); font-size: 13px; line-height: 1.6;
+    background: #0d0d0d; color: var(--text);
+  }
+  .ed-host textarea.plain {
+    width: 100%; height: 100%; box-sizing: border-box; resize: none; border: none; outline: none;
+    background: #0d0d0d; color: var(--text); font-family: var(--mono); font-size: 13px;
+    line-height: 1.6; padding: 12px 16px;
+  }
+  .ed-placeholder {
+    height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; color: var(--text3); font-size: 13px;
+  }
 </style>
 </head>
 <body>
@@ -295,6 +420,9 @@
       </div>
     </div>
 
+    <button class="ws-toggle" id="ws-open" type="button">
+      <span class="ic">⌗</span> Open workspace
+    </button>
     <div class="reset-wrap">
       <button class="reset" id="clear-btn" type="button">
         <span class="ic">↺</span> Reset conversation
@@ -328,6 +456,36 @@
       </div>
     </div>
   </main>
+
+  <!-- ── Workspace overlay ───────────────────────────────── -->
+  <div id="workspace">
+    <div class="ws-head">
+      <span class="title"><b>MIKO</b> · Workspace</span>
+      <button class="ws-close" id="ws-close" type="button" aria-label="Close workspace">×</button>
+    </div>
+    <div class="ws-body">
+      <div class="ws-explorer">
+        <div class="ws-roots" id="ws-roots"></div>
+        <div class="ws-crumb" id="ws-crumb">—</div>
+        <div class="ws-list" id="ws-list"></div>
+      </div>
+      <div class="ws-editor">
+        <div class="ed-head">
+          <span class="ed-name" id="ed-name">No file open</span>
+          <span class="ed-badge" id="ed-badge" style="display:none">saved</span>
+          <button class="ed-save" id="ed-save" type="button" disabled>Save</button>
+        </div>
+        <div class="ed-host" id="ed-host">
+          <div class="ed-placeholder" id="ed-placeholder">
+            <svg width="22" height="22" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="3.6" y="3.6" width="8.8" height="8.8" stroke="#624f25" stroke-width="1.15" transform="rotate(45 8 8)" />
+            </svg>
+            <span>Select a file to view or edit</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -490,10 +648,25 @@ function addBot() {
   const c = document.createElement('div'); c.className = 'content';
   const tx = document.createElement('div'); tx.className = 'bot-text';
   const tl = document.createElement('div'); tl.className = 'tools';
+  const fl = document.createElement('div'); fl.className = 'files';
   const st = document.createElement('div'); st.className = 'stamp';
-  c.append(tx, tl, st); row.append(g, c);
+  c.append(tx, tl, fl, st); row.append(g, c);
   messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
-  return { tx, tl, st };
+  return { tx, tl, fl, st };
+}
+
+function renderFileChips(host, files) {
+  if (!files || !files.length) return;
+  host.innerHTML = '';
+  files.forEach(f => {
+    const chip = document.createElement('span');
+    chip.className = 'file-chip';
+    chip.title = f.path;
+    chip.innerHTML = `<span class="fi">◧</span><span class="nm"></span><span class="open">↗</span>`;
+    chip.querySelector('.nm').textContent = f.name;
+    chip.addEventListener('click', () => openWorkspace(f.path));
+    host.appendChild(chip);
+  });
 }
 
 function thinking() {
@@ -545,12 +718,13 @@ async function send() {
       }),
     })).json();
     trow.remove();
-    const { tx, tl, st } = addBot();
+    const { tx, tl, fl, st } = addBot();
     if (data.error) { tx.className = 'bot-text err'; renderBotText(tx, '⚠ ' + data.error); }
     else {
       renderBotText(tx, data.reply || '(no response)');
       if (data.tools_used && data.tools_used.length)
         tl.innerHTML = data.tools_used.map(t => `<span class="chip"><span class="di">◈</span>${t}</span>`).join('');
+      renderFileChips(fl, data.files);
     }
     st.textContent = fmtTime(new Date());
   } catch (e) {
@@ -581,6 +755,177 @@ function setAllow(on) {
   $('#hint-live').style.display = on ? 'inline' : 'none';
   document.querySelector('.live-sep').style.display = on ? 'inline' : 'none';
 }
+
+// ── Workspace (file explorer + editor) ─────────────────────
+const CM_THEME = 'material-darker';
+let wsCurDir = '';        // current folder shown in explorer
+let edPath = null;        // file currently open in editor
+let edBaseline = '';      // last-saved content (for dirty tracking)
+let cm = null;            // CodeMirror instance (null until first file opened)
+
+async function openWorkspace(focusPath) {
+  $('#workspace').classList.add('open');
+  if (!$('#ws-roots').children.length) await loadRoots();
+  if (focusPath) {
+    const dir = focusPath.replace(/[\\\/][^\\\/]*$/, '');
+    await loadDir(dir);
+    await openFile(focusPath);
+  } else if (!wsCurDir) {
+    await loadDir('');
+  }
+}
+function closeWorkspace() { $('#workspace').classList.remove('open'); }
+
+async function loadRoots() {
+  try {
+    const data = await (await fetch('/files/roots')).json();
+    const host = $('#ws-roots'); host.innerHTML = '';
+    (data.roots || []).forEach(r => {
+      const b = document.createElement('button');
+      b.className = 'ws-root'; b.type = 'button'; b.textContent = r.name; b.title = r.path;
+      b.addEventListener('click', () => loadDir(r.path));
+      host.appendChild(b);
+    });
+  } catch (e) { /* offline */ }
+}
+
+async function loadDir(path) {
+  let data;
+  try { data = await (await fetch('/files/list?path=' + encodeURIComponent(path))).json(); }
+  catch (e) { return; }
+  if (data.error) { $('#ws-list').innerHTML = `<div class="ws-empty">${data.error}</div>`; return; }
+  wsCurDir = data.path;
+  $('#ws-crumb').textContent = data.path;
+  const list = $('#ws-list'); list.innerHTML = '';
+
+  if (data.parent !== null && data.parent !== undefined) {
+    const up = document.createElement('div');
+    up.className = 'ws-item dir';
+    up.innerHTML = '<span class="ic">↰</span><span class="nm">..</span>';
+    up.addEventListener('click', () => loadDir(data.parent));
+    list.appendChild(up);
+  }
+  if (!data.entries.length) {
+    const e = document.createElement('div'); e.className = 'ws-empty'; e.textContent = 'Empty folder';
+    list.appendChild(e);
+  }
+  data.entries.forEach(ent => {
+    const it = document.createElement('div');
+    it.className = 'ws-item ' + (ent.is_dir ? 'dir' : 'file');
+    if (ent.path === edPath) it.classList.add('active');
+    it.innerHTML = `<span class="ic">${ent.is_dir ? '▸' : '·'}</span><span class="nm"></span>`;
+    it.querySelector('.nm').textContent = ent.name;
+    it.addEventListener('click', () => ent.is_dir ? loadDir(ent.path) : openFile(ent.path));
+    list.appendChild(it);
+  });
+}
+
+function ensureEditor(mode) {
+  const host = $('#ed-host');
+  const ph = $('#ed-placeholder'); if (ph) ph.remove();
+  if (window.CodeMirror) {
+    if (!cm) {
+      const ta = document.createElement('textarea'); host.appendChild(ta);
+      cm = CodeMirror.fromTextArea(ta, {
+        lineNumbers: true, theme: CM_THEME, mode: mode || null,
+        lineWrapping: false, tabSize: 4, indentUnit: 4,
+      });
+      cm.on('change', markDirty);
+    } else {
+      cm.setOption('mode', mode || null);
+    }
+    return 'cm';
+  }
+  // Fallback: plain textarea editor
+  let ta = host.querySelector('textarea.plain');
+  if (!ta) {
+    ta = document.createElement('textarea'); ta.className = 'plain'; ta.spellcheck = false;
+    ta.addEventListener('input', markDirty); host.appendChild(ta);
+  }
+  return 'plain';
+}
+
+function editorValue() {
+  if (cm) return cm.getValue();
+  const ta = $('#ed-host').querySelector('textarea.plain'); return ta ? ta.value : '';
+}
+function setEditorValue(v) {
+  if (cm) { cm.setValue(v); cm.clearHistory(); }
+  else { const ta = $('#ed-host').querySelector('textarea.plain'); if (ta) ta.value = v; }
+}
+
+async function openFile(path) {
+  let data;
+  try { data = await (await fetch('/files/read?path=' + encodeURIComponent(path))).json(); }
+  catch (e) { return; }
+  if (data.error) { alert(data.error); return; }
+
+  edPath = data.path;
+  $('#ed-name').textContent = data.name;
+  // highlight in list
+  document.querySelectorAll('.ws-item').forEach(i =>
+    i.classList.toggle('active', i.querySelector('.nm') && i.querySelector('.nm').textContent === data.name));
+
+  if (data.binary) {
+    if (cm) { cm.toTextArea(); cm = null; }
+    $('#ed-host').innerHTML = '<div class="ed-placeholder">Binary file — can\'t display</div>';
+    $('#ed-save').disabled = true; $('#ed-save').className = 'ed-save';
+    setBadge('binary', false); return;
+  }
+
+  const kind = ensureEditor(data.language);
+  setEditorValue(data.content);
+  edBaseline = data.content;
+  const editable = data.editable !== false;
+  if (cm) cm.setOption('readOnly', !editable);
+  else { const ta = $('#ed-host').querySelector('textarea.plain'); if (ta) ta.readOnly = !editable; }
+  setBadge(data.truncated ? 'truncated' : (editable ? 'saved' : 'read-only'), false);
+  refreshSaveBtn();
+}
+
+function setBadge(text, dirty) {
+  const b = $('#ed-badge'); b.style.display = 'inline-block';
+  b.textContent = text; b.classList.toggle('dirty', !!dirty);
+}
+function markDirty() {
+  if (edPath == null) return;
+  const dirty = editorValue() !== edBaseline;
+  setBadge(dirty ? 'unsaved' : 'saved', dirty);
+  refreshSaveBtn();
+}
+function refreshSaveBtn() {
+  const btn = $('#ed-save');
+  const dirty = edPath != null && editorValue() !== edBaseline;
+  btn.disabled = !dirty;
+  btn.className = 'ed-save' + (dirty ? ' can' : '');
+  btn.textContent = 'Save';
+}
+
+async function saveFile() {
+  if (edPath == null) return;
+  const btn = $('#ed-save'); btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const res = await (await fetch('/files/write', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: edPath, content: editorValue() }),
+    })).json();
+    if (res.error) { btn.textContent = 'Failed'; setTimeout(refreshSaveBtn, 1500); return; }
+    edBaseline = editorValue();
+    btn.className = 'ed-save saved'; btn.textContent = '✓ Saved';
+    setBadge('saved', false);
+    setTimeout(refreshSaveBtn, 1400);
+  } catch (e) { btn.textContent = 'Failed'; setTimeout(refreshSaveBtn, 1500); }
+}
+
+$('#ws-open').addEventListener('click', () => openWorkspace());
+$('#ws-close').addEventListener('click', closeWorkspace);
+$('#ed-save').addEventListener('click', saveFile);
+document.addEventListener('keydown', e => {
+  if ($('#workspace').classList.contains('open')) {
+    if (e.key === 'Escape') closeWorkspace();
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveFile(); }
+  }
+});
 
 // ── Wiring ─────────────────────────────────────────────────
 $('#drop-btn').addEventListener('click', () => $('#drop').classList.toggle('open'));

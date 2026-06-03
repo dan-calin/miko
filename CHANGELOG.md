@@ -34,6 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     thinking dots, and an auto-growing composer. Ported from a Figma Make design to a
     single self-contained `webui/chat.html`; the JS request/response contract is
     unchanged.
+  - **Clickable file links**: when Miko creates or edits a file, the chat response now
+    lists it as a chip under her message (`chat()` returns a `files` array; paths are
+    captured from the actual tool-call arguments and any path echoed in the result, then
+    verified to exist on disk). Clicking a chip opens it in the workspace.
+  - **Built-in Workspace** (file explorer + code editor, `file_browser.py`): a VS
+    Code-style overlay to browse folders, open files, and save edits without leaving the
+    page. CodeMirror gives syntax highlighting (Python, JS, HTML/CSS, Markdown, shell,
+    YAML, C-like…), with Ctrl/⌘-S to save and a dirty/saved indicator; it degrades to a
+    plain textarea if the CDN is unreachable. New endpoints: `GET /files/roots`,
+    `GET /files/list`, `GET /files/read`, `POST /files/write`. Browsing is fenced to the
+    home directory and the project folder, and refuses the same Windows/system paths the
+    voice tools refuse; binary and >1 MB files open read-only.
 
 ## [0.2.0] — 2026-06-03
 

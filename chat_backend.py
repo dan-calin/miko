@@ -200,7 +200,44 @@ def reset_session(session_id: str) -> None:
 
 # ── Tool execution ────────────────────────────────────────────────────────────
 
-def _run_tool(router, name: str, args: dict, allow_actions: bool, used: list) -> str:
+# Matches an absolute Windows path ending in a file extension, e.g. C:\Users\me\a.py
+import re as _re
+_PATH_RE = _re.compile(r"[A-Za-z]:\\(?:[^\\/:*?\"<>|\r\n]+\\)*[^\\/:*?\"<>|\r\n]+\.[A-Za-z0-9]{1,8}")
+# Tool-argument keys that commonly hold a file path.
+_PATH_ARG_KEYS = ("path", "destination", "filepath", "file", "filename", "dest")
+
+
+def _collect_files(name: str, args: dict, result: str, files: list) -> None:
+    """Record real on-disk files this tool touched, so the UI can link/open them.
+
+    Looks at both the tool's arguments (the reliable source — the model passed the
+    path) and any absolute path echoed in the result string. Only paths that exist
+    as files are kept; results are de-duplicated, order-preserving.
+    """
+    candidates: list[str] = []
+    for k in _PATH_ARG_KEYS:
+        v = args.get(k)
+        if isinstance(v, str) and v.strip():
+            candidates.append(v.strip())
+    if isinstance(result, str):
+        candidates.extend(_PATH_RE.findall(result))
+
+    seen = {f["path"].lower() for f in files}
+    for c in candidates:
+        try:
+            if not os.path.isfile(c):
+                continue
+            full = os.path.abspath(c)
+        except (OSError, ValueError):
+            continue
+        if full.lower() in seen:
+            continue
+        seen.add(full.lower())
+        files.append({"path": full, "name": os.path.basename(full)})
+
+
+def _run_tool(router, name: str, args: dict, allow_actions: bool,
+              used: list, files: list) -> str:
     from core.command_router import REQUIRES_CONFIRMATION
 
     used.append(name)
@@ -213,7 +250,9 @@ def _run_tool(router, name: str, args: dict, allow_actions: bool, used: list) ->
             "'Allow actions' in the chat UI before this can run."
         )
     try:
-        return str(router._dispatch_module(name, args))
+        result = str(router._dispatch_module(name, args))
+        _collect_files(name, args, result, files)
+        return result
     except Exception as e:
         logger.error(f"chat tool error {name}: {e}", exc_info=True)
         return f"[error running {name}: {e}]"
@@ -244,25 +283,26 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
     system = _system_prompt(owner_name, language)
     history = _get_history(session_id)
     used: list = []
+    files: list = []
 
     try:
         if preset["protocol"] == "gemini":
-            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used)
+            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files)
         elif preset["protocol"] == "anthropic":
-            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used)
+            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files)
         else:
-            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used)
+            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files)
     except Exception as e:
         logger.error(f"chat() error ({provider}/{model}): {e}", exc_info=True)
-        return {"reply": "", "tools_used": used, "error": str(e)}
+        return {"reply": "", "tools_used": used, "files": files, "error": str(e)}
 
     _save_history(session_id, message, reply)
-    return {"reply": reply, "tools_used": used, "error": None}
+    return {"reply": reply, "tools_used": used, "files": files, "error": None}
 
 
 # ── OpenAI-compatible (OpenAI, DeepSeek, Kimi, custom) ────────────────────────
 
-def _run_openai(router, key, base, model, system, history, message, allow_actions, used) -> str:
+def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files) -> str:
     from openai import OpenAI
     from tools import ALL_TOOL_DECLARATIONS_OPENAI
 
@@ -298,7 +338,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
                 args = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
                 args = {}
-            result = _run_tool(router, tc.function.name, args, allow_actions, used)
+            result = _run_tool(router, tc.function.name, args, allow_actions, used, files)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     final = client.chat.completions.create(model=model, messages=messages)
@@ -307,7 +347,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
 
 # ── Anthropic-compatible (MiniMax /anthropic) ────────────────────────────────
 
-def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used) -> str:
+def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files) -> str:
     import anthropic
     from tools import ALL_TOOL_DECLARATIONS_ANTHROPIC
 
@@ -341,7 +381,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
         results = []
         for block in tool_use:
             args = dict(block.input) if block.input else {}
-            result = _run_tool(router, block.name, args, allow_actions, used)
+            result = _run_tool(router, block.name, args, allow_actions, used, files)
             results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
         messages.append({"role": "user", "content": results})
 
@@ -352,7 +392,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
-def _run_gemini(router, key, model, system, history, message, allow_actions, used) -> str:
+def _run_gemini(router, key, model, system, history, message, allow_actions, used, files) -> str:
     from google import genai
     from google.genai import types
     from tools import ALL_TOOL_DECLARATIONS
@@ -389,7 +429,7 @@ def _run_gemini(router, key, model, system, history, message, allow_actions, use
         for part in fc_parts:
             fc = part.function_call
             args = dict(fc.args) if fc.args else {}
-            result = _run_tool(router, fc.name, args, allow_actions, used)
+            result = _run_tool(router, fc.name, args, allow_actions, used, files)
             response_parts.append(
                 types.Part(function_response=types.FunctionResponse(
                     name=fc.name, response={"result": result}))

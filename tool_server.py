@@ -156,6 +156,40 @@ def _build_app():
         updated = write_env_keys(body)
         return {"ok": True, "env": updated}
 
+    # ── Workspace (file explorer + editor) ──────────────────────────────────────
+    @app.get("/files/roots")
+    def files_roots(_=Depends(_auth)):
+        import file_browser
+        return {"roots": file_browser.roots()}
+
+    @app.get("/files/list")
+    def files_list(path: str = "", _=Depends(_auth)):
+        import file_browser
+        try:
+            return file_browser.list_dir(path)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.get("/files/read")
+    def files_read(path: str, _=Depends(_auth)):
+        import file_browser
+        try:
+            return file_browser.read_file(path)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/files/write")
+    async def files_write(request: Request, _=Depends(_auth)):
+        import file_browser
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            return file_browser.write_file(body.get("path", ""), body.get("content", ""))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
     @app.post("/chat/reset")
     async def chat_reset(request: Request, _=Depends(_auth)):
         from chat_backend import reset_session
