@@ -259,6 +259,41 @@
   .file-chip .fi { color: var(--amber); font-size: 9px; }
   .file-chip .open { color: var(--text3); font-size: 9px; }
 
+  /* Workspace picker in sidebar */
+  .ws-pick {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 3px;
+    padding: 7px 10px; cursor: pointer; color: var(--text); text-align: left;
+    font-family: var(--font); font-size: 13px; transition: border-color 120ms;
+  }
+  .ws-pick:hover { border-color: var(--borderMid); }
+  .ws-pick .ic { font-family: var(--mono); font-size: 12px; color: var(--amber); flex-shrink: 0; }
+  .ws-pick-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ws-pick-go { font-family: var(--mono); font-size: 9px; color: var(--text3); letter-spacing: 0.06em; flex-shrink: 0; }
+  .ws-pick:hover .ws-pick-go { color: var(--amber); }
+  .ws-pick-hint { font-size: 11px; color: var(--text3); line-height: 1.5; margin-top: 7px; }
+
+  /* "Set as workspace" control in the overlay crumb bar */
+  .ws-setbar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .ws-setbar .cur {
+    flex: 1; font-family: var(--mono); font-size: 9px; color: var(--text3);
+    letter-spacing: 0.04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    direction: rtl; text-align: left;
+  }
+  .ws-setbar .cur b { color: var(--greenBright); font-weight: 500; }
+  .ws-set {
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; white-space: nowrap;
+    padding: 4px 9px; border-radius: 2px; cursor: pointer; flex-shrink: 0;
+    background: var(--surface3); border: 1px solid var(--border); color: var(--text2);
+    transition: all 120ms;
+  }
+  .ws-set:hover { color: #0b0b0b; background: var(--amber); border-color: var(--amber); }
+  .ws-set.iscur { color: var(--green); border-color: var(--amberDim); cursor: default; background: transparent; }
+  .ws-set.iscur:hover { color: var(--green); background: transparent; border-color: var(--amberDim); }
+
   /* Workspace toggle in sidebar */
   .ws-toggle {
     display: flex; align-items: center; gap: 8px; width: 100%;
@@ -418,6 +453,18 @@
           <span>Actions are live. Miko may send messages, modify files, and interact with connected services on your behalf.</span>
         </div>
       </div>
+      <div class="rule"></div>
+
+      <!-- Workspace -->
+      <div class="section">
+        <div class="seclabel">Workspace</div>
+        <button class="ws-pick" id="ws-pick" type="button" title="Choose the folder Miko works in">
+          <span class="ic">⌗</span>
+          <span class="ws-pick-name" id="ws-name">…</span>
+          <span class="ws-pick-go">change</span>
+        </button>
+        <div class="ws-pick-hint">The folder Miko works in and the explorer opens to.</div>
+      </div>
     </div>
 
     <button class="ws-toggle" id="ws-open" type="button">
@@ -466,6 +513,10 @@
     <div class="ws-body">
       <div class="ws-explorer">
         <div class="ws-roots" id="ws-roots"></div>
+        <div class="ws-setbar">
+          <span class="cur" id="ws-cur">workspace: <b id="ws-cur-name">—</b></span>
+          <button class="ws-set" id="ws-set" type="button" title="Make this folder the active workspace">set this folder</button>
+        </div>
         <div class="ws-crumb" id="ws-crumb">—</div>
         <div class="ws-list" id="ws-list"></div>
       </div>
@@ -715,6 +766,7 @@ async function send() {
         provider: curProvider, model: $('#model').value,
         api_key: $('#api-key').value, base_url: $('#base-url').value,
         allow_actions: $('#allow-actions').classList.contains('on'),
+        workspace: workspace,
       }),
     })).json();
     trow.remove();
@@ -759,9 +811,46 @@ function setAllow(on) {
 // ── Workspace (file explorer + editor) ─────────────────────
 const CM_THEME = 'material-darker';
 let wsCurDir = '';        // current folder shown in explorer
+let workspace = '';       // the active workspace folder (Miko works here)
 let edPath = null;        // file currently open in editor
 let edBaseline = '';      // last-saved content (for dirty tracking)
 let cm = null;            // CodeMirror instance (null until first file opened)
+
+const baseName = p => (p || '').replace(/[\\\/]+$/, '').split(/[\\\/]/).pop() || p;
+
+async function loadWorkspace() {
+  try {
+    const data = await (await fetch('/workspace')).json();
+    setActiveWorkspace(data.workspace || '', false);
+  } catch (e) { /* offline */ }
+}
+
+function setActiveWorkspace(path, announce) {
+  workspace = path || '';
+  $('#ws-name').textContent = workspace ? baseName(workspace) : '—';
+  $('#ws-name').title = workspace;
+  const cn = $('#ws-cur-name'); if (cn) { cn.textContent = workspace ? baseName(workspace) : '—'; }
+  const cc = $('#ws-cur'); if (cc) cc.title = workspace;
+  updateSetBtn();
+}
+
+function updateSetBtn() {
+  const b = $('#ws-set'); if (!b) return;
+  const isCur = wsCurDir && workspace && wsCurDir.toLowerCase() === workspace.toLowerCase();
+  b.classList.toggle('iscur', isCur);
+  b.textContent = isCur ? '✓ active workspace' : 'set this folder';
+}
+
+async function setWorkspaceTo(path) {
+  try {
+    const res = await (await fetch('/workspace', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace: path }),
+    })).json();
+    if (res.error) { return; }
+    setActiveWorkspace(res.workspace || path, true);
+  } catch (e) { /* ignore */ }
+}
 
 async function openWorkspace(focusPath) {
   $('#workspace').classList.add('open');
@@ -770,8 +859,8 @@ async function openWorkspace(focusPath) {
     const dir = focusPath.replace(/[\\\/][^\\\/]*$/, '');
     await loadDir(dir);
     await openFile(focusPath);
-  } else if (!wsCurDir) {
-    await loadDir('');
+  } else {
+    await loadDir(workspace || '');   // default to the active workspace
   }
 }
 function closeWorkspace() { $('#workspace').classList.remove('open'); }
@@ -796,6 +885,7 @@ async function loadDir(path) {
   if (data.error) { $('#ws-list').innerHTML = `<div class="ws-empty">${data.error}</div>`; return; }
   wsCurDir = data.path;
   $('#ws-crumb').textContent = data.path;
+  updateSetBtn();
   const list = $('#ws-list'); list.innerHTML = '';
 
   if (data.parent !== null && data.parent !== undefined) {
@@ -939,6 +1029,8 @@ $('#save-env').addEventListener('click', saveToEnv);
 $('#allow-actions').addEventListener('click', () => { setAllow(!$('#allow-actions').classList.contains('on')); saveCfg(); });
 $('#send-btn').addEventListener('click', send);
 $('#clear-btn').addEventListener('click', clearChat);
+$('#ws-pick').addEventListener('click', () => openWorkspace());
+$('#ws-set').addEventListener('click', () => { if (wsCurDir) setWorkspaceTo(wsCurDir); });
 
 const input = $('#input');
 input.addEventListener('input', () => {
@@ -948,6 +1040,7 @@ input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) {
 
 setAllow(!!cfg.allow);
 emptyState();
+loadWorkspace();
 loadModels().then(() => input.focus());
 </script>
 </body>

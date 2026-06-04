@@ -125,6 +125,9 @@ def _build_app():
         if not message:
             return JSONResponse({"error": "Empty message."}, status_code=400)
 
+        import file_browser
+        workspace = (body.get("workspace") or "").strip() or file_browser.get_workspace()
+
         result = chat(
             router=_router,
             session_id=body.get("session_id", "default"),
@@ -136,6 +139,7 @@ def _build_app():
             allow_actions=bool(body.get("allow_actions", False)),
             owner_name=CONFIG.owner_name,
             language=getattr(CONFIG, "language", "en"),
+            workspace=workspace,
         )
         return JSONResponse(result)
 
@@ -161,6 +165,23 @@ def _build_app():
     def files_roots(_=Depends(_auth)):
         import file_browser
         return {"roots": file_browser.roots()}
+
+    @app.get("/workspace")
+    def workspace_get(_=Depends(_auth)):
+        import file_browser
+        return {"workspace": file_browser.get_workspace()}
+
+    @app.post("/workspace")
+    async def workspace_set(request: Request, _=Depends(_auth)):
+        import file_browser
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            return file_browser.set_workspace(body.get("workspace", ""))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
 
     @app.get("/files/list")
     def files_list(path: str = "", _=Depends(_auth)):

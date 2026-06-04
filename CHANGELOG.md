@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     lists it as a chip under her message (`chat()` returns a `files` array; paths are
     captured from the actual tool-call arguments and any path echoed in the result, then
     verified to exist on disk). Clicking a chip opens it in the workspace.
+  - **Selectable active workspace**: a "Workspace" picker in the sidebar lets you choose
+    the folder Miko works in right now. The chosen folder (a) is where the explorer opens,
+    (b) is injected into the chat system prompt (so "what workspace are you in?" and
+    "create a file here" follow your choice), and (c) is exported as `MIKO_WORKSPACE` so
+    `run_command` executes there. Set it from the sidebar or with "set this folder" while
+    browsing; it persists across restarts (`data/workspace.json`). New endpoints:
+    `GET /workspace`, `POST /workspace`; `/chat/message` accepts an optional `workspace`.
   - **Built-in Workspace** (file explorer + code editor, `file_browser.py`): a VS
     Code-style overlay to browse folders, open files, and save edits without leaving the
     page. CodeMirror gives syntax highlighting (Python, JS, HTML/CSS, Markdown, shell,

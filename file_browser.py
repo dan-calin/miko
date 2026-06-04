@@ -8,6 +8,7 @@ the same Windows/system paths Miko's voice tools refuse. No path traversal escap
 allowed roots; binary and oversized files are refused for editing.
 """
 
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -84,7 +85,7 @@ def _resolve(path: str) -> Path:
 
 def list_dir(path: str = "") -> dict:
     """List a directory's entries (folders first, then files; both alphabetical)."""
-    target = _resolve(path) if path else _HOME / "Desktop"
+    target = _resolve(path) if path else Path(get_workspace())
     if not target.exists():
         target = _HOME
     target = _resolve(str(target))
@@ -158,3 +159,43 @@ def write_file(path: str, content: str) -> dict:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content if isinstance(content, str) else "", encoding="utf-8")
     return {"ok": True, "path": str(p), "size": p.stat().st_size}
+
+
+# ── Active workspace ──────────────────────────────────────────────────────────
+# The folder the user has chosen to "work in" right now. Drives the explorer's
+# default location, is injected into the chat system prompt, and is exported as
+# MIKO_WORKSPACE so run_command executes there. Persisted so it survives restarts.
+_STATE_PATH = _PROJECT / "data" / "workspace.json"
+
+
+def get_workspace() -> str:
+    """Return the active workspace folder (validated), defaulting to the project dir."""
+    try:
+        if _STATE_PATH.exists():
+            saved = json.loads(_STATE_PATH.read_text(encoding="utf-8")).get("workspace", "")
+            if saved:
+                try:
+                    p = _resolve(saved)
+                    if p.is_dir():
+                        os.environ.setdefault("MIKO_WORKSPACE", str(p))
+                        return str(p)
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+    return str(_PROJECT)
+
+
+def set_workspace(path: str) -> dict:
+    """Set the active workspace to a folder (must be inside the allowed trees)."""
+    p = _resolve(path)
+    if not p.is_dir():
+        raise ValueError("Workspace must be an existing folder.")
+    _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _STATE_PATH.write_text(json.dumps({"workspace": str(p)}), encoding="utf-8")
+    os.environ["MIKO_WORKSPACE"] = str(p)
+    return {"ok": True, "workspace": str(p)}
+
+
+# Make the saved workspace active on import (sets MIKO_WORKSPACE for run_command).
+get_workspace()

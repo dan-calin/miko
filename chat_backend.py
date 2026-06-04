@@ -161,20 +161,32 @@ def write_env_keys(updates: dict) -> dict:
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-def _system_prompt(owner_name: str, language: str) -> str:
+def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
     if language == "ro":
-        return (
+        base = (
             f"Ești Miko, asistentul personal al lui {owner_name}, accesibil printr-un chat text. "
             "Ai acces la unelte care controlează PC-ul Windows al userului, Discord, calendarele, "
             "căutarea web, notițe și fișiere. Folosește uneltele când e nevoie; nu inventa rezultate. "
             "Răspunde scurt și la obiect. Răspunde în română dacă userul scrie în română."
         )
-    return (
+        if workspace:
+            base += (
+                f" Lucrezi acum în folderul ales de user (workspace-ul curent): {workspace}. "
+                "Când creezi, citești sau rulezi fișiere fără o cale completă, folosește acest folder."
+            )
+        return base
+    base = (
         f"You are Miko, {owner_name}'s personal assistant, reachable through a text chat. "
         "You have tools that control the user's Windows PC, Discord, calendars, web search, "
         "notes, and files. Use the tools when needed; never make up results. Be concise and "
         "direct. Reply in the language the user writes in."
     )
+    if workspace:
+        base += (
+            f" You are currently working in the user's selected workspace folder: {workspace}. "
+            "When creating, reading, or running files without an explicit full path, use this folder."
+        )
+    return base
 
 
 # ── History helpers ───────────────────────────────────────────────────────────
@@ -262,7 +274,7 @@ def _run_tool(router, name: str, args: dict, allow_actions: bool,
 
 def chat(router, session_id: str, message: str, provider: str, model: str,
          api_key: str = "", base_url: str = "", allow_actions: bool = False,
-         owner_name: str = "Roxan", language: str = "en") -> dict:
+         owner_name: str = "Roxan", language: str = "en", workspace: str = "") -> dict:
     """Run one chat turn. Returns {"reply": str, "tools_used": [...], "error": str|None}."""
     preset = PROVIDERS.get(provider)
     if not preset:
@@ -280,7 +292,7 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
     if not model:
         return {"reply": "", "tools_used": [], "error": "No model specified."}
 
-    system = _system_prompt(owner_name, language)
+    system = _system_prompt(owner_name, language, workspace)
     history = _get_history(session_id)
     used: list = []
     files: list = []

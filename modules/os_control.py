@@ -588,10 +588,14 @@ def run_command(task: str, visible: bool = False) -> str:
     if _BLOCKED_CMD_PATTERNS.search(task):
         return "Comanda pare periculoasă și a fost blocată din motive de securitate, sefu."
 
+    # Run in the user's selected workspace folder, if one is set (else default cwd).
+    _ws = os.getenv("MIKO_WORKSPACE", "").strip()
+    _cwd = _ws if (_ws and os.path.isdir(_ws)) else None
+
     # If it looks like a direct command, run it. Otherwise treat as NL.
     try:
         if visible:
-            subprocess.Popen(["cmd", "/k", task], creationflags=subprocess.CREATE_NEW_CONSOLE)
+            subprocess.Popen(["cmd", "/k", task], cwd=_cwd, creationflags=subprocess.CREATE_NEW_CONSOLE)
             return f"Am deschis un terminal nou cu comanda: {task}"
         else:
             result = subprocess.run(
@@ -602,6 +606,7 @@ def run_command(task: str, visible: bool = False) -> str:
                 timeout=15,
                 encoding="utf-8",
                 errors="replace",
+                cwd=_cwd,
             )
             out = (result.stdout or "").strip()
             err = (result.stderr or "").strip()
