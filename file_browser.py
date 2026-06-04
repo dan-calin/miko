@@ -10,6 +10,8 @@ allowed roots; binary and oversized files are refused for editing.
 
 import json
 import os
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -189,3 +191,36 @@ def set_workspace(path: str) -> dict:
 
 # Make the saved workspace active on import (sets MIKO_WORKSPACE for run_command).
 get_workspace()
+
+
+# ── Native folder picker ──────────────────────────────────────────────────────
+# Pops the OS "Select Folder" dialog so the user can navigate visually instead of
+# typing a path. The server runs on the user's own machine, so the dialog shows on
+# their screen. Tk is run in a throwaway subprocess (its own main thread) to avoid
+# the threading limits of calling Tk from a web-server worker thread.
+_PICKER_CODE = (
+    "import os, tkinter as tk\n"
+    "from tkinter import filedialog\n"
+    "r = tk.Tk(); r.withdraw()\n"
+    "r.attributes('-topmost', True); r.update()\n"
+    "init = os.environ.get('MIKO_PICK_INIT') or None\n"
+    "p = filedialog.askdirectory(initialdir=init, mustexist=True,\n"
+    "                            title='Select a folder for Miko')\n"
+    "r.destroy()\n"
+    "print(p or '')\n"
+)
+
+
+def pick_directory(initial: str = "") -> str:
+    """Open the native folder-picker and return the chosen path ('' if cancelled)."""
+    env = dict(os.environ)
+    if initial and os.path.isdir(initial):
+        env["MIKO_PICK_INIT"] = initial
+    try:
+        out = subprocess.run(
+            [sys.executable, "-c", _PICKER_CODE],
+            capture_output=True, text=True, timeout=300, env=env,
+        )
+        return out.stdout.strip()
+    except Exception:
+        return ""

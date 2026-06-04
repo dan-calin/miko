@@ -48,7 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `/chat/message` accepts an optional `workspace`.
   - **Built-in Workspace** (file explorer + code editor, `file_browser.py`): a VS
     Code-style overlay to browse folders, open files, and save edits without leaving the
-    page. Free navigation — an editable address bar to type/paste any path, plus real
+    page. Free navigation — a **Browse…** button that opens the native Windows
+    "Select Folder" dialog (the server runs locally, so the picker shows on your screen
+    via `POST /files/pick`), an editable address bar to type/paste any path, and real
     drive-letter quick-jumps. CodeMirror gives syntax highlighting (Python, JS, HTML/CSS,
     Markdown, shell, YAML, C-like…), with Ctrl/⌘-S to save and a dirty/saved indicator; it
     degrades to a plain textarea if the CDN is unreachable. New endpoints:

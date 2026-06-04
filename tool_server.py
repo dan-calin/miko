@@ -191,6 +191,18 @@ def _build_app():
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
+    @app.post("/files/pick")
+    async def files_pick(request: Request, _=Depends(_auth)):
+        import file_browser
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        path = file_browser.pick_directory(body.get("initial", ""))
+        if not path:
+            return {"cancelled": True}
+        return {"path": path}
+
     @app.get("/files/read")
     def files_read(path: str, _=Depends(_auth)):
         import file_browser

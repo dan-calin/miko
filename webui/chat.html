@@ -340,6 +340,14 @@
   }
   .ws-root:hover { color: var(--text); border-color: var(--borderMid); }
   .ws-pathbar { display: flex; gap: 6px; padding: 12px 14px 10px; }
+  .ws-browse {
+    flex-shrink: 0; font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em;
+    padding: 0 10px; border-radius: 3px; cursor: pointer;
+    background: var(--surface3); border: 1px solid var(--amberDim); color: var(--amber);
+    transition: all 120ms; white-space: nowrap;
+  }
+  .ws-browse:hover { background: var(--amber); border-color: var(--amber); color: #0b0b0b; }
+  .ws-browse:disabled { opacity: 0.5; cursor: default; }
   .ws-path {
     flex: 1; min-width: 0; background: var(--surface2); border: 1px solid var(--border);
     border-radius: 3px; padding: 7px 9px; color: var(--text); font-family: var(--mono);
@@ -522,8 +530,9 @@
     <div class="ws-body">
       <div class="ws-explorer">
         <div class="ws-pathbar">
+          <button class="ws-browse" id="ws-browse" type="button" title="Browse for a folder…">⌖ Browse</button>
           <input class="ws-path" id="ws-path" type="text" spellcheck="false" autocomplete="off"
-                 placeholder="Type or paste any folder path…" />
+                 placeholder="…or type / paste a path" />
           <button class="ws-go" id="ws-go" type="button" title="Go to this folder">Go</button>
         </div>
         <div class="ws-roots" id="ws-roots"></div>
@@ -1025,6 +1034,20 @@ $('#ws-close').addEventListener('click', closeWorkspace);
 $('#ed-save').addEventListener('click', saveFile);
 $('#ws-go').addEventListener('click', () => loadDir($('#ws-path').value.trim()));
 $('#ws-path').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); loadDir($('#ws-path').value.trim()); } });
+$('#ws-browse').addEventListener('click', browseForFolder);
+
+async function browseForFolder() {
+  const b = $('#ws-browse'); const label = b.textContent;
+  b.disabled = true; b.textContent = 'Opening…';
+  try {
+    const res = await (await fetch('/files/pick', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initial: wsCurDir || workspace || '' }),
+    })).json();
+    if (res.path) await loadDir(res.path);
+  } catch (e) { /* ignore */ }
+  finally { b.disabled = false; b.textContent = label; }
+}
 document.addEventListener('keydown', e => {
   if ($('#workspace').classList.contains('open')) {
     if (e.key === 'Escape') closeWorkspace();
