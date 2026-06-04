@@ -53,7 +53,9 @@ _AGENTS = {
             "approval before sending; never send on their behalf unless they confirm.\n"
             "- After anything is handled, close the loop: add/adjust calendar events, "
             "note the commitment, and set a follow-up reminder for anything pending.\n"
-            "- Open with a short briefing: schedule, what needs action, what's stale."
+            "- Open with a short briefing: schedule, what needs action, what's stale.\n"
+            "- Tools: get_today_events / list_events / create_event (calendar), "
+            "send_discord_dm (read it back + confirm before sending), set_reminder, remember."
         ),
     },
     "planner": {
@@ -147,7 +149,10 @@ _SKILLS = {
             "says it, mark it unverified; separate fact from inference; prefer recent "
             "sources; if evidence is thin, say 'insufficient data' rather than guess.\n"
             "- Deliver: executive summary, themed findings with citations, key "
-            "takeaways, and a numbered Sources list."
+            "takeaways, and a numbered Sources list.\n"
+            "- In Miko's chat this skill auto-runs the orchestrated deep_research "
+            "pipeline (live progress + a cited vault note). By voice or elsewhere, call "
+            "the deep_research tool for the full run, or web_search for a quick lookup."
         ),
     },
     "article-writing": {
@@ -309,7 +314,13 @@ def build_overlay(agent_id: str = "", skill_ids=None) -> str:
 
     if not parts:
         return ""
-    return (
+    header = (
         "\n\n=== Selected ECC agent / skills (follow these closely) ===\n"
-        + "\n\n".join(parts)
+        "Actually CALL Miko's tools to do the work — don't just describe steps. "
+        "Map intents to tools: research → deep_research (or web_search); memory → "
+        "recall / remember; notes → create_note / search_notes / read_note; shell & git "
+        "→ run_command; files → file_op; schedule → get_today_events / list_events / "
+        "create_event; messaging → send_discord_dm. Use recall before answering about the "
+        "user or past work.\n"
     )
+    return header + "\n".join(parts)
