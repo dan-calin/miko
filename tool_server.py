@@ -172,8 +172,36 @@ def _build_app():
             agent=(body.get("agent") or "").strip(),
             skills=skills,
             effort=(body.get("effort") or "standard").strip(),
+            approval=bool(body.get("approval", False)),
         )
         return JSONResponse(result)
+
+    @app.post("/chat/approve")
+    async def chat_approve(request: Request, _=Depends(_auth)):
+        """Execute an action the user approved in the Chat UI (file write/command/…)."""
+        from chat_backend import _needs_approval, _collect_files
+        if _router is None:
+            raise HTTPException(status_code=503, detail="Router not initialised")
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        name = (body.get("tool") or "").strip()
+        args = body.get("args") or {}
+        if not isinstance(args, dict):
+            args = {}
+        if not name or not _needs_approval(name, args):
+            return JSONResponse({"error": "Not an approvable action."}, status_code=400)
+        try:
+            result = str(_router._dispatch_module(name, args))
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+        files: list = []
+        try:
+            _collect_files(name, args, result, files)
+        except Exception:
+            pass
+        return {"ok": True, "result": result, "files": files}
 
     @app.post("/chat/research")
     async def chat_research(request: Request, _=Depends(_auth)):

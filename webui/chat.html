@@ -357,6 +357,39 @@
   .hints .live, .hints .live-sep { display: none; }
   .hints .live { color: var(--greenBright); }
 
+  /* Approval cards (the user approves edits/commands before they apply) */
+  .pending-wrap { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .ap-card {
+    border: 1px solid var(--border); border-left: 2px solid var(--amber);
+    border-radius: 4px; background: var(--surface); overflow: hidden;
+  }
+  .ap-card.done   { border-left-color: var(--green); opacity: 0.85; }
+  .ap-card.denied { border-left-color: #b06a4a; opacity: 0.7; }
+  .ap-head {
+    display: flex; align-items: center; gap: 8px; padding: 8px 11px;
+    font-family: var(--mono); font-size: 11px; color: var(--text);
+  }
+  .ap-head .ap-ic { color: var(--amber); }
+  .ap-body {
+    margin: 0; padding: 9px 11px; background: #0d0d0d; border-top: 1px solid var(--border);
+    font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--text2);
+    white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto;
+  }
+  .ap-diff .di-add  { color: var(--greenBright); }
+  .ap-diff .di-del  { color: #c87a58; }
+  .ap-diff .di-hunk { color: var(--text3); }
+  .ap-actions { display: flex; align-items: center; gap: 8px; padding: 8px 11px; }
+  .ap-approve, .ap-deny {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em;
+    padding: 5px 12px; border-radius: 3px; cursor: pointer; transition: all 120ms;
+  }
+  .ap-approve { background: var(--amber); border: 1px solid var(--amber); color: #0b0b0b; }
+  .ap-approve:hover { background: #d4b063; }
+  .ap-deny { background: var(--surface3); border: 1px solid var(--border); color: var(--text2); }
+  .ap-deny:hover { color: #c87a58; border-color: #5a3a2a; }
+  .ap-approve:disabled, .ap-deny:disabled { opacity: 0.5; cursor: default; }
+  .ap-status { font-family: var(--mono); font-size: 10px; color: var(--text3); }
+
   /* File chips (links to files Miko created/edited) */
   .files { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .file-chip {
@@ -651,6 +684,15 @@
           <span class="dot">●</span>
           <span>Actions are live. Miko may send messages, modify files, and interact with connected services on your behalf.</span>
         </div>
+        <div class="aa-row" style="margin-top:14px">
+          <div style="flex:1">
+            <div class="seclabel" style="margin-bottom:5px">Approve Changes</div>
+            <div class="aa-desc" id="ap-desc">Off — Miko applies edits & commands directly.</div>
+          </div>
+          <button class="toggle" id="approve-mode" role="switch" aria-checked="false" type="button">
+            <span class="knob"></span>
+          </button>
+        </div>
       </div>
       <div class="rule"></div>
 
@@ -786,6 +828,7 @@ let AS = { agents: [], skills: [] };
 let asAgent = cfg.agent || '';
 let asSkills = Array.isArray(cfg.skills) ? cfg.skills.slice() : [];
 let asEffort = cfg.effort || 'standard';   // quick | standard | deep (per model)
+let approveMode = !!cfg.approve;           // require approval for edits & commands
 
 function envKeyName(id) { return (MODELS[id] && MODELS[id].env_key) || ''; }
 
@@ -807,6 +850,7 @@ function saveCfg() {
   cfg.model    = $('#model').value;
   cfg.baseUrl  = $('#base-url').value;
   cfg.allow    = $('#allow-actions').classList.contains('on');
+  cfg.approve  = approveMode;
   cfg.agent    = asAgent;
   cfg.skills   = asSkills;
   cfg.effort   = asEffort;
@@ -955,10 +999,11 @@ function addBot() {
   const tx = document.createElement('div'); tx.className = 'bot-text';
   const tl = document.createElement('div'); tl.className = 'tools';
   const fl = document.createElement('div'); fl.className = 'files';
+  const pn = document.createElement('div'); pn.className = 'pending-wrap';
   const st = document.createElement('div'); st.className = 'stamp';
-  c.append(tx, tl, fl, st); row.append(g, c);
+  c.append(tx, tl, fl, pn, st); row.append(g, c);
   messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
-  return { tx, tl, fl, st };
+  return { tx, tl, fl, pn, st };
 }
 
 function renderFileChips(host, files) {
@@ -973,6 +1018,71 @@ function renderFileChips(host, files) {
     chip.addEventListener('click', () => openWorkspace(f.path));
     host.appendChild(chip);
   });
+}
+
+// ── Approval cards (approve file/command changes before they apply) ─────────
+function renderDiff(pre, diff) {
+  diff.split('\n').forEach(line => {
+    const s = document.createElement('span');
+    if (line.startsWith('+') && !line.startsWith('+++')) s.className = 'di-add';
+    else if (line.startsWith('-') && !line.startsWith('---')) s.className = 'di-del';
+    else if (line.startsWith('@@')) s.className = 'di-hunk';
+    s.textContent = line + '\n'; pre.appendChild(s);
+  });
+}
+
+function approvalCard(a) {
+  const card = document.createElement('div'); card.className = 'ap-card ' + (a.kind || 'action');
+  const ic = a.kind === 'delete' ? '🗑' : a.kind === 'command' ? '⌘' : '✎';
+  const head = document.createElement('div'); head.className = 'ap-head';
+  head.innerHTML = `<span class="ap-ic">${ic}</span><span class="ap-sum"></span>`;
+  head.querySelector('.ap-sum').textContent = a.summary || a.tool;
+  card.appendChild(head);
+  if (a.command) { const pre = document.createElement('pre'); pre.className = 'ap-body'; pre.textContent = a.command; card.appendChild(pre); }
+  if (a.diff)    { const pre = document.createElement('pre'); pre.className = 'ap-body ap-diff'; renderDiff(pre, a.diff); card.appendChild(pre); }
+
+  const acts = document.createElement('div'); acts.className = 'ap-actions';
+  const ok = document.createElement('button'); ok.className = 'ap-approve'; ok.type = 'button'; ok.textContent = 'Approve';
+  const no = document.createElement('button'); no.className = 'ap-deny'; no.type = 'button'; no.textContent = 'Deny';
+  const status = document.createElement('span'); status.className = 'ap-status';
+  acts.append(ok, no, status); card.appendChild(acts);
+
+  ok.addEventListener('click', async () => {
+    ok.disabled = no.disabled = true; status.textContent = 'applying…';
+    try {
+      const res = await (await fetch('/chat/approve', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: a.tool, args: a.args }),
+      })).json();
+      if (res.error) { status.textContent = '✗ ' + res.error; ok.disabled = no.disabled = false; return; }
+      card.classList.add('done'); status.textContent = '✓ applied';
+      acts.querySelectorAll('button').forEach(b => b.remove());
+      if (res.files && res.files.length) {
+        const fl = document.createElement('div'); fl.className = 'files'; card.appendChild(fl);
+        renderFileChips(fl, res.files);
+      }
+    } catch (e) { status.textContent = '✗ ' + e.message; ok.disabled = no.disabled = false; }
+  });
+  no.addEventListener('click', () => {
+    card.classList.add('denied'); status.textContent = '✗ denied';
+    acts.querySelectorAll('button').forEach(b => b.remove());
+  });
+  return card;
+}
+
+function renderPending(host, items) {
+  host.innerHTML = '';
+  items.forEach(a => host.appendChild(approvalCard(a)));
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function setApprove(on) {
+  const t = $('#approve-mode');
+  t.classList.toggle('on', on);
+  t.setAttribute('aria-checked', on ? 'true' : 'false');
+  $('#ap-desc').textContent = on
+    ? 'On — Miko proposes edits & commands; you approve each.'
+    : 'Off — Miko applies edits & commands directly.';
 }
 
 function thinking() {
@@ -1023,17 +1133,18 @@ async function send() {
         api_key: $('#api-key').value, base_url: $('#base-url').value,
         allow_actions: $('#allow-actions').classList.contains('on'),
         workspace: workspace,
-        agent: asAgent, skills: asSkills, effort: asEffort,
+        agent: asAgent, skills: asSkills, effort: asEffort, approval: approveMode,
       }),
     })).json();
     trow.remove();
-    const { tx, tl, fl, st } = addBot();
+    const { tx, tl, fl, pn, st } = addBot();
     if (data.error) { tx.className = 'bot-text err'; renderBotText(tx, '⚠ ' + data.error); }
     else {
       renderBotText(tx, data.reply || '(no response)');
       if (data.tools_used && data.tools_used.length)
         tl.innerHTML = data.tools_used.map(t => `<span class="chip"><span class="di">◈</span>${t}</span>`).join('');
       renderFileChips(fl, data.files);
+      if (data.pending && data.pending.length) renderPending(pn, data.pending);
       updateMonitor((data.usage && data.usage.total_tokens) || 0);
     }
     st.textContent = fmtTime(new Date());
@@ -1700,6 +1811,7 @@ $('#api-key').addEventListener('change', saveCfg);
 $('#base-url').addEventListener('change', saveCfg);
 $('#save-env').addEventListener('click', saveToEnv);
 $('#allow-actions').addEventListener('click', () => { setAllow(!$('#allow-actions').classList.contains('on')); saveCfg(); });
+$('#approve-mode').addEventListener('click', () => { approveMode = !approveMode; setApprove(approveMode); saveCfg(); });
 $('#send-btn').addEventListener('click', send);
 $('#clear-btn').addEventListener('click', clearChat);
 $('#conv-new').addEventListener('click', newConversation);
@@ -1739,6 +1851,7 @@ $('#ob-retry').addEventListener('click', async () => {
 });
 
 setAllow(!!cfg.allow);
+setApprove(approveMode);
 emptyState();
 checkServer();
 loadWorkspace();

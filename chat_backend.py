@@ -376,14 +376,81 @@ def _collect_files(name: str, args: dict, result: str, files: list) -> None:
         files.append({"path": full, "name": os.path.basename(full)})
 
 
+# ── Approval gate (the user approves file/command changes before they apply) ──
+
+_READONLY_FILE_OPS = {"list", "read", "exists", "info", "search", "open"}
+
+
+def _needs_approval(name: str, args: dict) -> bool:
+    """True if this tool mutates the system and should require explicit approval."""
+    from core.command_router import REQUIRES_CONFIRMATION
+    if name in REQUIRES_CONFIRMATION:
+        return True
+    if name == "run_command":
+        return True
+    if name == "file_op":
+        return str(args.get("action", "")).lower().strip() not in _READONLY_FILE_OPS
+    return False
+
+
+def _file_diff(path: str, new: str) -> str:
+    """A short unified diff of a proposed file write (or a preview for a new file)."""
+    import difflib
+    old = ""
+    try:
+        if path and os.path.isfile(path):
+            old = open(path, encoding="utf-8", errors="replace").read()
+    except Exception:
+        old = ""
+    new = str(new or "")
+    if not old:
+        return "(new file)\n" + new[:2000]
+    diff = "\n".join(difflib.unified_diff(
+        old.splitlines(), new.splitlines(), lineterm="",
+        fromfile="current", tofile="proposed", n=2))
+    return diff[:6000] if diff else "(no change)"
+
+
+def _action_preview(name: str, args: dict) -> dict:
+    """Human-facing summary of a proposed action for the approval card."""
+    if name == "run_command":
+        return {"kind": "command", "summary": "Run a shell command", "command": args.get("task", "")}
+    if name == "file_op":
+        action = str(args.get("action", "")).lower().strip()
+        path = args.get("path", "") or args.get("destination", "")
+        if action == "write":
+            return {"kind": "file", "summary": f"Write {path}", "path": path,
+                    "diff": _file_diff(path, args.get("content", ""))}
+        if action in ("delete",):
+            return {"kind": "delete", "summary": f"Delete {path}", "path": path}
+        dest = args.get("destination", "")
+        return {"kind": "file", "summary": f"{action} {path}" + (f" → {dest}" if dest else ""),
+                "path": path}
+    if name == "delete_file":
+        return {"kind": "delete", "summary": f"Delete {args.get('path', '')}", "path": args.get("path", "")}
+    return {"kind": "action", "summary": name.replace("_", " ")}
+
+
 def _run_tool(router, name: str, args: dict, allow_actions: bool,
-              used: list, files: list) -> str:
+              used: list, files: list, approval: bool = False, pending: list = None) -> str:
     from core.command_router import REQUIRES_CONFIRMATION
 
     used.append(name)
     safe, reason = router._safety_check(name, args)
     if not safe:
         return f"[blocked for security: {reason}]"
+
+    # Approval mode: queue mutating/destructive actions for the user to approve,
+    # instead of running them. Read-only tools still run normally.
+    if approval and pending is not None and _needs_approval(name, args):
+        import uuid
+        action = {"id": "act-" + uuid.uuid4().hex[:8], "tool": name, "args": args}
+        action.update(_action_preview(name, args))
+        pending.append(action)
+        return (f"[PROPOSED — queued for the user's approval (id {action['id']}). It has "
+                "NOT run yet. Tell the user what you're proposing and that you're waiting "
+                "for their approval; do NOT claim it's done.]")
+
     if name in REQUIRES_CONFIRMATION and not allow_actions:
         return (
             f"[blocked] '{name}' is a sensitive action. The user must enable "
@@ -435,7 +502,7 @@ def _create_safe(fn, base_kwargs: dict, extra: dict):
 def chat(router, session_id: str, message: str, provider: str, model: str,
          api_key: str = "", base_url: str = "", allow_actions: bool = False,
          owner_name: str = "Roxan", language: str = "en", workspace: str = "",
-         agent: str = "", skills=None, effort: str = "standard") -> dict:
+         agent: str = "", skills=None, effort: str = "standard", approval: bool = False) -> dict:
     """Run one chat turn. Returns {"reply": str, "tools_used": [...], "error": str|None}."""
     preset = PROVIDERS.get(provider)
     if not preset:
@@ -485,21 +552,24 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
     files: list = []
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     rounds = _EFFORT_ROUNDS.get(effort, _MAX_ROUNDS)   # effort → tool-call budget
+    pending: list = []                                 # actions awaiting approval
 
     try:
         if preset["protocol"] == "gemini":
-            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds, effort)
+            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending)
         elif preset["protocol"] == "anthropic":
-            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort)
+            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending)
         else:
-            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort)
+            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending)
     except Exception as e:
         logger.error(f"chat() error ({provider}/{model}): {e}", exc_info=True)
-        return {"reply": "", "tools_used": used, "files": files, "usage": usage, "error": str(e)}
+        return {"reply": "", "tools_used": used, "files": files, "usage": usage,
+                "pending": pending, "error": str(e)}
 
     _save_turn(session_id, message, reply, used, files)
     _learn_async(message, reply, session_id)   # learn facts + episode (throttled)
-    return {"reply": reply, "tools_used": used, "files": files, "usage": usage, "error": None}
+    return {"reply": reply, "tools_used": used, "files": files, "usage": usage,
+            "pending": pending, "error": None}
 
 
 def _accum_usage(usage: dict, resp, proto: str) -> None:
@@ -527,7 +597,7 @@ def _accum_usage(usage: dict, resp, proto: str) -> None:
 
 # ── OpenAI-compatible (OpenAI, DeepSeek, Kimi, custom) ────────────────────────
 
-def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard") -> str:
+def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None) -> str:
     from openai import OpenAI
     from tools import ALL_TOOL_DECLARATIONS_OPENAI
 
@@ -566,7 +636,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
                 args = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
                 args = {}
-            result = _run_tool(router, tc.function.name, args, allow_actions, used, files)
+            result = _run_tool(router, tc.function.name, args, allow_actions, used, files, approval, pending)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     final = _create_safe(client.chat.completions.create, {"model": model, "messages": messages}, rk)
@@ -577,7 +647,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
 
 # ── Anthropic-compatible (MiniMax /anthropic) ────────────────────────────────
 
-def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard") -> str:
+def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None) -> str:
     import anthropic
     from tools import ALL_TOOL_DECLARATIONS_ANTHROPIC
 
@@ -614,7 +684,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
         results = []
         for block in tool_use:
             args = dict(block.input) if block.input else {}
-            result = _run_tool(router, block.name, args, allow_actions, used, files)
+            result = _run_tool(router, block.name, args, allow_actions, used, files, approval, pending)
             results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
         messages.append({"role": "user", "content": results})
 
@@ -627,7 +697,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
-def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard") -> str:
+def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None) -> str:
     from google import genai
     from google.genai import types
     from tools import ALL_TOOL_DECLARATIONS
@@ -685,7 +755,7 @@ def _run_gemini(router, key, model, system, history, message, allow_actions, use
         for part in fc_parts:
             fc = part.function_call
             args = dict(fc.args) if fc.args else {}
-            result = _run_tool(router, fc.name, args, allow_actions, used, files)
+            result = _run_tool(router, fc.name, args, allow_actions, used, files, approval, pending)
             response_parts.append(
                 types.Part(function_response=types.FunctionResponse(
                     name=fc.name, response={"result": result}))

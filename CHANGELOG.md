@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Approval mode — review file/command changes before they apply** (Claude-Code-style
+  permissions). A sidebar **Approve Changes** toggle: when on, mutating tools (file
+  writes/moves/deletes, `run_command`, and the destructive/send tools) are **not executed**
+  — instead Miko proposes them and the chat shows an **approval card** with the command or
+  a **unified diff** of the file change, plus **Approve / Deny**. Approving runs the action
+  (and links any files it produced); denying discards it. Read-only tools still run freely.
+  New endpoint `POST /chat/approve`; `/chat/message` accepts an `approval` flag.
+
 - **Per-model settings + effort dial, and an expanded provider list.** The Chat UI's
   Agent/Skills popover remembers persona + skills **per provider+model** and adds an
   **Effort** control (Quick/Standard/Deep). Effort drives three things: deep-research
