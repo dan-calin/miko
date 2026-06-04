@@ -171,6 +171,7 @@ def _build_app():
             workspace=workspace,
             agent=(body.get("agent") or "").strip(),
             skills=skills,
+            effort=(body.get("effort") or "standard").strip(),
         )
         return JSONResponse(result)
 

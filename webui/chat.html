@@ -1631,7 +1631,7 @@ function buildASPop() {
   let html = '<div class="as-pop-head"><span class="as-sec-label" style="padding:0">For ' +
              mk.replace(/[<>&]/g, '') + '</span>' +
              '<button class="as-clear" id="as-clear" type="button">clear all</button></div>';
-  html += '<div class="as-sec-label">Effort · deep-research depth</div><div class="as-effort">';
+  html += '<div class="as-sec-label">Effort · research depth + tool budget</div><div class="as-effort">';
   [['quick', 'Quick'], ['standard', 'Standard'], ['deep', 'Deep']].forEach(([v, lab]) => {
     html += `<button type="button" class="as-eff${asEffort === v ? ' on' : ''}" data-eff="${v}">${lab}</button>`;
   });

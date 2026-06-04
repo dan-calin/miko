@@ -383,10 +383,13 @@ def _run_tool(router, name: str, args: dict, allow_actions: bool,
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
+_EFFORT_ROUNDS = {"quick": 3, "standard": 6, "deep": 8}
+
+
 def chat(router, session_id: str, message: str, provider: str, model: str,
          api_key: str = "", base_url: str = "", allow_actions: bool = False,
          owner_name: str = "Roxan", language: str = "en", workspace: str = "",
-         agent: str = "", skills=None) -> dict:
+         agent: str = "", skills=None, effort: str = "standard") -> dict:
     """Run one chat turn. Returns {"reply": str, "tools_used": [...], "error": str|None}."""
     preset = PROVIDERS.get(provider)
     if not preset:
@@ -435,14 +438,15 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
     used: list = []
     files: list = []
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    rounds = _EFFORT_ROUNDS.get(effort, _MAX_ROUNDS)   # effort → tool-call budget
 
     try:
         if preset["protocol"] == "gemini":
-            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage)
+            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds)
         elif preset["protocol"] == "anthropic":
-            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage)
+            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds)
         else:
-            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage)
+            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds)
     except Exception as e:
         logger.error(f"chat() error ({provider}/{model}): {e}", exc_info=True)
         return {"reply": "", "tools_used": used, "files": files, "usage": usage, "error": str(e)}
@@ -477,7 +481,7 @@ def _accum_usage(usage: dict, resp, proto: str) -> None:
 
 # ── OpenAI-compatible (OpenAI, DeepSeek, Kimi, custom) ────────────────────────
 
-def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None) -> str:
+def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS) -> str:
     from openai import OpenAI
     from tools import ALL_TOOL_DECLARATIONS_OPENAI
 
@@ -487,7 +491,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
     messages.append({"role": "user", "content": message})
     tools = ALL_TOOL_DECLARATIONS_OPENAI or None
 
-    for _ in range(_MAX_ROUNDS):
+    for _ in range(rounds):
         kwargs = {"model": model, "messages": messages}
         if tools:
             kwargs["tools"] = tools
@@ -526,7 +530,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
 
 # ── Anthropic-compatible (MiniMax /anthropic) ────────────────────────────────
 
-def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None) -> str:
+def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS) -> str:
     import anthropic
     from tools import ALL_TOOL_DECLARATIONS_ANTHROPIC
 
@@ -535,7 +539,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
     messages.append({"role": "user", "content": message})
     tools = ALL_TOOL_DECLARATIONS_ANTHROPIC or None
 
-    for _ in range(_MAX_ROUNDS):
+    for _ in range(rounds):
         kwargs = {"model": model, "max_tokens": 4096, "system": system, "messages": messages}
         if tools:
             kwargs["tools"] = tools
@@ -575,7 +579,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
-def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None) -> str:
+def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS) -> str:
     from google import genai
     from google.genai import types
     from tools import ALL_TOOL_DECLARATIONS
@@ -595,7 +599,7 @@ def _run_gemini(router, key, model, system, history, message, allow_actions, use
         tools=[types.Tool(function_declarations=ALL_TOOL_DECLARATIONS)] if ALL_TOOL_DECLARATIONS else [],
     )
 
-    for _ in range(_MAX_ROUNDS):
+    for _ in range(rounds):
         resp = client.models.generate_content(model=model, contents=contents, config=gen_config)
         if usage is not None:
             _accum_usage(usage, resp, "gemini")
