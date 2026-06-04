@@ -131,6 +131,14 @@ class AudioHandler:
                 sys_prompt += f"\n\n[{label}]\n" + "\n".join(f"- {i}" for i in insights)
         except Exception:
             pass
+        try:
+            import schedule_briefs
+            brief = schedule_briefs.get_today_brief()
+            if brief:
+                label = "TODAY'S SCHEDULE" if is_en else "PROGRAMUL DE AZI"
+                sys_prompt += f"\n\n[{label}]\n{brief}"
+        except Exception:
+            pass
 
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],

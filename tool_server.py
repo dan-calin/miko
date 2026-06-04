@@ -37,6 +37,12 @@ def start(command_router) -> None:
         name="ToolServer",
     ).start()
     _start_knowledge_index()
+    try:
+        from config import CONFIG
+        from modules.schedule_briefs import start as _start_briefs
+        _start_briefs(CONFIG.owner_name)
+    except Exception as e:
+        logger.warning(f"schedule briefs not started: {e}")
     logger.info(f"Tool server listening on {host}:{port}")
 
 

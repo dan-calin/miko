@@ -194,6 +194,9 @@ def main():
     from modules.calendar_reminders import start as _start_reminders
     _start_reminders(CONFIG.owner_name)
 
+    from modules.schedule_briefs import start as _start_briefs
+    _start_briefs(CONFIG.owner_name)
+
     # ── Run main async loop ──────────────────────────────────────────────────
     try:
         asyncio.run(audio_handler.run())
