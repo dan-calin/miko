@@ -14,31 +14,31 @@ from datetime import datetime
 from pathlib import Path
 
 # ── Boundaries ────────────────────────────────────────────────────────────────
+# This is a self-hosted, single-user tool: the user can browse and edit anywhere
+# the OS lets them. The only hard rule is that we refuse to *write* into the
+# Windows system folders, so a stray save can't corrupt the OS. Reading/browsing
+# is unrestricted.
 _HOME = Path.home().resolve()
 _PROJECT = Path(__file__).resolve().parent
 
-# Browsing is fenced to these trees.
-_ALLOWED_TREES = [_HOME, _PROJECT]
-
-# Never expose these (case-insensitive prefix match on the resolved path).
-_BLOCKED_PREFIXES = (
+# Refused for writes only (case-insensitive prefix match on the resolved path).
+_WRITE_BLOCKED = (
     "c:\\windows",
-    str((_HOME / "AppData").resolve()).lower(),
+    "c:\\program files\\windowsapps",
 )
 
-# Quick-jump roots shown in the explorer.
+
 def roots() -> list[dict]:
+    """Convenience jump points: the real drive letters + Home. Not restrictions —
+    the user can type any path in the address bar to go anywhere."""
+    import string
     out = []
-    for name, p in [
-        ("Desktop",   _HOME / "Desktop"),
-        ("Documents", _HOME / "Documents"),
-        ("Downloads", _HOME / "Downloads"),
-        ("Miko Notes", _HOME / "Desktop" / "Miko Notes"),
-        ("Home",      _HOME),
-        ("Project",   _PROJECT),
-    ]:
-        if p.exists():
-            out.append({"name": name, "path": str(p.resolve())})
+    for letter in string.ascii_uppercase:
+        d = f"{letter}:\\"
+        if os.path.exists(d):
+            out.append({"name": f"{letter}:", "path": d})
+    if _HOME.exists():
+        out.append({"name": "Home", "path": str(_HOME)})
     return out
 
 
@@ -61,8 +61,9 @@ def _lang(name: str) -> str:
 
 
 # ── Safety ────────────────────────────────────────────────────────────────────
-def _resolve(path: str) -> Path:
-    """Resolve a user-supplied path and verify it is inside an allowed tree."""
+def _resolve(path: str, for_write: bool = False) -> Path:
+    """Resolve a user-supplied path. Browsing is unrestricted; writes are refused
+    inside the Windows system folders."""
     if not path or not str(path).strip():
         raise ValueError("No path given.")
     p = Path(path).expanduser()
@@ -71,16 +72,12 @@ def _resolve(path: str) -> Path:
     except (OSError, RuntimeError):
         raise ValueError("Invalid path.")
 
-    low = str(p).lower()
-    for bad in _BLOCKED_PREFIXES:
-        if low == bad or low.startswith(bad + os.sep) or low.startswith(bad + "\\"):
-            raise ValueError("That location is off-limits.")
-
-    for tree in _ALLOWED_TREES:
-        t = str(tree).lower()
-        if low == t or low.startswith(t + os.sep) or low.startswith(t + "\\"):
-            return p
-    raise ValueError("Outside the allowed folders (home directory / project).")
+    if for_write:
+        low = str(p).lower()
+        for bad in _WRITE_BLOCKED:
+            if low == bad or low.startswith(bad + os.sep) or low.startswith(bad + "\\"):
+                raise ValueError("Writing into Windows system folders is blocked.")
+    return p
 
 
 def list_dir(path: str = "") -> dict:
@@ -116,14 +113,7 @@ def list_dir(path: str = "") -> dict:
     dirs.sort(key=lambda e: e["name"].lower())
     files.sort(key=lambda e: e["name"].lower())
 
-    parent = None
-    try:
-        cand = target.parent
-        if cand != target:
-            _resolve(str(cand))   # only offer "up" if parent is still in-bounds
-            parent = str(cand)
-    except ValueError:
-        parent = None
+    parent = str(target.parent) if target.parent != target else None
 
     return {"path": str(target), "parent": parent, "entries": dirs + files}
 
@@ -152,8 +142,8 @@ def read_file(path: str) -> dict:
 
 
 def write_file(path: str, content: str) -> dict:
-    """Save edits back to a file (must already resolve to an allowed location)."""
-    p = _resolve(path)
+    """Save edits back to a file (refused only inside Windows system folders)."""
+    p = _resolve(path, for_write=True)
     if p.is_dir():
         raise ValueError("That path is a folder.")
     p.parent.mkdir(parents=True, exist_ok=True)
