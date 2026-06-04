@@ -770,7 +770,7 @@ const $ = s => document.querySelector(s);
 const messagesEl = $('#messages'), chatEl = $('#chat');
 let MODELS = {}, ENV = {};   // ENV: { ENV_VAR_NAME: value } loaded from .env
 
-const PCODE = { gemini:'GEM', minimax:'MMX', openai:'OAI', deepseek:'DSK', kimi:'KMI', custom:'CST' };
+const PCODE = { gemini:'GEM', openai:'OAI', anthropic:'CLD', minimax:'MMX', deepseek:'DSK', kimi:'KMI', grok:'GRK', custom:'CST' };
 const codeFor = id => PCODE[id] || id.slice(0,3).toUpperCase();
 
 let sessionId = localStorage.getItem('miko_session');

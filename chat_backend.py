@@ -30,41 +30,58 @@ _MAX_HISTORY = 30  # neutral messages handed to the model per turn
 
 # ── Provider presets ──────────────────────────────────────────────────────────
 # env_key: the .env variable holding the API key (used if the UI doesn't supply one).
+# Model lists current as of June 2026. Newest first; older models kept for
+# compatibility. You still need a key with access to whichever model you pick.
 PROVIDERS = {
     "gemini": {
         "label": "Google Gemini",
         "protocol": "gemini",
         "base_url": "",
         "env_key": "LLM_API_KEY",
-        "models": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
-    },
-    "minimax": {
-        "label": "MiniMax",
-        "protocol": "anthropic",
-        "base_url": "https://api.minimax.io/anthropic",
-        "env_key": "MINIMAX_API_KEY",
-        "models": ["MiniMax-M2.7", "MiniMax-Text-01"],
+        "models": ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3-flash",
+                   "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"],
     },
     "openai": {
         "label": "OpenAI",
         "protocol": "openai",
         "base_url": "https://api.openai.com/v1",
         "env_key": "OPENAI_API_KEY",
-        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"],
+        "models": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2", "gpt-4.1", "gpt-4o"],
+    },
+    "anthropic": {
+        "label": "Anthropic Claude",
+        "protocol": "anthropic",
+        "base_url": "",   # SDK default → api.anthropic.com (real Claude)
+        "env_key": "ANTHROPIC_API_KEY",
+        "models": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+    },
+    "minimax": {
+        "label": "MiniMax",
+        "protocol": "anthropic",
+        "base_url": "https://api.minimax.io/anthropic",
+        "env_key": "MINIMAX_API_KEY",
+        "models": ["MiniMax-M3", "MiniMax-M3-highspeed", "MiniMax-M2.7"],
     },
     "deepseek": {
         "label": "DeepSeek",
         "protocol": "openai",
         "base_url": "https://api.deepseek.com",
         "env_key": "DEEPSEEK_API_KEY",
-        "models": ["deepseek-chat", "deepseek-reasoner"],
+        "models": ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
     },
     "kimi": {
         "label": "Kimi (Moonshot)",
         "protocol": "openai",
         "base_url": "https://api.moonshot.ai/v1",
         "env_key": "MOONSHOT_API_KEY",
-        "models": ["kimi-k2-0905-preview", "moonshot-v1-8k", "moonshot-v1-32k"],
+        "models": ["kimi-k2.6", "kimi-k2-0905-preview", "moonshot-v1-32k"],
+    },
+    "grok": {
+        "label": "xAI Grok",
+        "protocol": "openai",
+        "base_url": "https://api.x.ai/v1",
+        "env_key": "XAI_API_KEY",
+        "models": ["grok-4.3", "grok-4.20", "grok-4-fast"],
     },
     "custom": {
         "label": "Custom (OpenAI-compatible)",
@@ -150,8 +167,8 @@ _ENV_PATH = Path(__file__).resolve().parent / ".env"
 
 # Only these keys are exposed to the UI editor — the chat provider API keys.
 EDITABLE_ENV_KEYS = [
-    "LLM_API_KEY", "MINIMAX_API_KEY", "OPENAI_API_KEY",
-    "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY",
+    "LLM_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MINIMAX_API_KEY",
+    "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "XAI_API_KEY",
 ]
 
 
