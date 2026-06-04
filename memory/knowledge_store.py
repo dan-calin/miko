@@ -15,6 +15,8 @@ This is deliberately dependency-light: sqlite3 + numpy only (both already presen
 """
 
 import logging
+import math
+import re
 import sqlite3
 import threading
 import time
@@ -53,20 +55,30 @@ def _db() -> sqlite3.Connection:
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute(
             """CREATE TABLE IF NOT EXISTS chunks (
-                   id       INTEGER PRIMARY KEY AUTOINCREMENT,
-                   kind     TEXT NOT NULL,
-                   ref      TEXT NOT NULL,
-                   title    TEXT,
-                   text     TEXT NOT NULL,
-                   vec      BLOB,
-                   dim      INTEGER,
-                   backend  TEXT,
-                   mtime    REAL,
-                   updated  REAL,
+                   id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                   kind        TEXT NOT NULL,
+                   ref         TEXT NOT NULL,
+                   title       TEXT,
+                   text        TEXT NOT NULL,
+                   vec         BLOB,
+                   dim         INTEGER,
+                   backend     TEXT,
+                   mtime       REAL,
+                   updated     REAL,
+                   importance  REAL DEFAULT 1,
+                   created     REAL,
+                   last_used   REAL,
+                   source      TEXT,
                    UNIQUE(kind, ref)
                )"""
         )
         _conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_kind ON chunks(kind)")
+        # Migrate older DBs (v1 lacked the scoring columns).
+        cols = {r[1] for r in _conn.execute("PRAGMA table_info(chunks)").fetchall()}
+        for col, decl in (("importance", "REAL DEFAULT 1"), ("created", "REAL"),
+                          ("last_used", "REAL"), ("source", "TEXT")):
+            if col not in cols:
+                _conn.execute(f"ALTER TABLE chunks ADD COLUMN {col} {decl}")
         _conn.commit()
     return _conn
 
@@ -80,8 +92,9 @@ def _to_blob(vec) -> bytes | None:
 
 
 def upsert_many(items: list[dict]) -> int:
-    """Insert/replace chunks. Each item: {kind, ref, title, text, mtime?}.
-    Embeds all texts in one batch when a backend is available."""
+    """Insert/replace chunks. Each item: {kind, ref, title, text, mtime?,
+    importance?, source?}. Embeds all texts in one batch when a backend is
+    available. `created` is preserved across updates; `last_used` is refreshed."""
     items = [it for it in items if (it.get("text") or "").strip()]
     if not items:
         return 0
@@ -97,25 +110,33 @@ def upsert_many(items: list[dict]) -> int:
         rows.append((
             it["kind"], it["ref"], it.get("title", ""), it["text"],
             _to_blob(v), dim, bname if v is not None else "",
-            it.get("mtime"), now,
+            it.get("mtime"), now, float(it.get("importance", 1)), now, now,
+            it.get("source", ""),
         ))
     with _lock:
         db = _db()
         db.executemany(
-            """INSERT INTO chunks (kind, ref, title, text, vec, dim, backend, mtime, updated)
-               VALUES (?,?,?,?,?,?,?,?,?)
+            """INSERT INTO chunks
+                   (kind, ref, title, text, vec, dim, backend, mtime, updated,
+                    importance, created, last_used, source)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(kind, ref) DO UPDATE SET
                    title=excluded.title, text=excluded.text, vec=excluded.vec,
                    dim=excluded.dim, backend=excluded.backend,
-                   mtime=excluded.mtime, updated=excluded.updated""",
+                   mtime=excluded.mtime, updated=excluded.updated,
+                   importance=excluded.importance,
+                   created=COALESCE(chunks.created, excluded.created),
+                   last_used=excluded.last_used, source=excluded.source""",
             rows,
         )
         db.commit()
     return len(rows)
 
 
-def upsert(kind: str, ref: str, title: str, text: str, mtime: float | None = None) -> int:
-    return upsert_many([{"kind": kind, "ref": ref, "title": title, "text": text, "mtime": mtime}])
+def upsert(kind: str, ref: str, title: str, text: str, mtime: float | None = None,
+           importance: float = 1, source: str = "") -> int:
+    return upsert_many([{"kind": kind, "ref": ref, "title": title, "text": text,
+                         "mtime": mtime, "importance": importance, "source": source}])
 
 
 def delete_ref(kind: str, ref: str) -> None:
@@ -135,73 +156,87 @@ def delete_prefix(kind: str, ref_prefix: str) -> None:
 
 # ── Search ────────────────────────────────────────────────────────────────────
 
-def search(query: str, k: int = 6, kinds: list[str] | None = None) -> list[dict]:
-    """Return the top-k most relevant chunks for the query.
-    Semantic (cosine) when embeddings are available + indexed; keyword otherwise."""
-    query = (query or "").strip()
-    if not query:
-        return []
+_RECENCY_TAU_DAYS = 45.0
+_W_KEYWORD = 0.15       # keyword overlap boost on top of semantic relevance
+_W_RECENCY = 0.25       # exp-decayed recency
+_W_IMPORTANCE = 0.20    # normalised importance (1-5 → 0.2-1.0)
 
-    qv = embeddings.embed([query])
-    if qv:
-        sem = _search_semantic(query, qv[0], k, kinds)
-        if sem:
-            return sem
-    return _search_keyword(query, k, kinds)
+
+def _recency(ts: float, now: float) -> float:
+    if not ts:
+        return 0.0
+    age_days = max(0.0, (now - ts) / 86400.0)
+    return math.exp(-age_days / _RECENCY_TAU_DAYS)
+
+
+def _kw_overlap(terms, title, text) -> float:
+    if not terms:
+        return 0.0
+    hay = (str(title) + " " + str(text)).lower()
+    return sum(1 for t in terms if t in hay) / len(terms)
 
 
 def _rows(kinds):
     db = _db()
+    sel = ("SELECT id, kind, ref, title, text, vec, backend, importance, created, last_used "
+           "FROM chunks")
     if kinds:
         ph = ",".join("?" * len(kinds))
-        cur = db.execute(
-            f"SELECT kind, ref, title, text, vec, dim, backend FROM chunks WHERE kind IN ({ph})",
-            list(kinds),
-        )
+        cur = db.execute(sel + f" WHERE kind IN ({ph})", list(kinds))
     else:
-        cur = db.execute("SELECT kind, ref, title, text, vec, dim, backend FROM chunks")
+        cur = db.execute(sel)
     return cur.fetchall()
 
 
-def _search_semantic(query, qvec, k, kinds):
-    bname = embeddings.backend_name()
-    with _lock:
-        rows = _rows(kinds)
-    mats, meta = [], []
-    for kind, ref, title, text, vec, dim, backend in rows:
-        if vec is None or backend != bname:
-            continue   # un-embedded or embedded by a different backend
-        mats.append(np.frombuffer(vec, dtype=np.float32))
-        meta.append((kind, ref, title, text))
-    if not mats:
+def search(query: str, k: int = 6, kinds: list[str] | None = None) -> list[dict]:
+    """Top-k chunks scored by relevance (semantic + keyword) + recency + importance.
+    Falls back to keyword-only relevance when no embedding backend is available."""
+    query = (query or "").strip()
+    if not query:
         return []
-    M = np.vstack(mats)
-    M = M / (np.linalg.norm(M, axis=1, keepdims=True) + 1e-9)
-    q = np.asarray(qvec, dtype=np.float32)
-    q = q / (np.linalg.norm(q) + 1e-9)
-    scores = M @ q
-    order = np.argsort(-scores)[:k]
-    out = []
-    for i in order:
-        kind, ref, title, text = meta[i]
-        out.append({"kind": kind, "ref": ref, "title": title,
-                    "text": text, "score": round(float(scores[i]), 4)})
-    return out
-
-
-def _search_keyword(query, k, kinds):
-    terms = [t for t in query.lower().split() if len(t) > 2] or [query.lower()]
     with _lock:
         rows = _rows(kinds)
+    if not rows:
+        return []
+
+    now = time.time()
+    terms = [t for t in re.findall(r"[a-z0-9]+", query.lower()) if len(t) > 2]
+    bname = embeddings.backend_name()
+    qv = embeddings.embed([query])
+    q = None
+    if qv:
+        q = np.asarray(qv[0], dtype=np.float32)
+        q = q / (np.linalg.norm(q) + 1e-9)
+
     scored = []
-    for kind, ref, title, text, vec, dim, backend in rows:
-        hay = (title + " " + text).lower()
-        score = sum(hay.count(t) for t in terms)
-        if score:
-            scored.append((score, {"kind": kind, "ref": ref, "title": title,
-                                   "text": text, "score": float(score)}))
+    for (rid, kind, ref, title, text, vec, backend, importance, created, last_used) in rows:
+        rel = 0.0
+        if q is not None and vec is not None and backend == bname:
+            v = np.frombuffer(vec, dtype=np.float32)
+            v = v / (np.linalg.norm(v) + 1e-9)
+            rel = float(v @ q)
+        kw = _kw_overlap(terms, title, text)
+        relevance = (rel + _W_KEYWORD * kw) if q is not None else kw
+        if relevance <= 0:
+            continue
+        score = (relevance
+                 + _W_RECENCY * _recency(created or last_used, now)
+                 + _W_IMPORTANCE * (float(importance or 1) / 5.0))
+        scored.append((score, rid, {"kind": kind, "ref": ref, "title": title,
+                                    "text": text, "score": round(score, 4)}))
+
     scored.sort(key=lambda x: -x[0])
-    return [s[1] for s in scored[:k]]
+    top = scored[:k]
+    if top:   # keep frequently-recalled memories "fresh"
+        try:
+            with _lock:
+                db = _db()
+                db.executemany("UPDATE chunks SET last_used=? WHERE id=?",
+                               [(now, t[1]) for t in top])
+                db.commit()
+        except Exception:
+            pass
+    return [t[2] for t in top]
 
 
 # ── Indexing helpers ──────────────────────────────────────────────────────────
@@ -305,6 +340,7 @@ def index_facts(memory: dict) -> int:
             items.append({
                 "kind": "fact", "ref": f"{category}/{key}",
                 "title": label, "text": f"{label}: {val}",
+                "importance": 3, "source": "fact",
             })
     return upsert_many(items) if items else 0
 

@@ -126,22 +126,75 @@ def format_memory_for_prompt(memory: dict | None) -> str:
     return result + "\n"
 
 
+_CATEGORIES = ("identity", "preferences", "relationships", "notes")
+
+_RECONCILE_PROMPT = """You maintain a user's long-term memory as JSON. \
+Categories: identity, preferences, relationships, notes.
+
+CURRENT MEMORY:
+{memory}
+
+From the latest exchange, decide what to store or change. Rules:
+- To CORRECT a fact, put the NEW value in "set" under the SAME existing key
+  (e.g. user says "I'm an IT Technician, not a Beta Tester" → set job to "IT
+  Technician"). Do NOT delete a fact that has a replacement value.
+- Use a new short snake_case key only for a genuinely new, durable fact.
+- Use "delete" ONLY for a fact that is no longer true and has no replacement.
+- Keep only stable facts/preferences/relationships worth remembering later — NOT
+  small talk, tasks, or one-off chatter.
+
+Return ONLY JSON, no prose:
+{{"set": {{"identity": {{"name": "Dan"}}}}, "delete": ["identity.old_key"]}}
+If nothing is worth changing, return {{"set": {{}}, "delete": []}}.
+
+USER: {user}
+ASSISTANT: {ai}
+JSON:"""
+
+
+def _compact_memory(memory: dict) -> str:
+    """Compact 'category.key = value' dump of current memory for the prompt."""
+    lines = []
+    for cat in _CATEGORIES:
+        for key, entry in (memory.get(cat, {}) or {}).items():
+            val = entry.get("value") if isinstance(entry, dict) else entry
+            if val:
+                lines.append(f"{cat}.{key} = {val}")
+    return "\n".join(lines) if lines else "(empty)"
+
+
+def _parse_json_obj(raw: str) -> dict:
+    raw = re.sub(r"```(?:json)?", "", raw or "").strip().rstrip("`").strip()
+    m = re.search(r"\{.*\}", raw, re.S)
+    if not m:
+        return {}
+    try:
+        data = json.loads(m.group(0))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def update_from_conversation_async(
     memory_file: Path, gemini_api_key: str, user_text: str, ai_text: str,
     minimax_api_key: str = "", minimax_base_url: str = "", minimax_model: str = "",
 ) -> None:
     """
-    Called every N turns. Runs in a daemon thread.
-    Extracts personal facts from the user's speech via MiniMax (preferred) or Gemini.
+    Called every N turns; runs in a daemon thread. Memory-aware extract→reconcile:
+    one cheap LLM call sees the current memory and the latest exchange and returns
+    canonical set/delete operations, so corrections overwrite instead of piling up.
     """
     global _turn_counter, _last_user_text
     _turn_counter += 1
     if _turn_counter % _MEMORY_EVERY_N != 0:
         return
     text = user_text.strip()
-    if len(text) < 10 or text == _last_user_text:
+    if len(text) < 8 or text == _last_user_text:
         return
     _last_user_text = text
+
+    import os
+    mem_model = os.getenv("MIKO_MEMORY_MODEL", "gemini-2.5-flash-lite")
 
     def _complete(prompt: str) -> str:
         if minimax_api_key:
@@ -149,51 +202,62 @@ def update_from_conversation_async(
                 import anthropic
                 client = anthropic.Anthropic(api_key=minimax_api_key, base_url=minimax_base_url)
                 resp = client.messages.create(
-                    model=minimax_model,
-                    max_tokens=512,
+                    model=minimax_model, max_tokens=512,
                     messages=[{"role": "user", "content": prompt}],
                 )
                 return resp.content[0].text.strip() if resp.content else ""
-            else:
-                from openai import OpenAI
-                client = OpenAI(api_key=minimax_api_key, base_url=minimax_base_url)
-                resp = client.chat.completions.create(
-                    model=minimax_model,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                return (resp.choices[0].message.content or "").strip()
-        else:
-            from google import genai
-            client = genai.Client(api_key=gemini_api_key)
-            return client.models.generate_content(
-                model="gemini-2.5-flash", contents=prompt
-            ).text.strip()
+            from openai import OpenAI
+            client = OpenAI(api_key=minimax_api_key, base_url=minimax_base_url)
+            resp = client.chat.completions.create(
+                model=minimax_model, messages=[{"role": "user", "content": prompt}],
+            )
+            return (resp.choices[0].message.content or "").strip()
+        from google import genai
+        client = genai.Client(api_key=gemini_api_key)
+        return client.models.generate_content(model=mem_model, contents=prompt).text.strip()
 
     def _run():
         try:
-            check = _complete(
-                "Does this message contain personal facts about the user "
-                "(name, age, city, job, hobby, relationship, birthday, preference)? "
-                f"Reply only YES or NO.\n\nMessage: {text[:300]}"
-            )
-            if "YES" not in check.upper():
+            mem = load_memory(memory_file)
+            raw = _complete(_RECONCILE_PROMPT.format(
+                memory=_compact_memory(mem), user=text[:600], ai=(ai_text or "")[:400]))
+            data = _parse_json_obj(raw)
+            if not data:
                 return
 
-            raw = _complete(
-                "Extract personal facts from this message. Any language.\n"
-                "Return ONLY valid JSON or {} if nothing found.\n"
-                "Extract: name, age, birthday, city, job, hobbies.\n"
-                'Format: {"identity":{"name":{"value":"..."}}}\n\n'
-                f"Message: {text[:500]}\n\nJSON:"
-            )
+            changed = False
+            sets = data.get("set")
+            if isinstance(sets, dict) and sets:
+                norm = {}
+                for cat, kv in sets.items():
+                    if cat in _CATEGORIES and isinstance(kv, dict):
+                        clean = {str(k): {"value": str(v)} for k, v in kv.items() if v}
+                        if clean:
+                            norm[cat] = clean
+                if norm:
+                    update_memory(memory_file, norm)
+                    changed = True
 
-            raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
-            if raw and raw != "{}":
-                data = json.loads(raw)
-                if data:
-                    update_memory(memory_file, data)
+            dels = data.get("delete")
+            if isinstance(dels, list) and dels:
+                m2 = load_memory(memory_file)
+                for path in dels:
+                    if isinstance(path, str) and "." in path:
+                        cat, key = path.split(".", 1)
+                        if isinstance(m2.get(cat), dict) and key in m2[cat]:
+                            m2[cat].pop(key, None)
+                            changed = True
+                if changed:
+                    save_memory(memory_file, m2)
+
+            if changed:   # keep the semantic index in sync with the facts
+                try:
+                    from memory import knowledge_store as KS
+                    KS.index_facts(load_memory(memory_file))
+                except Exception as e:
+                    logger.warning(f"fact reindex failed: {e}")
         except Exception as e:
             if "429" not in str(e):
-                logger.warning(f"Memory extraction error: {e}")
+                logger.warning(f"Memory learn error: {e}")
 
-    threading.Thread(target=_run, daemon=True, name="MemoryExtractor").start()
+    threading.Thread(target=_run, daemon=True, name="MemoryLearn").start()

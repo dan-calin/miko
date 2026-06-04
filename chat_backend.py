@@ -246,15 +246,24 @@ def _memory_context(message: str) -> str:
     if facts:
         parts.append(facts.strip())
 
+    # Ranked recall across notes/episodes/insights, capped to a tight token budget
+    # (~350 tokens ≈ 1400 chars) so per-turn cost stays small regardless of vault size.
     try:
         from memory import knowledge_store as KS
-        hits = KS.search(message, k=4, kinds=["note"])
-        if hits:
-            lines = [
-                f"- {h['text'][:220].strip()} (note: {os.path.basename(h['ref'].split('#')[0])})"
-                for h in hits
-            ]
-            parts.append("[RELEVANT NOTES — from your vault]\n" + "\n".join(lines))
+        hits = KS.search(message, k=6, kinds=["note", "episode", "insight"])
+        budget, used, lines = 1400, 0, []
+        for h in hits:
+            snippet = h["text"][:220].strip()
+            src = ""
+            if h["kind"] == "note":
+                src = " (" + os.path.basename(h["ref"].split("#")[0]) + ")"
+            line = f"- {snippet}{src}"
+            if used + len(line) > budget:
+                break
+            lines.append(line)
+            used += len(line)
+        if lines:
+            parts.append("[RELEVANT MEMORY]\n" + "\n".join(lines))
     except Exception as e:
         logger.warning(f"recall failed: {e}")
 
