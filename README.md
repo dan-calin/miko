@@ -20,11 +20,22 @@ switch to the other language on the fly if you speak it.
 - 🌐 Web research, notes, fast file search, journey/route planning
 - 🤖 Optional **MiniMax** backend for phone commands, and an HTTP **tool server**
   so external agents (e.g. Hermes) can use all of Miko's tools
-- 🧠 **Persistent memory** — learns and recalls facts about you across sessions,
-  with resumable conversation history in the Chat UI
-- 💬 A **web Chat UI** (`/chat`) — type to Miko with any model (Gemini, OpenAI,
-  DeepSeek, Kimi, …), a built-in **file explorer + code editor**, clickable links to
-  files Miko creates, and a selectable **workspace** folder she works in
+- 🧠 **Self-building second brain** — local-embedding semantic memory that learns from
+  you (self-correcting facts with no duplicates), recalls by *meaning*, keeps an
+  episodic log + periodic reflection, and stores knowledge as an **Obsidian-compatible
+  vault** (PARA folders + `[[wikilinks]]`). Works in voice **and** chat.
+- 🔎 **Deep Research pipeline** — plans sub-questions, reads full web pages, writes a
+  **cited** report, and saves it into the vault as linked, recall-able knowledge (live
+  progress in the Chat UI; a spoken summary by voice).
+- 🧩 **ECC agents & skills** — pick a persona + skills, configured **per model**, with an
+  **effort** dial that scales research depth.
+- 🗂️ **Project mapping** — point Miko at your project folders; it profiles each and
+  always knows what you're building.
+- 📅 **Calendar briefs** — morning / midday / night schedule briefs, and Miko always has
+  today's schedule in context.
+- 💬 A **web Chat UI** (`/chat`) — type to Miko with any model (Gemini, OpenAI, DeepSeek,
+  Kimi, …), a built-in **file explorer + code editor** with right-click file ops,
+  resumable conversations, a **resource monitor**, and a selectable **workspace** folder.
 
 ---
 
@@ -37,10 +48,11 @@ switch to the other language on the fly if you speak it.
 5. [Personal Discord voice control (optional)](#personal-discord-voice-control-optional)
 6. [MiniMax & external agents (optional)](#minimax--external-agents-optional)
 7. [Chat UI](#chat-ui)
-8. [First run](#first-run)
-9. [Voice commands](#voice-commands)
-10. [Architecture](#architecture)
-11. [Troubleshooting](#troubleshooting)
+8. [Second brain & intelligence](#second-brain--intelligence)
+9. [First run](#first-run)
+10. [Voice commands](#voice-commands)
+11. [Architecture](#architecture)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -257,6 +269,74 @@ http://localhost:7832/chat
 
 ---
 
+## Second brain & intelligence
+
+Miko is more than a command runner — it learns from you and from its own research, and
+keeps that knowledge in a vault you own. Everything below runs **locally** (embeddings via
+`fastembed`; a SQLite vector store) and works in **both** voice and chat. The "smart" work
+runs asynchronously on a cheap model, so per-turn cost stays small.
+
+### Memory that actually learns
+
+- **Self-correcting facts.** A single memory-aware *extract → reconcile* pass (Mem0-style)
+  reads your current memory and the latest turn and emits canonical add/update/delete
+  operations — so "actually, my name is Dan" **overwrites** the right fact instead of piling
+  up duplicates. Tools: `remember`, `recall`, `forget`.
+- **Recall by meaning.** Retrieval is a hybrid score — semantic similarity + keyword + recency
+  + importance — and only the top few, relevant memories are injected per turn (a tight token
+  budget), not a fixed blob.
+- **Episodic memory + reflection.** Miko keeps a short episodic log of what you've been doing
+  and periodically distills it into durable *insights* ("you've been building Miko's memory all
+  week"), pruning the raw log — memory that gets **smaller and smarter** as it grows.
+
+### The vault is an Obsidian second brain
+
+Your notes folder (`Desktop/Miko Notes`, or `MIKO_NOTES_DIR`) is a plain-Markdown vault you can
+open directly in **[Obsidian](https://obsidian.md)** — graph view, backlinks, search, zero
+migration. Miko lays a light **PARA** structure over it (`Inbox / Projects / Areas / Resources
+/ Archives / Daily`), routes captures and research into the right folders, and links related
+notes with `[[wikilinks]]`. Deleting a note also clears it from recall.
+
+### Deep Research → permanent knowledge
+
+Toggle the **Deep Research** skill (or say "research …"): Miko plans sub-questions, web-searches
+each, **reads the top sources in full**, writes a **cited** report, and **saves it as a linked
+note in `Resources/`** — so next time you ask, plain recall already knows it. The Chat UI streams
+live progress (plan → searching → reading → synthesizing); by voice you get a spoken summary.
+
+### Agents, skills & per-model settings
+
+A **⚙ Agent / Skills** picker by the composer lets you choose an ECC **persona** (Chief of Staff,
+Planner, Code Explorer/Reviewer, Security Reviewer) and toggle **skills** (Deep Research, Article
+Writing, Brand Voice, Git/GitHub, Email/Knowledge Ops, Codebase Onboarding). These layer
+trimmed, Miko-adapted instructions into the prompt and work on **every provider**. The selection —
+plus an **effort** dial (Quick / Standard / Deep, which scales research depth) — is remembered
+**per provider+model**. (Adapted from [ECC](https://github.com/affaan-m/ecc), MIT.)
+
+### Project mapping (user-controlled)
+
+Point Miko at a project folder (`add_project`) and it scans the structure + key files, writes a
+concise profile into `Projects/`, and remembers it — so Miko always knows what you're building.
+`list_projects` / `forget_project` manage them. Miko only maps folders **you** add.
+
+### Calendar awareness
+
+A daemon refreshes today's events and sends **morning / midday / night** briefs by Discord DM,
+and the day's schedule is injected into Miko's context (voice + chat) so it always knows what's
+on — without a calendar call every turn.
+
+### Reinforced voice mode
+
+Spoken replies are kept to one or two sentences (no filler). Beyond STANDBY (wake word + a short
+follow-up window), there's a stricter **MUTE** mode ("mute yourself" / "complete silence" /
+"leave me alone") — wake-word only, no window — exited with "Miko, wake up".
+
+> Optional but recommended for fully-offline embeddings: `pip install fastembed`. Without it,
+> Miko falls back to a provider embedding API, then to keyword search. The async memory model
+> defaults to a cheap `gemini-2.5-flash-lite` (override with `MIKO_MEMORY_MODEL`).
+
+---
+
 ## First run
 
 ```bash
@@ -421,6 +501,13 @@ confirmation gate for destructive actions. Run it standalone (no voice) with
 `python start_tools_server.py`. The same server hosts the **web Chat UI** at `/chat`
 (`webui/chat.html`), backed by `chat_backend.py` (model-agnostic chat that runs Miko's
 tools) and `file_browser.py` (the workspace file explorer/editor + folder picker).
+
+**Second brain:** `memory/embeddings.py` (local-first embeddings), `memory/knowledge_store.py`
+(SQLite vector store with scored hybrid recall), `memory/memory_manager.py` (extract→reconcile
+learner + reflection), `modules/knowledge.py` (`remember`/`recall`/`forget`), `vault.py`
+(Obsidian/PARA + wikilinks), `deep_research.py` (the research pipeline), `modules/projects.py`
+(project mapping), and `modules/schedule_briefs.py` (calendar briefs). Agents/skills live in
+`agent_skills.py` with the original docs vendored under `vendor/ecc/`.
 
 **Safety:** destructive tools (delete file, send Discord message, shutdown, etc.) require
 an explicit spoken **"da"** confirmation. Writes to `C:\Windows`, `System32`, and the
