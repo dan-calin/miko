@@ -24,24 +24,47 @@ TOOL_DECLARATIONS = [
     {
         "name": "remember",
         "description": (
-            "Save a durable fact, preference, or instruction to long-term memory. "
-            "Use whenever the user shares something worth keeping across conversations: "
-            "a personal detail, a preference, a relationship, or 'remember that ...'. "
-            "Write a self-contained sentence so it makes sense later on its own."
+            "Save OR UPDATE a durable fact in long-term memory. Use whenever the user "
+            "shares something worth keeping across conversations, or corrects an earlier "
+            "fact. ALWAYS pass a short canonical 'key' (1-2 words, e.g. name, job, age, "
+            "city, birthday, favorite_food) plus the 'value'. To correct or update a fact, "
+            "REUSE THE SAME key so it overwrites — never invent a new key for the same "
+            "attribute. Example: user says 'my name is Dan' → "
+            "remember(category='identity', key='name', value='Dan')."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "content": {
-                    "type": "STRING",
-                    "description": "The fact to remember, as one self-contained sentence.",
-                },
                 "category": {
                     "type": "STRING",
-                    "description": "identity, preferences, relationships, or notes (default notes).",
+                    "description": "One of: identity, preferences, relationships, notes.",
+                },
+                "key": {
+                    "type": "STRING",
+                    "description": "Short canonical identifier, e.g. name, job, age, city, "
+                                   "favorite_food. Reuse the same key to update a fact.",
+                },
+                "value": {
+                    "type": "STRING",
+                    "description": "The fact value, e.g. 'Dan' or 'IT Technician'.",
                 },
             },
-            "required": ["content"],
+            "required": ["category", "key", "value"],
+        },
+    },
+    {
+        "name": "forget",
+        "description": (
+            "Remove a stored fact from long-term memory by its category and key. Use when "
+            "the user asks you to forget something or says a stored fact is wrong/outdated."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "category": {"type": "STRING", "description": "identity, preferences, relationships, or notes."},
+                "key": {"type": "STRING", "description": "The key of the fact to remove (e.g. name, job)."},
+            },
+            "required": ["category", "key"],
         },
     },
     {
@@ -71,26 +94,54 @@ def _slug(text: str, words: int = 6) -> str:
     return "_".join(toks)[:48] or "note"
 
 
-def remember(content: str, category: str = "notes") -> str:
-    content = (content or "").strip()
-    if not content:
+def _clean_key(key: str) -> str:
+    """Normalise a model-supplied key to a short snake_case identifier."""
+    toks = re.findall(r"[A-Za-z0-9]+", (key or "").lower())[:4]
+    return "_".join(toks)[:40]
+
+
+def remember(category: str = "notes", key: str = "", value: str = "", content: str = "") -> str:
+    value = (value or content or "").strip()   # `content` kept as a fallback alias
+    if not value:
         return "There's nothing to remember — give me a fact."
     cat = category if category in _CATEGORIES else "notes"
-    key = _slug(content)
+    k = _clean_key(key) or _slug(value)
 
     from config import CONFIG
     from memory.memory_manager import update_memory
-    update_memory(CONFIG.memory_file, {cat: {key: {"value": content}}})
+    update_memory(CONFIG.memory_file, {cat: {k: {"value": value}}})   # same key overwrites
 
     # Index immediately so recall can find it semantically.
     try:
         from memory import knowledge_store as KS
-        label = key.replace("_", " ")
-        KS.upsert("fact", f"{cat}/{key}", label, f"{label}: {content}")
+        label = k.replace("_", " ")
+        KS.upsert("fact", f"{cat}/{k}", label, f"{label}: {value}")
     except Exception as e:
         logger.warning(f"remember: index failed: {e}")
 
-    return "Got it — I'll remember that."
+    return f"Got it — remembered ({cat}/{k})."
+
+
+def forget(category: str = "", key: str = "") -> str:
+    cat = (category or "").strip()
+    k = _clean_key(key)
+    if not cat or not k:
+        return "Tell me which fact to forget (a category and key)."
+
+    from config import CONFIG
+    from memory.memory_manager import load_memory, save_memory
+    mem = load_memory(CONFIG.memory_file)
+    bucket = mem.get(cat)
+    removed = bucket.pop(k, None) if isinstance(bucket, dict) else None
+    if removed is None:
+        return f"I had nothing stored under {cat}/{k}."
+    save_memory(CONFIG.memory_file, mem)
+    try:
+        from memory import knowledge_store as KS
+        KS.delete_ref("fact", f"{cat}/{k}")
+    except Exception as e:
+        logger.warning(f"forget: index cleanup failed: {e}")
+    return f"Forgotten: {cat}/{k}."
 
 
 def recall(query: str, scope: str = "all") -> str:

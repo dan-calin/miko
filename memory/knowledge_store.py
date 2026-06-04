@@ -280,10 +280,19 @@ def reindex_notes(notes_dir) -> dict:
     return {"files": files, "chunks": chunks}
 
 
+def clear_kind(kind: str) -> None:
+    with _lock:
+        db = _db()
+        db.execute("DELETE FROM chunks WHERE kind=?", (kind,))
+        db.commit()
+
+
 def index_facts(memory: dict) -> int:
-    """Index structured personal facts so they're recall-able semantically."""
+    """Re-index structured personal facts (full refresh) so the store mirrors
+    long_term.json — removed/renamed facts are purged, not left as stale vectors."""
     if not isinstance(memory, dict):
         return 0
+    clear_kind("fact")
     items = []
     for category, entries in memory.items():
         if not isinstance(entries, dict):

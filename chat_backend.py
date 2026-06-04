@@ -378,6 +378,17 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
     if not model:
         return {"reply": "", "tools_used": [], "error": "No model specified."}
 
+    # "Whose assistant am I" follows the remembered identity name, so the base
+    # prompt agrees with memory after the user corrects their name.
+    try:
+        from config import CONFIG as _C
+        from memory.memory_manager import load_memory as _lm
+        _nm = _lm(_C.memory_file).get("identity", {}).get("name", {}).get("value")
+        if _nm:
+            owner_name = _nm
+    except Exception:
+        pass
+
     system = _system_prompt(owner_name, language, workspace)
     if agent or skills:
         try:

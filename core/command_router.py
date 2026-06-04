@@ -283,6 +283,10 @@ class CommandRouter:
                 from modules.knowledge import recall
                 return recall(**args)
 
+            if tool_name == "forget":
+                from modules.knowledge import forget
+                return forget(**args)
+
             # ── Notes ────────────────────────────────────────────────────────
             if tool_name == "create_note":
                 from modules.notes import _notes_manager
