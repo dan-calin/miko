@@ -109,6 +109,29 @@ class AudioHandler:
         sys_prompt += base
         sys_prompt += self._mode_manager.get_mode_prompt_addendum()
 
+        # Voice parity with the chat "brain": layer in the configured ECC agent/skills
+        # (MIKO_VOICE_AGENT / MIKO_VOICE_SKILLS) and a little recalled context (the
+        # latest reflection insights). The `recall` tool gives query-specific depth.
+        try:
+            import os as _os
+            import agent_skills
+            overlay = agent_skills.build_overlay(
+                _os.getenv("MIKO_VOICE_AGENT", ""),
+                [s.strip() for s in _os.getenv("MIKO_VOICE_SKILLS", "").split(",") if s.strip()],
+            )
+            if overlay:
+                sys_prompt += overlay
+        except Exception:
+            pass
+        try:
+            from memory import knowledge_store as KS
+            insights = KS.recent("insight", 3)
+            if insights:
+                label = "WHAT'S BEEN GOING ON" if is_en else "CE S-A ÎNTÂMPLAT RECENT"
+                sys_prompt += f"\n\n[{label}]\n" + "\n".join(f"- {i}" for i in insights)
+        except Exception:
+            pass
+
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
@@ -293,6 +316,7 @@ class AudioHandler:
                                     minimax_api_key=getattr(self._config, "minimax_api_key", ""),
                                     minimax_base_url=getattr(self._config, "minimax_base_url", ""),
                                     minimax_model=getattr(self._config, "minimax_model", ""),
+                                    session_id="voice",
                                 )
 
                     # ── Tool calls ───────────────────────────────────────────

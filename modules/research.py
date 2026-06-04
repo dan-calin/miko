@@ -39,6 +39,23 @@ TOOL_DECLARATIONS = [
         },
     },
     {
+        "name": "deep_research",
+        "description": (
+            "Run a thorough multi-source research pipeline on a topic: it plans "
+            "sub-questions, searches the web, reads sources, writes a CITED report, and "
+            "SAVES it as a note in the vault. Use for 'research', 'deep dive', "
+            "'investigate', 'find out everything about'. Returns a short summary to say "
+            "back (the full cited report is in the vault). Takes ~30s."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "topic": {"type": "STRING", "description": "The research topic or question."}
+            },
+            "required": ["topic"],
+        },
+    },
+    {
         "name": "open_url",
         "description": "Deschide un URL în browserul implicit.",
         "parameters": {
@@ -133,6 +150,41 @@ def _ddg_search(query: str, max_results: int = 5) -> str:
 def _open_search_in_browser(query: str) -> None:
     encoded = urllib.parse.quote_plus(query)
     webbrowser.open(f"https://duckduckgo.com/?q={encoded}")
+
+
+def deep_research(topic: str) -> str:
+    """Run the orchestrated deep-research pipeline and return a short spoken summary.
+    The full cited report is saved to the vault by the pipeline. Synchronous (~30s)."""
+    topic = (topic or "").strip()
+    if not topic:
+        return "What should I research, sefu?"
+    try:
+        from config import CONFIG
+        import deep_research as _dr
+    except Exception as e:
+        return f"Research is unavailable: {e}"
+
+    report, note = "", ""
+    try:
+        for ev in _dr.run(
+            topic, provider="gemini", model="gemini-2.5-flash",
+            api_key=getattr(CONFIG, "gemini_api_key", ""),
+            language=getattr(CONFIG, "language", "en"),
+        ):
+            t = ev.get("type")
+            if t == "report":
+                report, note = ev.get("reply", ""), ev.get("note", "")
+            elif t == "error":
+                return f"Research failed: {ev.get('error')}"
+    except Exception as e:
+        logger.error(f"deep_research tool error: {e}")
+        return f"Research failed: {e}"
+
+    if not report:
+        return "I couldn't find enough to report on that, sefu."
+    summary = report.strip().split("\n\n", 1)[0][:500]
+    tail = " I saved the full report to your vault." if note else ""
+    return summary + tail
 
 
 def open_url(url: str) -> str:

@@ -274,6 +274,10 @@ class CommandRouter:
                 from modules.research import web_search
                 return web_search(**args)
 
+            if tool_name == "deep_research":
+                from modules.research import deep_research
+                return deep_research(**args)
+
             # ── Knowledge (learn / recall) ───────────────────────────────────
             if tool_name == "remember":
                 from modules.knowledge import remember
