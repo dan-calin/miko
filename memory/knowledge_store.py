@@ -345,6 +345,30 @@ def index_facts(memory: dict) -> int:
     return upsert_many(items) if items else 0
 
 
+def recent(kind: str, limit: int = 20) -> list:
+    """Return the text of the newest rows of a kind (most recent first)."""
+    with _lock:
+        db = _db()
+        cur = db.execute(
+            "SELECT text FROM chunks WHERE kind=? ORDER BY updated DESC LIMIT ?",
+            (kind, limit),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+
+def prune(kind: str, keep: int = 40) -> int:
+    """Keep only the newest `keep` rows of a kind; delete older ones."""
+    with _lock:
+        db = _db()
+        cur = db.execute(
+            """DELETE FROM chunks WHERE kind=? AND id NOT IN
+                   (SELECT id FROM chunks WHERE kind=? ORDER BY updated DESC LIMIT ?)""",
+            (kind, kind, keep),
+        )
+        db.commit()
+        return cur.rowcount
+
+
 def stats() -> dict:
     with _lock:
         db = _db()

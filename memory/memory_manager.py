@@ -7,7 +7,9 @@ Auto-extracts facts from conversation transcripts via Gemini.
 import json
 import re
 import threading
+import time
 import logging
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger("miko.memory")
@@ -15,7 +17,9 @@ logger = logging.getLogger("miko.memory")
 _lock = threading.Lock()
 MAX_VALUE_LENGTH = 300
 _MEMORY_EVERY_N = 5
+_REFLECT_EVERY = 8          # run reflection after this many stored episodes
 _turn_counter = 0
+_episodes_since_reflect = 0
 _last_user_text = ""
 
 
@@ -143,9 +147,12 @@ From the latest exchange, decide what to store or change. Rules:
 - Keep only stable facts/preferences/relationships worth remembering later — NOT
   small talk, tasks, or one-off chatter.
 
+Also write "summary": one short sentence describing what the user did or asked
+in this exchange (for an activity diary), or "" if it was trivial small talk.
+
 Return ONLY JSON, no prose:
-{{"set": {{"identity": {{"name": "Dan"}}}}, "delete": ["identity.old_key"]}}
-If nothing is worth changing, return {{"set": {{}}, "delete": []}}.
+{{"set": {{"identity": {{"name": "Dan"}}}}, "delete": ["identity.old_key"], "summary": "Dan corrected his name and job."}}
+If nothing is worth storing, return {{"set": {{}}, "delete": [], "summary": ""}}.
 
 USER: {user}
 ASSISTANT: {ai}
@@ -178,6 +185,7 @@ def _parse_json_obj(raw: str) -> dict:
 def update_from_conversation_async(
     memory_file: Path, gemini_api_key: str, user_text: str, ai_text: str,
     minimax_api_key: str = "", minimax_base_url: str = "", minimax_model: str = "",
+    session_id: str = "",
 ) -> None:
     """
     Called every N turns; runs in a daemon thread. Memory-aware extract→reconcile:
@@ -256,8 +264,68 @@ def update_from_conversation_async(
                     KS.index_facts(load_memory(memory_file))
                 except Exception as e:
                     logger.warning(f"fact reindex failed: {e}")
+
+            # Episodic memory: a one-line diary of what happened, then maybe reflect.
+            summary = (data.get("summary") or "").strip()
+            if len(summary) > 8:
+                _store_episode(summary, session_id)
+                _maybe_reflect(_complete, memory_file)
         except Exception as e:
             if "429" not in str(e):
                 logger.warning(f"Memory learn error: {e}")
 
     threading.Thread(target=_run, daemon=True, name="MemoryLearn").start()
+
+
+def _store_episode(summary: str, session_id: str) -> None:
+    """Store a one-line episodic memory, bucketed per session+hour (so it refreshes
+    rather than proliferating)."""
+    try:
+        from memory import knowledge_store as KS
+        sid = session_id or "voice"
+        now = datetime.now()
+        ref = f"ep/{sid}/{int(time.time() * 1000)}"   # unique; prune() caps the log
+        KS.upsert("episode", ref, "episode", f"[{now:%Y-%m-%d %H:%M}] {summary}",
+                  importance=2, source=sid)
+    except Exception as e:
+        logger.warning(f"episode store failed: {e}")
+
+
+def _maybe_reflect(complete_fn, memory_file: Path) -> None:
+    global _episodes_since_reflect
+    _episodes_since_reflect += 1
+    if _episodes_since_reflect < _REFLECT_EVERY:
+        return
+    _episodes_since_reflect = 0
+    _reflect(complete_fn, memory_file)
+
+
+def _reflect(complete_fn, memory_file: Path) -> None:
+    """Distill recent episodes + known facts into a few durable insights, then trim
+    the raw episode log (consolidation — compresses many memories into few)."""
+    try:
+        from memory import knowledge_store as KS
+        eps = KS.recent("episode", 20)
+        if len(eps) < 3:
+            return
+        facts = _compact_memory(load_memory(memory_file))
+        prompt = (
+            "From the user's recent activity and known facts, write 1-3 short, durable "
+            "INSIGHTS — higher-level patterns or ongoing themes worth remembering. One per "
+            "line, no numbering or preamble. Skip anything trivial.\n\n"
+            f"KNOWN FACTS:\n{facts}\n\nRECENT ACTIVITY:\n- " + "\n- ".join(eps[:20])
+            + "\n\nINSIGHTS:"
+        )
+        raw = complete_fn(prompt)
+        n = 0
+        for line in (raw or "").splitlines():
+            line = line.strip().lstrip("-*0123456789. ").strip()
+            if len(line) > 12 and n < 3:
+                KS.upsert("insight", f"insight/{abs(hash(line)) % (10 ** 9)}",
+                          "insight", line, importance=4, source="reflection")
+                n += 1
+        KS.prune("episode", keep=40)
+        if n:
+            logger.info(f"reflection stored {n} insight(s)")
+    except Exception as e:
+        logger.warning(f"reflection failed: {e}")

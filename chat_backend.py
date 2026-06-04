@@ -270,9 +270,9 @@ def _memory_context(message: str) -> str:
     return ("\n\n" + "\n\n".join(parts)) if parts else ""
 
 
-def _learn_async(user_msg: str, assistant_msg: str) -> None:
-    """Extract durable facts from a chat turn (throttled, in a daemon thread) — the
-    same learner the voice agent uses, now wired into the web chat too."""
+def _learn_async(user_msg: str, assistant_msg: str, session_id: str = "") -> None:
+    """Extract durable facts + an episodic summary from a chat turn (throttled, in a
+    daemon thread) — the same learner the voice agent uses, now wired into chat too."""
     try:
         from config import CONFIG
         from memory.memory_manager import update_from_conversation_async
@@ -281,6 +281,7 @@ def _learn_async(user_msg: str, assistant_msg: str) -> None:
             minimax_api_key=getattr(CONFIG, "minimax_api_key", ""),
             minimax_base_url=getattr(CONFIG, "minimax_base_url", ""),
             minimax_model=getattr(CONFIG, "minimax_model", ""),
+            session_id=session_id,
         )
     except Exception as e:
         logger.warning(f"chat learn failed: {e}")
@@ -430,7 +431,7 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
         return {"reply": "", "tools_used": used, "files": files, "error": str(e)}
 
     _save_turn(session_id, message, reply, used, files)
-    _learn_async(message, reply)   # learn durable facts from this turn (throttled)
+    _learn_async(message, reply, session_id)   # learn facts + episode (throttled)
     return {"reply": reply, "tools_used": used, "files": files, "error": None}
 
 
