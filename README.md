@@ -20,6 +20,9 @@ switch to the other language on the fly if you speak it.
 - 🌐 Web research, notes, fast file search, journey/route planning
 - 🤖 Optional **MiniMax** backend for phone commands, and an HTTP **tool server**
   so external agents (e.g. Hermes) can use all of Miko's tools
+- 💬 A **web Chat UI** (`/chat`) — type to Miko with any model (Gemini, OpenAI,
+  DeepSeek, Kimi, …), a built-in **file explorer + code editor**, clickable links to
+  files Miko creates, and a selectable **workspace** folder she works in
 
 ---
 
@@ -200,8 +203,8 @@ Set `TOOL_SERVER_KEY` to require a bearer token. Trusted local agents may send
 
 ### Chat UI (Miko as a tool inside a chat app)
 
-The tool server also hosts a **ChatGPT-style web UI** where you can type to Miko and
-pick your model. Open it at:
+The tool server also hosts a **web chat app** where you can type to Miko, pick your
+model, browse and edit files, and choose the folder she works in. Open it at:
 
 ```
 http://localhost:7832/chat
@@ -209,16 +212,40 @@ http://localhost:7832/chat
 
 (Available whenever `python main.py` or `python start_tools_server.py` is running.)
 
+**Chat & models**
+
 - **Pick a provider per chat:** Google Gemini, MiniMax (Anthropic-compatible), OpenAI,
   DeepSeek, Kimi (Moonshot), or a **custom** OpenAI-compatible endpoint (LM Studio,
   Ollama, etc.) — enter any base URL + model.
-- **API keys** come from `.env` (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`,
-  …) or you can type them into the UI (stored only in your browser's localStorage).
+- **API keys** can be typed into the UI (kept in your browser) **or saved to `.env`** —
+  enter a key and click **“save to .env”** to persist it server-side, no file editing.
 - **Miko's full tool set** is available to the model — it can control the PC, Discord,
-  calendars, notes, files, and more, mid-conversation.
+  calendars, notes, files, and more, mid-conversation. Each tool she uses shows as a chip.
 - **Safety:** read-only tools always run; sensitive actions (delete, send message,
-  shutdown, …) only run when you tick **“Allow actions”** in the UI, since a text chat
-  has no spoken confirmation step.
+  shutdown, …) only run when you flip **“Allow actions”** on, since a text chat has no
+  spoken confirmation step.
+
+**Workspace — file explorer + editor**
+
+- Open the **Workspace** (sidebar button, or click any file chip) for a built-in,
+  VS Code-style **file explorer + code editor**. Browse folders, open files, edit with
+  syntax highlighting, and save with the button or **Ctrl/⌘-S**.
+- **Go anywhere:** a **Browse…** button opens the native Windows folder dialog, plus an
+  editable address bar and drive-letter shortcuts. Browsing and reading are unrestricted;
+  only *writes* into the Windows system folders are blocked.
+- **Clickable file links:** when Miko creates or edits a file, it appears as a chip under
+  her message — click it to open the file straight in the editor.
+
+**Selectable workspace**
+
+- Choose the folder Miko **works in right now** from the sidebar (or **“set this folder”**
+  while browsing). The chosen workspace is where the explorer opens, is told to Miko (so
+  *“what workspace are you in?”* and *“create a file here”* follow your choice), and is the
+  working directory her `run_command` executes in. It persists across restarts.
+
+> **Heads-up:** the Chat UI is served by the same process as the tools. Changes to the page
+> appear on a browser refresh, but new server features (file browser, workspace, …) need the
+> server **restarted** (`python start_tools_server.py` or `python main.py`).
 
 ---
 
@@ -383,7 +410,9 @@ Anthropic-compatible (e.g. MiniMax `…/anthropic`), OpenAI-compatible, or Gemin
 agents (e.g. Hermes) can call them. It serves tool schemas in OpenAI / Anthropic / Gemini
 formats and guards execution with an optional bearer token (`TOOL_SERVER_KEY`) and a
 confirmation gate for destructive actions. Run it standalone (no voice) with
-`python start_tools_server.py`.
+`python start_tools_server.py`. The same server hosts the **web Chat UI** at `/chat`
+(`webui/chat.html`), backed by `chat_backend.py` (model-agnostic chat that runs Miko's
+tools) and `file_browser.py` (the workspace file explorer/editor + folder picker).
 
 **Safety:** destructive tools (delete file, send Discord message, shutdown, etc.) require
 an explicit spoken **"da"** confirmation. Writes to `C:\Windows`, `System32`, and the
