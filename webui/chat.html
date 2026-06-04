@@ -79,6 +79,33 @@
     color: var(--text3); margin-bottom: 8px; text-transform: uppercase;
   }
 
+  /* Conversations list */
+  .conv-head { display: flex; align-items: center; justify-content: space-between; }
+  .conv-new {
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em;
+    padding: 3px 8px; border-radius: 2px; cursor: pointer; margin-bottom: 8px;
+    background: var(--surface2); border: 1px solid var(--amberDim); color: var(--amber);
+    transition: all 120ms;
+  }
+  .conv-new:hover { background: var(--amber); border-color: var(--amber); color: #0b0b0b; }
+  .conv-list { max-height: 196px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .conv-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 3px;
+    cursor: pointer; color: var(--text2); transition: background 110ms, color 110ms;
+  }
+  .conv-item:hover { background: var(--surface2); color: var(--text); }
+  .conv-item.active { background: var(--surface3); color: var(--text); border-left: 2px solid var(--amber); padding-left: 6px; }
+  .conv-item .ct { flex: 1; min-width: 0; overflow: hidden; }
+  .conv-item .ct-title { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-item .ct-meta { font-family: var(--mono); font-size: 8.5px; color: var(--text3); letter-spacing: 0.04em; margin-top: 1px; }
+  .conv-item .ct-del {
+    flex-shrink: 0; opacity: 0; font-size: 13px; color: var(--text3); background: none; border: none;
+    cursor: pointer; padding: 0 2px; transition: opacity 110ms, color 110ms;
+  }
+  .conv-item:hover .ct-del { opacity: 1; }
+  .conv-item .ct-del:hover { color: #b06a4a; }
+  .conv-empty { font-size: 11px; color: var(--text3); padding: 4px 8px; line-height: 1.5; }
+
   /* Model dropdown */
   .drop { position: relative; }
   .drop-btn {
@@ -426,6 +453,16 @@
     <div class="rule"></div>
 
     <div class="scroll">
+      <!-- Conversations -->
+      <div class="section">
+        <div class="conv-head">
+          <div class="seclabel">Conversations</div>
+          <button class="conv-new" id="conv-new" type="button" title="Start a new conversation">+ New</button>
+        </div>
+        <div class="conv-list" id="conv-list"></div>
+      </div>
+      <div class="rule"></div>
+
       <!-- Model -->
       <div class="section">
         <div class="seclabel">Model</div>
@@ -704,13 +741,15 @@ function renderBotText(host, content) {
   });
 }
 
-function addUser(text) {
+function stampFrom(ts) { const d = ts ? new Date(ts) : new Date(); return isNaN(d) ? new Date() : d; }
+
+function addUser(text, ts) {
   const row = document.createElement('div'); row.className = 'row user';
   const c = document.createElement('div'); c.className = 'content';
   const wrap = document.createElement('div'); wrap.className = 'user-bubble-wrap';
   const b = document.createElement('div'); b.className = 'user-bubble'; b.textContent = text;
   wrap.appendChild(b); c.appendChild(wrap);
-  const st = document.createElement('div'); st.className = 'stamp'; st.textContent = fmtTime(new Date());
+  const st = document.createElement('div'); st.className = 'stamp'; st.textContent = fmtTime(stampFrom(ts));
   c.appendChild(st); row.appendChild(c);
   messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
 }
@@ -808,15 +847,101 @@ async function send() {
     st.textContent = fmtTime(new Date());
   } finally {
     $('#send-btn').dataset.busy = '0'; chatEl.scrollTop = chatEl.scrollHeight; input.focus();
+    loadConversations();   // refresh titles / order after the turn is saved
   }
 }
 
 async function clearChat() {
   await fetch('/chat/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
   emptyState();
+  loadConversations();
 }
 
 function refreshSend() { $('#send-btn').classList.toggle('can', $('#input').value.trim().length > 0); }
+
+// ── Conversations (persistent history) ─────────────────────
+function relTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso); if (isNaN(d)) return '';
+  const s = (Date.now() - d.getTime()) / 1000;
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  if (s < 604800) return Math.floor(s / 86400) + 'd ago';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+async function loadConversations() {
+  let list = [];
+  try { list = (await (await fetch('/chat/conversations')).json()).conversations || []; }
+  catch (e) { return; }
+  const host = $('#conv-list'); host.innerHTML = '';
+  if (!list.length) {
+    host.innerHTML = '<div class="conv-empty">No saved conversations yet. Start chatting — they\'ll appear here.</div>';
+    return;
+  }
+  list.forEach(conv => {
+    const it = document.createElement('div');
+    it.className = 'conv-item' + (conv.id === sessionId ? ' active' : '');
+    it.title = conv.title;
+    const ct = document.createElement('div'); ct.className = 'ct';
+    const tt = document.createElement('div'); tt.className = 'ct-title'; tt.textContent = conv.title;
+    const mt = document.createElement('div'); mt.className = 'ct-meta';
+    mt.textContent = relTime(conv.updated) + ' · ' + conv.count + ' msg';
+    ct.append(tt, mt);
+    const del = document.createElement('button');
+    del.className = 'ct-del'; del.type = 'button'; del.textContent = '×'; del.title = 'Delete conversation';
+    del.addEventListener('click', e => { e.stopPropagation(); deleteConversation(conv.id); });
+    it.append(ct, del);
+    it.addEventListener('click', () => openConversation(conv.id));
+    it.addEventListener('dblclick', () => renameConversation(conv.id, conv.title));
+    host.appendChild(it);
+  });
+}
+
+async function openConversation(id) {
+  if (id === sessionId && messagesEl.querySelector('.row')) return;  // already open
+  let conv;
+  try { conv = await (await fetch('/chat/conversation?id=' + encodeURIComponent(id))).json(); }
+  catch (e) { return; }
+  if (conv.error) return;
+  sessionId = id; localStorage.setItem('miko_session', sessionId);
+  messagesEl.innerHTML = '';
+  (conv.messages || []).forEach(m => {
+    if (m.role === 'user') addUser(m.content, m.ts);
+    else {
+      const { tx, tl, fl, st } = addBot();
+      renderBotText(tx, m.content || '');
+      if (m.tools && m.tools.length) tl.innerHTML = m.tools.map(t => `<span class="chip"><span class="di">◈</span>${t}</span>`).join('');
+      renderFileChips(fl, m.files);
+      st.textContent = fmtTime(stampFrom(m.ts));
+    }
+  });
+  if (!(conv.messages || []).length) emptyState();
+  chatEl.scrollTop = chatEl.scrollHeight;
+  loadConversations();
+}
+
+function newConversation() {
+  sessionId = 'web-' + Math.random().toString(36).slice(2);
+  localStorage.setItem('miko_session', sessionId);
+  emptyState();
+  loadConversations();
+  $('#input').focus();
+}
+
+async function deleteConversation(id) {
+  await fetch('/chat/conversation/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+  if (id === sessionId) newConversation();
+  else loadConversations();
+}
+
+async function renameConversation(id, current) {
+  const title = prompt('Rename conversation:', current || '');
+  if (title == null) return;
+  await fetch('/chat/conversation/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, title }) });
+  loadConversations();
+}
 
 function setAllow(on) {
   const t = $('#allow-actions');
@@ -1067,6 +1192,7 @@ $('#save-env').addEventListener('click', saveToEnv);
 $('#allow-actions').addEventListener('click', () => { setAllow(!$('#allow-actions').classList.contains('on')); saveCfg(); });
 $('#send-btn').addEventListener('click', send);
 $('#clear-btn').addEventListener('click', clearChat);
+$('#conv-new').addEventListener('click', newConversation);
 $('#ws-pick').addEventListener('click', () => openWorkspace());
 $('#ws-set').addEventListener('click', () => { if (wsCurDir) setWorkspaceTo(wsCurDir); });
 
@@ -1080,6 +1206,12 @@ setAllow(!!cfg.allow);
 emptyState();
 loadWorkspace();
 loadModels().then(() => input.focus());
+// Restore the last conversation (if it still has messages), then list all.
+fetch('/chat/conversation?id=' + encodeURIComponent(sessionId))
+  .then(r => r.ok ? r.json() : null)
+  .then(conv => { if (conv && conv.messages && conv.messages.length) openConversation(sessionId); })
+  .catch(() => {})
+  .finally(loadConversations);
 </script>
 </body>
 </html>

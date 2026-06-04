@@ -223,6 +223,40 @@ def _build_app():
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
+    # ── Conversations (persistent history) ──────────────────────────────────────
+    @app.get("/chat/conversations")
+    def chat_conversations(_=Depends(_auth)):
+        import conversation_store as convo
+        return {"conversations": convo.list_conversations()}
+
+    @app.get("/chat/conversation")
+    def chat_conversation(id: str, _=Depends(_auth)):
+        import conversation_store as convo
+        conv = convo.get_conversation(id)
+        if conv is None:
+            return JSONResponse({"error": "Conversation not found."}, status_code=404)
+        return conv
+
+    @app.post("/chat/conversation/rename")
+    async def chat_conversation_rename(request: Request, _=Depends(_auth)):
+        import conversation_store as convo
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        ok = convo.rename(body.get("id", ""), body.get("title", ""))
+        return {"ok": ok}
+
+    @app.post("/chat/conversation/delete")
+    async def chat_conversation_delete(request: Request, _=Depends(_auth)):
+        import conversation_store as convo
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        convo.delete(body.get("id", ""))
+        return {"ok": True}
+
     @app.post("/chat/reset")
     async def chat_reset(request: Request, _=Depends(_auth)):
         from chat_backend import reset_session

@@ -16,6 +16,7 @@ logs/
 data/*.db
 data/*.json
 data/queue_state.json
+data/conversations/
 memory/long_term.json
 **/*.log
 

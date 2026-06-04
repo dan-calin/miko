@@ -19,16 +19,13 @@ flag, since a text UI has no voice-confirmation step.
 import json
 import logging
 import os
-import threading
 
 logger = logging.getLogger("miko.chat")
 
 _MAX_ROUNDS = 6
-_MAX_HISTORY = 30  # neutral messages kept per session
+_MAX_HISTORY = 30  # neutral messages handed to the model per turn
 
-# Per-session neutral history: {session_id: [{"role": "user"|"assistant", "content": str}]}
-_history: dict[str, list] = {}
-_lock = threading.Lock()
+# Conversations are persisted to disk — see conversation_store.py.
 
 
 # ── Provider presets ──────────────────────────────────────────────────────────
@@ -189,25 +186,22 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
     return base
 
 
-# ── History helpers ───────────────────────────────────────────────────────────
+# ── History helpers (persistent — see conversation_store.py) ──────────────────
 
 def _get_history(session_id: str) -> list:
-    with _lock:
-        return list(_history.get(session_id, []))
+    import conversation_store as convo
+    return convo.history_for_model(session_id, _MAX_HISTORY)
 
 
-def _save_history(session_id: str, user_msg: str, assistant_msg: str) -> None:
-    with _lock:
-        h = _history.setdefault(session_id, [])
-        h.append({"role": "user", "content": user_msg})
-        h.append({"role": "assistant", "content": assistant_msg})
-        if len(h) > _MAX_HISTORY:
-            del h[: len(h) - _MAX_HISTORY]
+def _save_turn(session_id: str, user_msg: str, assistant_msg: str,
+               tools: list, files: list) -> None:
+    import conversation_store as convo
+    convo.append_turn(session_id, user_msg, assistant_msg, tools, files)
 
 
 def reset_session(session_id: str) -> None:
-    with _lock:
-        _history.pop(session_id, None)
+    import conversation_store as convo
+    convo.clear(session_id)
 
 
 # ── Tool execution ────────────────────────────────────────────────────────────
@@ -308,7 +302,7 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
         logger.error(f"chat() error ({provider}/{model}): {e}", exc_info=True)
         return {"reply": "", "tools_used": used, "files": files, "error": str(e)}
 
-    _save_history(session_id, message, reply)
+    _save_turn(session_id, message, reply, used, files)
     return {"reply": reply, "tools_used": used, "files": files, "error": None}
 
 

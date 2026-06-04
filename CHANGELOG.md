@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Persistent, resumable chat conversations** (`conversation_store.py`). Chats are now
+  saved to disk (one JSON per conversation under `data/conversations/`, git-ignored)
+  instead of an in-memory dict, so they survive restarts. The Chat UI gains a
+  **Conversations** list in the sidebar: **+ New** to start a fresh thread, click to
+  switch and continue any past conversation (full transcript restored, including tool
+  chips and file links), double-click to rename, × to delete. The last conversation is
+  restored on load. New endpoints: `GET /chat/conversations`, `GET /chat/conversation`,
+  `POST /chat/conversation/rename`, `POST /chat/conversation/delete`; the model receives
+  the persisted history for context continuity.
+
 - **Web Chat UI — "Miko as a tool inside a chat app"** (`chat_backend.py`,
   `webui/chat.html`, routes in `tool_server.py`). A ChatGPT-style page served at
   `GET /chat` where you type to Miko with her full tool set available to the model.
