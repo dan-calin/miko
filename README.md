@@ -20,6 +20,8 @@ switch to the other language on the fly if you speak it.
 - 🌐 Web research, notes, fast file search, journey/route planning
 - 🤖 Optional **MiniMax** backend for phone commands, and an HTTP **tool server**
   so external agents (e.g. Hermes) can use all of Miko's tools
+- 🧠 **Persistent memory** — learns and recalls facts about you across sessions,
+  with resumable conversation history in the Chat UI
 - 💬 A **web Chat UI** (`/chat`) — type to Miko with any model (Gemini, OpenAI,
   DeepSeek, Kimi, …), a built-in **file explorer + code editor**, clickable links to
   files Miko creates, and a selectable **workspace** folder she works in
