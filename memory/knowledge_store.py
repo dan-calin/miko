@@ -300,19 +300,40 @@ def index_note_file(path: Path) -> int:
 
 
 def reindex_notes(notes_dir) -> dict:
-    """Index every Markdown file in the vault (incrementally — unchanged files skip)."""
+    """Index every Markdown file in the vault (incrementally — unchanged files skip)
+    and prune chunks for notes that have been deleted/moved (keeps recall in sync)."""
     base = Path(notes_dir)
     if not base.exists():
-        return {"files": 0, "chunks": 0}
+        return {"files": 0, "chunks": 0, "pruned": 0}
     files = chunks = 0
+    seen = set()
     for md in base.rglob("*.md"):
+        if md.name.lower() == "readme.md":   # vault scaffolding, not knowledge
+            continue
+        seen.add(str(md.resolve()).lower())
         n = index_note_file(md)
         if n:
             files += 1
             chunks += n
-    if files:
-        logger.info(f"knowledge: indexed {chunks} chunks from {files} note(s)")
-    return {"files": files, "chunks": chunks}
+    pruned = _prune_orphan_notes(seen)
+    if files or pruned:
+        logger.info(f"knowledge: indexed {chunks} chunks from {files} note(s); "
+                    f"pruned {pruned} orphan(s)")
+    return {"files": files, "chunks": chunks, "pruned": pruned}
+
+
+def _prune_orphan_notes(existing_lower: set) -> int:
+    """Delete note chunks whose source file is no longer in the vault."""
+    with _lock:
+        db = _db()
+        refs = [r[0] for r in
+                db.execute("SELECT DISTINCT ref FROM chunks WHERE kind='note'").fetchall()]
+        gone = [ref for ref in refs if ref.split("#")[0].lower() not in existing_lower]
+        for ref in gone:
+            db.execute("DELETE FROM chunks WHERE kind='note' AND ref=?", (ref,))
+        if gone:
+            db.commit()
+    return len(gone)
 
 
 def clear_kind(kind: str) -> None:

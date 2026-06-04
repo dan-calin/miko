@@ -228,9 +228,15 @@ class NotesManager:
         if not matches:
             return f"Nu am găsit nicio notiță cu titlul '{title}', sefu."
         filepath = matches[0]
+        resolved = str(filepath.resolve())
         try:
             import send2trash
             send2trash.send2trash(str(filepath))
+            try:   # keep recall in sync — drop the deleted note's chunks
+                from memory import knowledge_store as KS
+                KS.delete_prefix("note", resolved + "#")
+            except Exception:
+                pass
             return f"Am trimis notița '{filepath.stem}' la coșul de gunoi, sefu."
         except Exception as e:
             return f"N-am putut șterge notița: {e}"

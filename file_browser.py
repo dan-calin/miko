@@ -230,6 +230,14 @@ def delete_entry(path: str) -> dict:
                 p.unlink()
         except OSError as e:
             raise ValueError(f"Couldn't delete: {e}")
+    # Keep the semantic index in sync: drop a deleted note's chunks. Folder
+    # deletes are healed by the next reindex's orphan-prune.
+    try:
+        from memory import knowledge_store as KS
+        if str(p).lower().endswith(".md"):
+            KS.delete_prefix("note", str(p) + "#")
+    except Exception:
+        pass
     return {"ok": True, "path": str(p), "trashed": trashed}
 
 
