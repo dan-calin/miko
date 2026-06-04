@@ -38,6 +38,14 @@ _MODE_EXIT_AUTO = re.compile(
     r"exit\s+auto)\b",
     re.IGNORECASE,
 )
+# Hardest quiet mode — "leave me fully alone" (distinct from plain standby).
+_MODE_MUTE = re.compile(
+    r"\b(mute\s+yourself|mute\s+mode|go\s+(completely\s+)?silent|"
+    r"complete\s+silence|total\s+silence|leave\s+me\s+alone|"
+    r"taci\s+de\s+tot|t[aă]cere\s+complet[aă]|las[aă][\s\-]?m[aă]\s+[îi]n\s+pace|"
+    r"mut\s+complet)\b",
+    re.IGNORECASE,
+)
 
 
 def _normalize(text: str) -> str:
@@ -72,6 +80,10 @@ def detect_auto(text: str) -> bool:
 
 def detect_exit_auto(text: str) -> bool:
     return bool(_MODE_EXIT_AUTO.search(_normalize(text)))
+
+
+def detect_mute(text: str) -> bool:
+    return bool(_MODE_MUTE.search(_normalize(text)))
 
 
 # Natural affirmations / negations (diacritics already stripped before matching).

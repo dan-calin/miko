@@ -18,6 +18,7 @@ from core.wake_word import (
     detect_active,
     detect_auto,
     detect_exit_auto,
+    detect_mute,
 )
 
 logger = logging.getLogger("miko.mode")
@@ -27,8 +28,9 @@ _STANDBY_WINDOW_SECS = 30  # seconds of follow-up commands allowed after a wake 
 
 class Mode(Enum):
     ACTIVE  = "active"   # All transcriptions processed
-    STANDBY = "standby"  # Only wake-word transcriptions processed
+    STANDBY = "standby"  # Wake word OR 30s follow-up window
     AUTO    = "auto"     # Context-aware, no wake word needed
+    MUTE    = "mute"     # Hardest quiet — wake word ONLY, no follow-up window
 
 
 _MODE_TRANSITIONS = {
@@ -43,6 +45,10 @@ _TRANSITION_ACK_EN = {
     (Mode.ACTIVE,  Mode.AUTO):    "Entering conversation mode. Talk naturally.",
     (Mode.AUTO,    Mode.ACTIVE):  "Left conversation mode. Listening to everything.",
     (Mode.AUTO,    Mode.STANDBY): "Going to standby. Call my name when you need me.",
+    (Mode.ACTIVE,  Mode.MUTE):    "Going fully silent. Say 'Miko, wake up' to bring me back.",
+    (Mode.STANDBY, Mode.MUTE):    "Going fully silent. Say 'Miko, wake up' to bring me back.",
+    (Mode.AUTO,    Mode.MUTE):    "Going fully silent. Say 'Miko, wake up' to bring me back.",
+    (Mode.MUTE,    Mode.ACTIVE):  "Back online. Listening to everything.",
 }
 
 _TRANSITION_ACK_RO = {
@@ -52,6 +58,10 @@ _TRANSITION_ACK_RO = {
     (Mode.ACTIVE,  Mode.AUTO):    "Intru în modul conversație. Vorbește natural.",
     (Mode.AUTO,    Mode.ACTIVE):  "Am ieșit din modul conversație. Ascult tot.",
     (Mode.AUTO,    Mode.STANDBY): "Intru în stand-by. Strig-mă pe nume când ai nevoie.",
+    (Mode.ACTIVE,  Mode.MUTE):    "Tac complet. Zi 'Miko, trezește-te' ca să revin.",
+    (Mode.STANDBY, Mode.MUTE):    "Tac complet. Zi 'Miko, trezește-te' ca să revin.",
+    (Mode.AUTO,    Mode.MUTE):    "Tac complet. Zi 'Miko, trezește-te' ca să revin.",
+    (Mode.MUTE,    Mode.ACTIVE):  "Am revenit. Ascult tot.",
 }
 
 
@@ -97,6 +107,9 @@ class ModeManager:
         mode = self.mode
         if mode == Mode.ACTIVE:
             return True
+        if mode == Mode.MUTE:
+            # Hardest quiet: only an explicit wake word gets through — no window.
+            return contains_wake_word(text)
         if mode == Mode.STANDBY:
             now = time.time()
             # Within the conversation window — allow follow-ups without repeating "Miko"
@@ -124,6 +137,11 @@ class ModeManager:
         """
         mode = self.mode
 
+        if detect_mute(text):
+            if mode != Mode.MUTE:
+                self.set_mode(Mode.MUTE)
+            return True
+
         if detect_standby(text):
             if mode != Mode.STANDBY:
                 self.set_mode(Mode.STANDBY)
@@ -145,10 +163,27 @@ class ModeManager:
 
         return False
 
+    def is_quiet(self) -> bool:
+        """True when output should be gated until a wake word (STANDBY or MUTE)."""
+        return self.mode in (Mode.STANDBY, Mode.MUTE)
+
     def get_mode_prompt_addendum(self) -> str:
         """Dynamic text appended to the system prompt on each reconnect."""
         mode = self.mode
         is_en = self._language == "en"
+        if mode == Mode.MUTE:
+            if is_en:
+                return (
+                    "\n\n[CURRENT MODE: MUTE]\n"
+                    "You are MUTED. Stay completely silent. Do NOT respond to anything — "
+                    "not background speech, not direct questions — until you clearly hear "
+                    "'Miko' or 'Hey Miko'. Say nothing otherwise."
+                )
+            return (
+                "\n\n[MODUL CURENT: MUTE]\n"
+                "Ești pe MUTE. Taci complet. NU răspunzi la nimic — nici ambiental, nici "
+                "întrebări directe — până NU auzi clar 'Miko' sau 'Hey Miko'."
+            )
         if mode == Mode.STANDBY:
             if is_en:
                 return (

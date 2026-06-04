@@ -255,8 +255,9 @@ class AudioHandler:
             while True:
                 turn = self.session.receive()
 
-                # Per-turn STANDBY state — snapshot mode at turn start
-                _standby = (self._mode_manager.mode.value == "standby")
+                # Per-turn quiet state — snapshot at turn start (STANDBY or MUTE):
+                # playback is buffered and only released on a wake word.
+                _standby = self._mode_manager.is_quiet()
                 _wake    = False          # True once wake word is confirmed this turn
                 _buf: list[bytes] = []    # Holds audio chunks until wake word or turn end
 
