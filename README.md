@@ -212,6 +212,11 @@ http://localhost:7832/chat
 
 (Available whenever `python main.py` or `python start_tools_server.py` is running.)
 
+|  |  |
+|:---:|:---:|
+| ![Miko Chat UI — conversations, tool & file chips](docs/ui-chat.png) | ![Miko Workspace — file explorer + code editor](docs/ui-workspace.png) |
+| Persistent conversations, model/key/workspace panels, and replies with tool + file-link chips | The built-in **Workspace** — browse any folder and edit files with syntax highlighting |
+
 **Chat & models**
 
 - **Pick a provider per chat:** Google Gemini, MiniMax (Anthropic-compatible), OpenAI,

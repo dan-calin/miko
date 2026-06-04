@@ -608,6 +608,9 @@ const codeFor = id => PCODE[id] || id.slice(0,3).toUpperCase();
 
 let sessionId = localStorage.getItem('miko_session');
 if (!sessionId) { sessionId = 'web-' + Math.random().toString(36).slice(2); localStorage.setItem('miko_session', sessionId); }
+// Deep links: ?conv=<id> opens a conversation, ?workspace[=<path>] opens the workspace.
+const URLP = new URLSearchParams(location.search);
+if (URLP.get('conv')) sessionId = URLP.get('conv');
 const keys = JSON.parse(localStorage.getItem('miko_keys') || '{}');   // per-provider, browser-local override
 const cfg  = JSON.parse(localStorage.getItem('miko_cfg')  || '{}');
 let curProvider = cfg.provider || 'gemini';
@@ -1212,6 +1215,12 @@ fetch('/chat/conversation?id=' + encodeURIComponent(sessionId))
   .then(conv => { if (conv && conv.messages && conv.messages.length) openConversation(sessionId); })
   .catch(() => {})
   .finally(loadConversations);
+// Workspace deep link: ?workspace[=<folder-or-file>].
+if (URLP.has('workspace')) {
+  const wp = URLP.get('workspace');
+  if (wp && /\.[A-Za-z0-9]{1,8}$/.test(wp)) openWorkspace(wp);            // a file → open it
+  else { $('#workspace').classList.add('open'); loadRoots().then(() => loadDir(wp || workspace || '')); }
+}
 </script>
 </body>
 </html>
