@@ -36,10 +36,11 @@ switch to the other language on the fly if you speak it.
 4. [Calendar setup (optional)](#calendar-setup-optional)
 5. [Personal Discord voice control (optional)](#personal-discord-voice-control-optional)
 6. [MiniMax & external agents (optional)](#minimax--external-agents-optional)
-7. [First run](#first-run)
-8. [Voice commands](#voice-commands)
-9. [Architecture](#architecture)
-10. [Troubleshooting](#troubleshooting)
+7. [Chat UI](#chat-ui)
+8. [First run](#first-run)
+9. [Voice commands](#voice-commands)
+10. [Architecture](#architecture)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -203,7 +204,7 @@ without Miko listening. Tool schemas are served at `GET /tools?format=openai|ant
 Set `TOOL_SERVER_KEY` to require a bearer token. Trusted local agents may send
 `X-Bypass-Confirmation: true` to skip the voice-confirmation gate on destructive tools.
 
-### Chat UI (Miko as a tool inside a chat app)
+## Chat UI
 
 The tool server also hosts a **web chat app** where you can type to Miko, pick your
 model, browse and edit files, and choose the folder she works in. Open it at:
