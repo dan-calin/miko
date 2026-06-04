@@ -102,6 +102,11 @@ class NotesManager:
         self._dir = notes_dir
         self._lock = threading.Lock()
         self._dir.mkdir(parents=True, exist_ok=True)
+        try:
+            import vault
+            vault.ensure_structure(notes_dir)   # PARA folders (Inbox/Projects/…)
+        except Exception:
+            pass
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -117,7 +122,11 @@ class NotesManager:
         tags      = self._extract_tags(content)
         slug      = self._make_slug(title or content)
         filename  = f"{date_str}_{slug}.md"
-        filepath  = self._dir / filename
+        try:
+            import vault
+            filepath = vault.folder_for(self._dir, "capture") / filename   # → Inbox/
+        except Exception:
+            filepath = self._dir / filename
 
         # If append=True and file exists for today, append to it
         if append:
@@ -141,6 +150,7 @@ class NotesManager:
                     encoding="utf-8",
                 )
                 logger.info(f"Appended to note: {filepath.name}")
+                _index_note(filepath)
                 return f"Am adăugat la notița '{filepath.stem}', sefu."
             else:
                 body = frontmatter
@@ -149,6 +159,7 @@ class NotesManager:
                 body += content + "\n"
                 filepath.write_text(body, encoding="utf-8")
                 logger.info(f"Created note: {filepath.name}")
+                _index_note(filepath)
                 return f"Am creat notița '{filename}', sefu."
 
     def read_note(self, title: str) -> str:
@@ -158,7 +169,7 @@ class NotesManager:
         # Handle "azi" / "today"
         if title.lower() in ("azi", "today", "astazi", "astăzi"):
             today_str = datetime.now().strftime("%Y-%m-%d")
-            matches = sorted(self._dir.glob(f"{today_str}_*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+            matches = sorted(self._dir.rglob(f"{today_str}_*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
         else:
             # Fuzzy match by filename or content
             matches = self._fuzzy_find(title)
@@ -181,7 +192,7 @@ class NotesManager:
             return f"N-am putut citi notița: {e}"
 
     def list_notes(self, limit: int = 10) -> str:
-        notes = sorted(self._dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+        notes = sorted(self._dir.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
         if not notes:
             return "Nu ai nicio notiță salvată momentan, sefu."
         lines = ["Notițele tale recente:"]
@@ -198,7 +209,7 @@ class NotesManager:
             return "Spune-mi ce caut în notițe, sefu."
         query_lower = query.lower()
         matches = []
-        for p in self._dir.glob("*.md"):
+        for p in self._dir.rglob("*.md"):
             try:
                 content = p.read_text(encoding="utf-8").lower()
                 if query_lower in content:
@@ -255,7 +266,7 @@ class NotesManager:
         """Find notes whose filename or content partially matches query."""
         query_lower = query.lower()
         results = []
-        for p in self._dir.glob("*.md"):
+        for p in self._dir.rglob("*.md"):
             if query_lower in p.stem.lower():
                 results.append((0, p))  # Filename match — highest priority
                 continue
@@ -272,7 +283,7 @@ class NotesManager:
         """Find a note from today, optionally matching title."""
         today = datetime.now().strftime("%Y-%m-%d")
         candidates = sorted(
-            self._dir.glob(f"{today}_*.md"),
+            self._dir.rglob(f"{today}_*.md"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
@@ -287,6 +298,15 @@ class NotesManager:
 
 
 # ── Module-level singleton factory ────────────────────────────────────────────
+
+def _index_note(path: Path) -> None:
+    """Add a freshly written note to the semantic index so recall finds it now."""
+    try:
+        from memory import knowledge_store as KS
+        KS.index_note_file(path)
+    except Exception:
+        pass
+
 
 _manager_instance: Optional[NotesManager] = None
 _manager_lock = threading.Lock()

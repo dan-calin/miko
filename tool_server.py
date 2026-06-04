@@ -45,9 +45,11 @@ def _start_knowledge_index() -> None:
     background so it's ready for recall without blocking server startup."""
     def _build():
         try:
+            import vault
             from config import CONFIG
             from memory import knowledge_store as KS
             from memory.memory_manager import load_memory
+            vault.ensure_structure(CONFIG.notes_dir)   # PARA folders in the vault
             KS.index_facts(load_memory(CONFIG.memory_file))
             KS.reindex_notes(CONFIG.notes_dir)
         except Exception as e:

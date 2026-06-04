@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Memory v2 — token-efficient "lean cognitive" memory** (research-driven upgrade
+  of the semantic memory; informed by Mem0, A-MEM, Zep, and 2025–26 surveys).
+  Same local-only substrate (fastembed + SQLite), but a much smarter intelligence
+  layer, with all heavy work async on a cheap model (`MIKO_MEMORY_MODEL`, default
+  flash-lite) and a tiny, ranked per-turn injection:
+  - **Self-reconciling facts:** the learner now makes one memory-aware
+    extract→reconcile call that emits canonical `set`/`delete` ops, so corrections
+    overwrite the right fact instead of piling up junk keys ("I'm Dan, not Roxan"
+    just works). Replaces the naive YES/NO+JSON extractor on both voice and chat.
+  - **Scored hybrid recall:** retrieval now ranks by relevance (semantic + keyword)
+    + recency (exp decay) + importance, with a `last_used` freshness bump. Per-turn
+    injection is capped to a ~350-token budget (leaner than before).
+  - **Episodic memory + reflection:** a one-line episode summary is folded into the
+    same reconcile call (no extra LLM call); periodically an async reflection pass
+    distills recent episodes + facts into durable `insight`s and prunes the episode
+    log — consolidation that compresses many memories into few. Powers "what have I
+    been working on?".
+  - **Note-brain (Obsidian/PARA):** the vault gains a light PARA structure
+    (`Inbox/Projects/Areas/Resources/Archives/Daily` + a README), captures route to
+    `Inbox/`, research reports to `Resources/`, and notes auto-link to related notes
+    with `[[wikilinks]]` (vector neighbours) — open the graph view in Obsidian. New
+    `vault.py`; note tools now search recursively and index new notes immediately.
+  - New store columns + helpers (`importance/created/last_used/source`, `recent`,
+    `prune`), auto-migrating older DBs.
+
 - **Deep Research pipeline that feeds the second brain** (`deep_research.py`,
   `chat_backend.complete_text`, `modules/research.search_results`/`fetch_text`).
   Toggling the **Deep Research** skill now runs a real, orchestrated pipeline

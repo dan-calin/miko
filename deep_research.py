@@ -160,17 +160,18 @@ def _sources(collected, readings):
 
 
 def _save_note(topic, report, sources) -> str:
-    """Write the report into the vault as a Markdown note and index it."""
+    """Write the report into the vault (Resources/) as a Markdown note with
+    related [[wikilinks]], then index it."""
     from config import CONFIG
-    notes_dir = Path(CONFIG.notes_dir)
-    notes_dir.mkdir(parents=True, exist_ok=True)
+    import vault
+    folder = vault.folder_for(CONFIG.notes_dir, "research")
 
     now = datetime.now()
     slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:50] or "topic"
-    path = notes_dir / f"{now:%Y-%m-%d}_research_{slug}.md"
+    path = folder / f"{now:%Y-%m-%d}_research_{slug}.md"
     n = 2
     while path.exists():
-        path = notes_dir / f"{now:%Y-%m-%d}_research_{slug}-{n}.md"
+        path = folder / f"{now:%Y-%m-%d}_research_{slug}-{n}.md"
         n += 1
 
     fm = (
@@ -187,6 +188,14 @@ def _save_note(topic, report, sources) -> str:
     if "sources" not in tail and sources:
         src = "\n".join(f"- [{s['title']}]({s['url']})" for s in sources)
         md += f"\n## Sources\n{src}\n"
+
+    # Link this report to related notes already in the vault (links over folders).
+    try:
+        rel = vault.related_links(f"{topic}\n{report[:1500]}", exclude_path=str(path), k=4)
+        md += vault.related_section(rel)
+    except Exception as e:
+        logger.warning(f"related links failed: {e}")
+
     path.write_text(md, encoding="utf-8")
 
     try:
