@@ -32,6 +32,10 @@ ddgs>=0.1.0
 requests>=2.32.0
 beautifulsoup4>=4.12.0
 
+# ── Semantic memory / second brain (local embeddings; optional but recommended) ─
+# Without it, Miko falls back to Gemini/OpenAI embedding APIs, then keyword search.
+fastembed>=0.3.0
+
 # ── System info ───────────────────────────────────────────────────────────────
 psutil>=6.0.0
 

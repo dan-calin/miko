@@ -186,6 +186,50 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
     return base
 
 
+# ── Long-term memory + semantic recall (the "second brain") ───────────────────
+
+def _memory_context(message: str) -> str:
+    """Build the memory addendum for the system prompt: the user's known facts,
+    plus any vault notes semantically relevant to this message. Best-effort."""
+    from config import CONFIG
+    from memory.memory_manager import load_memory, format_memory_for_prompt
+
+    parts = []
+    facts = format_memory_for_prompt(load_memory(CONFIG.memory_file))
+    if facts:
+        parts.append(facts.strip())
+
+    try:
+        from memory import knowledge_store as KS
+        hits = KS.search(message, k=4, kinds=["note"])
+        if hits:
+            lines = [
+                f"- {h['text'][:220].strip()} (note: {os.path.basename(h['ref'].split('#')[0])})"
+                for h in hits
+            ]
+            parts.append("[RELEVANT NOTES — from your vault]\n" + "\n".join(lines))
+    except Exception as e:
+        logger.warning(f"recall failed: {e}")
+
+    return ("\n\n" + "\n\n".join(parts)) if parts else ""
+
+
+def _learn_async(user_msg: str, assistant_msg: str) -> None:
+    """Extract durable facts from a chat turn (throttled, in a daemon thread) — the
+    same learner the voice agent uses, now wired into the web chat too."""
+    try:
+        from config import CONFIG
+        from memory.memory_manager import update_from_conversation_async
+        update_from_conversation_async(
+            CONFIG.memory_file, CONFIG.gemini_api_key, user_msg, assistant_msg,
+            minimax_api_key=getattr(CONFIG, "minimax_api_key", ""),
+            minimax_base_url=getattr(CONFIG, "minimax_base_url", ""),
+            minimax_model=getattr(CONFIG, "minimax_model", ""),
+        )
+    except Exception as e:
+        logger.warning(f"chat learn failed: {e}")
+
+
 # ── History helpers (persistent — see conversation_store.py) ──────────────────
 
 def _get_history(session_id: str) -> list:
@@ -268,7 +312,8 @@ def _run_tool(router, name: str, args: dict, allow_actions: bool,
 
 def chat(router, session_id: str, message: str, provider: str, model: str,
          api_key: str = "", base_url: str = "", allow_actions: bool = False,
-         owner_name: str = "Roxan", language: str = "en", workspace: str = "") -> dict:
+         owner_name: str = "Roxan", language: str = "en", workspace: str = "",
+         agent: str = "", skills=None) -> dict:
     """Run one chat turn. Returns {"reply": str, "tools_used": [...], "error": str|None}."""
     preset = PROVIDERS.get(provider)
     if not preset:
@@ -287,6 +332,21 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
         return {"reply": "", "tools_used": [], "error": "No model specified."}
 
     system = _system_prompt(owner_name, language, workspace)
+    if agent or skills:
+        try:
+            import agent_skills
+            overlay = agent_skills.build_overlay(agent, skills)
+            if overlay:
+                system += overlay
+        except Exception as e:
+            logger.error(f"agent/skills overlay failed: {e}")
+
+    # Inject long-term memory + semantically relevant vault notes.
+    try:
+        system += _memory_context(message)
+    except Exception as e:
+        logger.warning(f"memory context failed: {e}")
+
     history = _get_history(session_id)
     used: list = []
     files: list = []
@@ -303,6 +363,7 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
         return {"reply": "", "tools_used": used, "files": files, "error": str(e)}
 
     _save_turn(session_id, message, reply, used, files)
+    _learn_async(message, reply)   # learn durable facts from this turn (throttled)
     return {"reply": reply, "tools_used": used, "files": files, "error": None}
 
 

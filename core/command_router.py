@@ -274,6 +274,15 @@ class CommandRouter:
                 from modules.research import web_search
                 return web_search(**args)
 
+            # ── Knowledge (learn / recall) ───────────────────────────────────
+            if tool_name == "remember":
+                from modules.knowledge import remember
+                return remember(**args)
+
+            if tool_name == "recall":
+                from modules.knowledge import recall
+                return recall(**args)
+
             # ── Notes ────────────────────────────────────────────────────────
             if tool_name == "create_note":
                 from modules.notes import _notes_manager

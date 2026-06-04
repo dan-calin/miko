@@ -245,7 +245,59 @@
 
   /* Composer */
   .composer { border-top: 1px solid var(--border); padding: 16px 40px; background: var(--bg); }
-  .composer-inner { max-width: 720px; margin: 0 auto; }
+  .composer-inner { max-width: 720px; margin: 0 auto; position: relative; }
+
+  /* Agent / Skills selector (ECC personas + skills) */
+  .as-bar { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; flex-wrap: wrap; }
+  .as-btn {
+    display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em;
+    padding: 4px 10px; border-radius: 3px; cursor: pointer;
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text2);
+    transition: color 120ms, border-color 120ms;
+  }
+  .as-btn:hover { color: var(--text); border-color: var(--borderMid); }
+  .as-btn.has { border-color: var(--amberDim); color: var(--amber); }
+  .as-active { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+  .as-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 7px; border-radius: 2px;
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.04em;
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text2);
+  }
+  .as-chip.agent { border-color: var(--amberDim); color: var(--amber); }
+  .as-chip .x { cursor: pointer; color: var(--text3); font-size: 11px; }
+  .as-chip .x:hover { color: #b06a4a; }
+
+  .as-pop {
+    position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 400;
+    width: 392px; max-width: calc(100vw - 40px); max-height: 60vh; overflow-y: auto;
+    background: var(--surface2); border: 1px solid var(--borderMid); border-radius: 6px;
+    box-shadow: 0 14px 40px rgba(0,0,0,0.6); padding: 4px; display: none;
+  }
+  .as-pop.show { display: block; }
+  .as-pop-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 2px; }
+  .as-sec-label {
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text3); padding: 10px 10px 6px;
+  }
+  .as-clear { font-family: var(--mono); font-size: 9px; color: var(--text3); background: none; border: none; cursor: pointer; }
+  .as-clear:hover { color: var(--amber); }
+  .as-opt {
+    display: flex; align-items: flex-start; gap: 9px; padding: 7px 10px; border-radius: 3px;
+    cursor: pointer; transition: background 100ms;
+  }
+  .as-opt:hover { background: var(--surface3); }
+  .as-opt .mark {
+    flex-shrink: 0; width: 15px; height: 15px; margin-top: 1px; border-radius: 2px;
+    border: 1px solid var(--borderMid); display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: #0b0b0b; background: var(--surface);
+  }
+  .as-opt.radio .mark { border-radius: 50%; }
+  .as-opt.sel .mark { background: var(--amber); border-color: var(--amber); }
+  .as-opt .body { min-width: 0; }
+  .as-opt .ttl { font-size: 12.5px; color: var(--text); }
+  .as-opt .grp { font-family: var(--mono); font-size: 8px; letter-spacing: 0.06em; color: var(--amberDim); margin-left: 7px; }
+  .as-opt .ds { font-size: 11px; color: var(--text3); line-height: 1.45; margin-top: 1px; }
   .inputbar {
     display: flex; gap: 10px; align-items: flex-end;
     background: var(--surface); border: 1px solid var(--border);
@@ -438,6 +490,30 @@
     gap: 10px; color: var(--text3); font-size: 13px;
   }
 
+  /* Explorer right-click context menu */
+  .ctx-menu {
+    position: fixed; z-index: 1500; min-width: 176px; display: none;
+    background: var(--surface2); border: 1px solid var(--borderMid);
+    border-radius: 4px; padding: 4px; box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+  }
+  .ctx-menu.show { display: block; }
+  .ctx-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 6px 10px; border-radius: 2px; cursor: pointer; text-align: left;
+    font-family: var(--font); font-size: 12.5px; color: var(--text2);
+    background: none; border: none; transition: background 100ms, color 100ms;
+  }
+  .ctx-item:hover { background: var(--surface3); color: var(--text); }
+  .ctx-item:disabled { color: var(--text3); cursor: default; }
+  .ctx-item:disabled:hover { background: none; color: var(--text3); }
+  .ctx-item .ck {
+    font-family: var(--mono); font-size: 11px; color: var(--amber);
+    width: 13px; flex-shrink: 0; text-align: center;
+  }
+  .ctx-item.danger:hover { color: #c87a58; }
+  .ctx-item.danger:hover .ck { color: #c87a58; }
+  .ctx-sep { height: 1px; background: var(--border); margin: 4px 4px; }
+
   /* Offline / no-server warning */
   .offline-banner {
     display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
@@ -569,6 +645,13 @@
 
     <div class="composer">
       <div class="composer-inner">
+        <div class="as-bar">
+          <button class="as-btn" id="as-btn" type="button" title="Choose an ECC persona and skills for Miko">
+            <span>⚙</span> Agent / Skills
+          </button>
+          <div class="as-active" id="as-active"></div>
+        </div>
+        <div class="as-pop" id="as-pop"></div>
         <div class="inputbar">
           <textarea id="input" rows="1" placeholder="Message Miko…"></textarea>
           <button class="send" id="send-btn" type="button" aria-label="Send message">
@@ -626,6 +709,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Explorer right-click context menu (file ops) -->
+  <div id="ctx-menu" class="ctx-menu"></div>
 </div>
 
 <script>
@@ -644,6 +730,10 @@ if (URLP.get('conv')) sessionId = URLP.get('conv');
 const keys = JSON.parse(localStorage.getItem('miko_keys') || '{}');   // per-provider, browser-local override
 const cfg  = JSON.parse(localStorage.getItem('miko_cfg')  || '{}');
 let curProvider = cfg.provider || 'gemini';
+// ECC agent (persona, one) + skills (toggle many), persisted in cfg.
+let AS = { agents: [], skills: [] };
+let asAgent = cfg.agent || '';
+let asSkills = Array.isArray(cfg.skills) ? cfg.skills.slice() : [];
 
 function envKeyName(id) { return (MODELS[id] && MODELS[id].env_key) || ''; }
 
@@ -652,6 +742,8 @@ function saveCfg() {
   cfg.model    = $('#model').value;
   cfg.baseUrl  = $('#base-url').value;
   cfg.allow    = $('#allow-actions').classList.contains('on');
+  cfg.agent    = asAgent;
+  cfg.skills   = asSkills;
   localStorage.setItem('miko_cfg', JSON.stringify(cfg));
   keys[curProvider] = $('#api-key').value;
   localStorage.setItem('miko_keys', JSON.stringify(keys));
@@ -861,6 +953,7 @@ async function send() {
         api_key: $('#api-key').value, base_url: $('#base-url').value,
         allow_actions: $('#allow-actions').classList.contains('on'),
         workspace: workspace,
+        agent: asAgent, skills: asSkills,
       }),
     })).json();
     trow.remove();
@@ -1086,6 +1179,10 @@ async function loadDir(path) {
     it.innerHTML = `<span class="ic">${ent.is_dir ? '▸' : '·'}</span><span class="nm"></span>`;
     it.querySelector('.nm').textContent = ent.name;
     it.addEventListener('click', () => ent.is_dir ? loadDir(ent.path) : openFile(ent.path));
+    it.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation();
+      showCtx(e, { path: ent.path, name: ent.name, is_dir: ent.is_dir });
+    });
     list.appendChild(it);
   });
 }
@@ -1187,6 +1284,111 @@ async function saveFile() {
   } catch (e) { btn.textContent = 'Failed'; setTimeout(refreshSaveBtn, 1500); }
 }
 
+// ── Explorer context menu + file operations ────────────────
+let clip = null;            // { path, name, is_dir, mode:'copy'|'cut' }
+const ctxEl = $('#ctx-menu');
+
+function hideCtx() { ctxEl.classList.remove('show'); }
+
+async function filesPost(url, body) {
+  const r = await fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return r.json();
+}
+
+function clearEditor() {
+  if (cm) { cm.toTextArea(); cm = null; }
+  edPath = null; edBaseline = '';
+  $('#ed-name').textContent = 'No file open';
+  $('#ed-badge').style.display = 'none';
+  $('#ed-save').disabled = true; $('#ed-save').className = 'ed-save';
+  $('#ed-host').innerHTML =
+    '<div class="ed-placeholder" id="ed-placeholder">' +
+    '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+    '<rect x="3.6" y="3.6" width="8.8" height="8.8" stroke="#624f25" stroke-width="1.15" transform="rotate(45 8 8)" /></svg>' +
+    '<span>Select a file to view or edit</span></div>';
+}
+
+function showCtx(e, target) {
+  // target: { path, name, is_dir } on an item; null on the explorer background.
+  const dest = (target && target.is_dir) ? target.path : wsCurDir;  // where New/Paste land
+  const items = [];
+  if (target) {
+    if (!target.is_dir) items.push({ label: 'Open', ck: '↗', act: () => openFile(target.path) });
+    items.push({ label: 'Rename', ck: '✎', act: () => ctxRename(target) });
+    items.push({ label: 'Delete', ck: '×', danger: true, act: () => ctxDelete(target) });
+    items.push({ sep: true });
+    items.push({ label: 'Copy', ck: '⧉', act: () => { clip = { ...target, mode: 'copy' }; } });
+    items.push({ label: 'Cut',  ck: '✁', act: () => { clip = { ...target, mode: 'cut' }; } });
+  }
+  items.push({ label: 'Paste', ck: '⎘', disabled: !clip, act: () => ctxPaste(dest) });
+  items.push({ sep: true });
+  items.push({ label: 'New File',   ck: '＋', act: () => ctxNew(dest, false) });
+  items.push({ label: 'New Folder', ck: '⊞', act: () => ctxNew(dest, true) });
+  items.push({ label: 'Refresh',    ck: '↻', act: () => loadDir(wsCurDir) });
+
+  ctxEl.innerHTML = '';
+  items.forEach(it => {
+    if (it.sep) { const s = document.createElement('div'); s.className = 'ctx-sep'; ctxEl.appendChild(s); return; }
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'ctx-item' + (it.danger ? ' danger' : '');
+    b.disabled = !!it.disabled;
+    b.innerHTML = `<span class="ck">${it.ck}</span><span>${it.label}</span>`;
+    if (!it.disabled) b.addEventListener('click', () => { hideCtx(); it.act(); });
+    ctxEl.appendChild(b);
+  });
+
+  ctxEl.classList.add('show');
+  const r = ctxEl.getBoundingClientRect();
+  let x = e.clientX, y = e.clientY;
+  if (x + r.width  > window.innerWidth)  x = window.innerWidth  - r.width  - 6;
+  if (y + r.height > window.innerHeight) y = window.innerHeight - r.height - 6;
+  ctxEl.style.left = x + 'px'; ctxEl.style.top = y + 'px';
+}
+
+async function ctxNew(dir, isDir) {
+  const name = prompt(isDir ? 'New folder name:' : 'New file name:', '');
+  if (name == null || !name.trim()) return;
+  const res = await filesPost('/files/create', { path: dir, name: name.trim(), is_dir: isDir });
+  if (res.error) { alert(res.error); return; }
+  await loadDir(dir);
+  if (!isDir && res.path) openFile(res.path);
+}
+
+async function ctxRename(target) {
+  const name = prompt('Rename to:', target.name);
+  if (name == null || name.trim() === '' || name.trim() === target.name) return;
+  const res = await filesPost('/files/rename', { path: target.path, name: name.trim() });
+  if (res.error) { alert(res.error); return; }
+  if (edPath === target.path && res.path) {
+    edPath = res.path; $('#ed-name').textContent = res.path.split(/[\\\/]/).pop();
+  }
+  await loadDir(wsCurDir);
+}
+
+async function ctxDelete(target) {
+  if (!confirm(`Delete "${target.name}"?\nIt will be moved to the Recycle Bin.`)) return;
+  const res = await filesPost('/files/delete', { path: target.path });
+  if (res.error) { alert(res.error); return; }
+  if (edPath === target.path) clearEditor();
+  await loadDir(wsCurDir);
+}
+
+async function ctxPaste(dest) {
+  if (!clip) return;
+  const res = await filesPost('/files/paste', { src: clip.path, dest, move: clip.mode === 'cut' });
+  if (res.error) { alert(res.error); return; }
+  if (clip.mode === 'cut') clip = null;   // a cut is consumed once pasted
+  await loadDir(dest);
+}
+
+// Right-click on empty explorer space → background menu (New / Paste / Refresh).
+$('#ws-list').addEventListener('contextmenu', e => { e.preventDefault(); showCtx(e, null); });
+$('#ws-list').addEventListener('scroll', hideCtx);
+document.addEventListener('mousedown', e => { if (!ctxEl.contains(e.target)) hideCtx(); });
+
 $('#ws-open').addEventListener('click', () => openWorkspace());
 $('#ws-close').addEventListener('click', closeWorkspace);
 $('#ed-save').addEventListener('click', saveFile);
@@ -1207,10 +1409,88 @@ async function browseForFolder() {
   finally { b.disabled = false; b.textContent = label; }
 }
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && ctxEl.classList.contains('show')) { hideCtx(); return; }
   if ($('#workspace').classList.contains('open')) {
     if (e.key === 'Escape') closeWorkspace();
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveFile(); }
   }
+});
+
+// ── Agent / Skills selector (ECC personas + skills) ────────
+const AS_THEME = {
+  planning: 'Planning', research: 'Research', writing: 'Writing',
+  coding: 'Coding', productivity: 'Productivity',
+};
+
+async function loadAgentSkills() {
+  try { AS = await (await fetch('/chat/agent-skills')).json(); }
+  catch (e) { return; }   // offline — selector stays empty
+  buildASPop();
+  renderASActive();
+}
+
+function asOptHTML(kind, id, title, desc, theme, sel) {
+  const mark = sel ? (kind === 'agent' ? '●' : '✓') : '';
+  const grp = theme ? `<span class="grp">${AS_THEME[theme] || theme}</span>` : '';
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  return `<div class="as-opt ${kind === 'agent' ? 'radio' : ''} ${sel ? 'sel' : ''}" data-kind="${kind}" data-id="${id}">
+    <span class="mark">${mark}</span>
+    <span class="body"><div class="ttl">${esc(title)}${grp}</div><div class="ds">${esc(desc)}</div></span>
+  </div>`;
+}
+
+function buildASPop() {
+  const pop = $('#as-pop');
+  let html = '<div class="as-pop-head"><span class="as-sec-label" style="padding:0">Persona · pick one</span>' +
+             '<button class="as-clear" id="as-clear" type="button">clear all</button></div>';
+  html += asOptHTML('agent', '', 'None', 'Plain Miko — no persona overlay.', '', asAgent === '');
+  AS.agents.forEach(a => { html += asOptHTML('agent', a.id, a.label, a.desc, a.theme, asAgent === a.id); });
+  html += '<div class="as-sec-label">Skills · toggle any</div>';
+  AS.skills.forEach(s => { html += asOptHTML('skill', s.id, s.label, s.desc, s.theme, asSkills.includes(s.id)); });
+  pop.innerHTML = html;
+
+  pop.querySelectorAll('.as-opt').forEach(el => {
+    el.addEventListener('click', () => {
+      const { kind, id } = el.dataset;
+      if (kind === 'agent') asAgent = id;
+      else if (asSkills.includes(id)) asSkills = asSkills.filter(x => x !== id);
+      else asSkills.push(id);
+      saveCfg(); buildASPop(); renderASActive();
+    });
+  });
+  $('#as-clear').addEventListener('click', () => {
+    asAgent = ''; asSkills = []; saveCfg(); buildASPop(); renderASActive();
+  });
+}
+
+function asChip(label, isAgent, onRemove) {
+  const c = document.createElement('span'); c.className = 'as-chip' + (isAgent ? ' agent' : '');
+  const t = document.createElement('span'); t.textContent = label; c.appendChild(t);
+  const x = document.createElement('span'); x.className = 'x'; x.textContent = '×';
+  x.addEventListener('click', e => { e.stopPropagation(); onRemove(); });
+  c.appendChild(x); return c;
+}
+
+function renderASActive() {
+  const host = $('#as-active'); host.innerHTML = '';
+  $('#as-btn').classList.toggle('has', !!asAgent || asSkills.length > 0);
+  if (asAgent) {
+    const a = AS.agents.find(x => x.id === asAgent);
+    host.appendChild(asChip(a ? a.label : asAgent, true,
+      () => { asAgent = ''; saveCfg(); buildASPop(); renderASActive(); }));
+  }
+  asSkills.forEach(id => {
+    const s = AS.skills.find(x => x.id === id);
+    host.appendChild(asChip(s ? s.label : id, false,
+      () => { asSkills = asSkills.filter(x => x !== id); saveCfg(); buildASPop(); renderASActive(); }));
+  });
+}
+
+$('#as-btn').addEventListener('click', e => { e.stopPropagation(); $('#as-pop').classList.toggle('show'); });
+document.addEventListener('mousedown', e => {
+  const pop = $('#as-pop'), btn = $('#as-btn');
+  if (pop.classList.contains('show') && !pop.contains(e.target) && !btn.contains(e.target))
+    pop.classList.remove('show');
 });
 
 // ── Wiring ─────────────────────────────────────────────────
@@ -1258,13 +1538,14 @@ async function checkServer() {
   }
 }
 $('#ob-retry').addEventListener('click', async () => {
-  if (await checkServer()) { loadModels(); loadConversations(); loadWorkspace(); }
+  if (await checkServer()) { loadModels(); loadConversations(); loadWorkspace(); loadAgentSkills(); }
 });
 
 setAllow(!!cfg.allow);
 emptyState();
 checkServer();
 loadWorkspace();
+loadAgentSkills();
 loadModels().then(() => input.focus());
 // Restore the last conversation (if it still has messages), then list all.
 fetch('/chat/conversation?id=' + encodeURIComponent(sessionId))

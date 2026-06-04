@@ -10,6 +10,7 @@ allowed roots; binary and oversized files are refused for editing.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -151,6 +152,110 @@ def write_file(path: str, content: str) -> dict:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content if isinstance(content, str) else "", encoding="utf-8")
     return {"ok": True, "path": str(p), "size": p.stat().st_size}
+
+
+# ── File operations (used by the explorer's right-click context menu) ─────────
+_INVALID_NAME = set('\\/:*?"<>|')
+
+
+def _check_name(name: str) -> str:
+    """Validate a new file/folder name (no path separators or reserved chars)."""
+    name = (name or "").strip().rstrip(".")
+    if not name or name in (".", ".."):
+        raise ValueError("Please enter a name.")
+    if any(c in _INVALID_NAME for c in name):
+        raise ValueError('A name can\'t contain  \\ / : * ? " < > |')
+    return name
+
+
+def _unique(target: Path) -> Path:
+    """If `target` exists, append ' (copy)', ' (copy 2)', … before the suffix."""
+    if not target.exists():
+        return target
+    stem, suffix, parent = target.stem, target.suffix, target.parent
+    cand = parent / f"{stem} (copy){suffix}"
+    n = 2
+    while cand.exists():
+        cand = parent / f"{stem} (copy {n}){suffix}"
+        n += 1
+    return cand
+
+
+def create_entry(path: str, name: str, is_dir: bool = False) -> dict:
+    """Create a new (empty) file or folder named `name` inside folder `path`."""
+    parent = _resolve(path, for_write=True)
+    if not parent.is_dir():
+        raise ValueError("Target is not a folder.")
+    name = _check_name(name)
+    target = _resolve(str(parent / name), for_write=True)
+    if target.exists():
+        raise ValueError(f'"{name}" already exists here.')
+    if is_dir:
+        target.mkdir(parents=True)
+    else:
+        target.write_text("", encoding="utf-8")
+    return {"ok": True, "path": str(target), "is_dir": bool(is_dir)}
+
+
+def rename_entry(path: str, name: str) -> dict:
+    """Rename a file or folder in place (within the same parent folder)."""
+    p = _resolve(path, for_write=True)
+    if not p.exists():
+        raise ValueError("That item no longer exists.")
+    name = _check_name(name)
+    target = _resolve(str(p.parent / name), for_write=True)
+    if target == p:
+        return {"ok": True, "path": str(p)}
+    if target.exists():
+        raise ValueError(f'"{name}" already exists here.')
+    p.rename(target)
+    return {"ok": True, "path": str(target)}
+
+
+def delete_entry(path: str) -> dict:
+    """Delete a file or folder — sent to the Recycle Bin when possible."""
+    p = _resolve(path, for_write=True)
+    if not p.exists():
+        raise ValueError("That item no longer exists.")
+    trashed = False
+    try:
+        from send2trash import send2trash
+        send2trash(str(p))
+        trashed = True
+    except Exception:
+        try:
+            if p.is_dir():
+                shutil.rmtree(p)
+            else:
+                p.unlink()
+        except OSError as e:
+            raise ValueError(f"Couldn't delete: {e}")
+    return {"ok": True, "path": str(p), "trashed": trashed}
+
+
+def paste_entry(src: str, dest: str, move: bool = False) -> dict:
+    """Copy (or move, if `move`) `src` into the folder `dest`."""
+    s = _resolve(src, for_write=move)   # a move removes the source → needs write there
+    if not s.exists():
+        raise ValueError("The source item no longer exists.")
+    d = _resolve(dest, for_write=True)
+    if not d.is_dir():
+        raise ValueError("Destination is not a folder.")
+    if s.is_dir():
+        sl, dl = str(s).lower(), str(d).lower()
+        if dl == sl or dl.startswith(sl + os.sep):
+            raise ValueError("Can't paste a folder into itself.")
+    target = _unique(d / s.name)
+    try:
+        if move:
+            shutil.move(str(s), str(target))
+        elif s.is_dir():
+            shutil.copytree(str(s), str(target))
+        else:
+            shutil.copy2(str(s), str(target))
+    except (OSError, shutil.Error) as e:
+        raise ValueError(f"Couldn't {'move' if move else 'copy'}: {e}")
+    return {"ok": True, "path": str(target), "moved": bool(move)}
 
 
 # ── Active workspace ──────────────────────────────────────────────────────────

@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Semantic long-term memory / "second brain"** (`memory/embeddings.py`,
+  `memory/knowledge_store.py`, `modules/knowledge.py`). Miko now learns from you and
+  recalls it by meaning, across both the voice agent and the web chat:
+  - **Embeddings** are pluggable and **local-first**: uses `fastembed` (offline ONNX,
+    no API cost/limits) when installed, otherwise falls back to the Gemini/OpenAI
+    embedding API using your existing key, otherwise keyword search. Nothing hard-fails.
+  - **Vector store** is a dependency-light SQLite table with a NumPy cosine search
+    (`data/knowledge.db`, git-ignored) over two kinds of content: structured personal
+    **facts** (from `long_term.json`) and **chunks of your notes vault**.
+  - **The vault is your existing `Desktop/Miko Notes` folder** — already Markdown +
+    YAML, so it doubles as an **Obsidian vault** (open it in Obsidian for graph view,
+    backlinks, and search with zero migration). Notes are (re)indexed on server start
+    and incrementally (unchanged files skip).
+  - **New shared tools** `remember` and `recall`, registered for every provider, so
+    both voice and chat can save durable facts and semantically search memory + notes.
+  - **The web chat now learns**: it injects your known facts + the notes most relevant
+    to each message into the system prompt, and extracts durable facts from chat turns
+    (the same learner the voice agent already used — previously voice-only).
+  - New endpoints: `GET /knowledge/stats`, `POST /knowledge/reindex`,
+    `POST /knowledge/recall`. New dependency: `fastembed` (optional but recommended).
+
+- **Selectable ECC agents & skills in the Chat UI** (`agent_skills.py`, vendored
+  docs under `vendor/ecc/`). A **⚙ Agent / Skills** button by the composer opens a
+  picker: choose one **persona** (Chief of Staff, Planner, Code Explorer, Code
+  Reviewer, Security Reviewer) and toggle any **skills** (Deep Research, Article
+  Writing, Brand Voice, Git Workflow, GitHub Ops, Email Ops, Knowledge Ops,
+  Codebase Onboarding). The active selection shows as chips by the send box and
+  persists in the browser. Adapted from the [ECC project](https://github.com/affaan-m/ecc)
+  (MIT, © Affaan Mustafa) — the original Markdown is vendored verbatim for
+  provenance, and a **trimmed, Miko-adapted** instruction block for each is
+  appended to the chat **system prompt** when selected. Because it rides in the
+  system prompt, it works on **every provider** (Gemini, MiniMax, OpenAI,
+  DeepSeek, Kimi), not just Claude; Claude-Code-only references (MCP tools, the
+  Task subagent tool, hooks, `gh`/`gog` CLIs, `~/.claude/` paths) are stripped and
+  re-pointed at Miko's own tools. Only the selected blocks cost tokens
+  (~150–300 each); nothing is sent when nothing is selected. New endpoint:
+  `GET /chat/agent-skills`; `/chat/message` accepts optional `agent` + `skills`.
+
 - **Persistent, resumable chat conversations** (`conversation_store.py`). Chats are now
   saved to disk (one JSON per conversation under `data/conversations/`, git-ignored)
   instead of an in-memory dict, so they survive restarts. The Chat UI gains a
@@ -68,6 +106,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Browsing and reading are unrestricted (it's your machine); the only hard rule is that
     *writes* into the Windows system folders are refused, and binary / >1 MB files open
     read-only.
+  - **Right-click context menu** in the explorer: New File, New Folder, Rename, Delete
+    (to the Recycle Bin via `send2trash`), Copy, Cut, Paste, and Refresh. Right-click an
+    item to act on it, or empty space to create/paste in the current folder. New names
+    are validated, paste auto-suffixes collisions (`name (copy).ext`), and pasting a
+    folder into itself is refused. New endpoints: `POST /files/create`,
+    `POST /files/rename`, `POST /files/delete`, `POST /files/paste`.
 
 ## [0.2.0] — 2026-06-03
 

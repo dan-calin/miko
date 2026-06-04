@@ -36,7 +36,24 @@ def start(command_router) -> None:
         daemon=True,
         name="ToolServer",
     ).start()
+    _start_knowledge_index()
     logger.info(f"Tool server listening on {host}:{port}")
+
+
+def _start_knowledge_index() -> None:
+    """Build/refresh the semantic knowledge index (facts + notes vault) in the
+    background so it's ready for recall without blocking server startup."""
+    def _build():
+        try:
+            from config import CONFIG
+            from memory import knowledge_store as KS
+            from memory.memory_manager import load_memory
+            KS.index_facts(load_memory(CONFIG.memory_file))
+            KS.reindex_notes(CONFIG.notes_dir)
+        except Exception as e:
+            logger.warning(f"knowledge index build failed: {e}")
+
+    threading.Thread(target=_build, daemon=True, name="KnowledgeIndex").start()
 
 
 def _run(host: str, port: int) -> None:
@@ -128,6 +145,10 @@ def _build_app():
         import file_browser
         workspace = (body.get("workspace") or "").strip() or file_browser.get_workspace()
 
+        skills = body.get("skills") or []
+        if not isinstance(skills, list):
+            skills = []
+
         result = chat(
             router=_router,
             session_id=body.get("session_id", "default"),
@@ -140,8 +161,42 @@ def _build_app():
             owner_name=CONFIG.owner_name,
             language=getattr(CONFIG, "language", "en"),
             workspace=workspace,
+            agent=(body.get("agent") or "").strip(),
+            skills=skills,
         )
         return JSONResponse(result)
+
+    @app.get("/chat/agent-skills")
+    def chat_agent_skills(_=Depends(_auth)):
+        import agent_skills
+        return {"agents": agent_skills.list_agents(), "skills": agent_skills.list_skills()}
+
+    # ── Knowledge / second brain ─────────────────────────────────────────────────
+    @app.get("/knowledge/stats")
+    def knowledge_stats(_=Depends(_auth)):
+        from memory import knowledge_store as KS
+        return KS.stats()
+
+    @app.post("/knowledge/reindex")
+    def knowledge_reindex(_=Depends(_auth)):
+        from config import CONFIG
+        from memory import knowledge_store as KS
+        from memory.memory_manager import load_memory
+        facts = KS.index_facts(load_memory(CONFIG.memory_file))
+        notes = KS.reindex_notes(CONFIG.notes_dir)
+        return {"ok": True, "facts_indexed": facts, "notes": notes, "stats": KS.stats()}
+
+    @app.post("/knowledge/recall")
+    async def knowledge_recall(request: Request, _=Depends(_auth)):
+        from memory import knowledge_store as KS
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        query = (body.get("query") or "").strip()
+        if not query:
+            return JSONResponse({"error": "Empty query."}, status_code=400)
+        return {"results": KS.search(query, k=int(body.get("k", 6)))}
 
     @app.get("/chat/env")
     def chat_env_get(_=Depends(_auth)):
@@ -220,6 +275,58 @@ def _build_app():
             body = {}
         try:
             return file_browser.write_file(body.get("path", ""), body.get("content", ""))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/files/create")
+    async def files_create(request: Request, _=Depends(_auth)):
+        import file_browser
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            return file_browser.create_entry(
+                body.get("path", ""), body.get("name", ""), bool(body.get("is_dir", False))
+            )
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/files/rename")
+    async def files_rename(request: Request, _=Depends(_auth)):
+        import file_browser
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            return file_browser.rename_entry(body.get("path", ""), body.get("name", ""))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/files/delete")
+    async def files_delete(request: Request, _=Depends(_auth)):
+        import file_browser
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            return file_browser.delete_entry(body.get("path", ""))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/files/paste")
+    async def files_paste(request: Request, _=Depends(_auth)):
+        import file_browser
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            return file_browser.paste_entry(
+                body.get("src", ""), body.get("dest", ""), bool(body.get("move", False))
+            )
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 

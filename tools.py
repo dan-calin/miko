@@ -56,6 +56,7 @@ ALL_TOOL_DECLARATIONS: list = (
     + _safe_import("modules.youtube_player")
     + _safe_import("modules.research")
     + _safe_import("modules.notes")
+    + _safe_import("modules.knowledge")
     + _safe_import("modules.os_control")
     + _safe_import("modules.file_indexer")
     + _safe_import("modules.journey")
