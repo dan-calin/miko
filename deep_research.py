@@ -22,19 +22,24 @@ from pathlib import Path
 
 logger = logging.getLogger("miko.research.deep")
 
-_MAX_Q = 5            # sub-questions
-_MAX_FETCH = 5        # sources read in full
-_SOURCE_CHARS = 3500  # per-source text cap
 _CTX_CAP = 24000      # total synthesis context cap
 
+# Effort → (sub-questions, sources read in full, per-source chars).
+_EFFORT = {
+    "quick":    (3, 2, 2500),
+    "standard": (5, 5, 3500),
+    "deep":     (7, 8, 4000),
+}
 
-def run(topic, provider, model, api_key="", base_url="", language="en"):
+
+def run(topic, provider, model, api_key="", base_url="", language="en", effort="standard"):
     """Yield progress events; the final event is {'type':'report', ...}."""
     from modules import research as R
+    max_q, max_fetch, src_chars = _EFFORT.get(effort, _EFFORT["standard"])
     try:
         topic = (topic or "").strip()
         yield {"type": "status", "text": "Planning research…"}
-        questions = _plan(topic, provider, model, api_key, base_url)
+        questions = _plan(topic, provider, model, api_key, base_url, max_q)
         yield {"type": "plan", "questions": questions}
 
         collected, urls = [], []
@@ -49,12 +54,12 @@ def run(topic, provider, model, api_key="", base_url="", language="en"):
             yield {"type": "step", "id": f"s{i}", "label": tag,
                    "detail": f"{len(results)} results", "state": "done"}
 
-        to_read = urls[:_MAX_FETCH]
+        to_read = urls[:max_fetch]
         readings = []
         for j, url in enumerate(to_read, 1):
             tag = f"Reading {j}/{len(to_read)}"
             yield {"type": "step", "id": f"r{j}", "label": tag, "detail": url, "state": "start"}
-            text = R.fetch_text(url, max_chars=_SOURCE_CHARS)
+            text = R.fetch_text(url, max_chars=src_chars)
             if text:
                 readings.append({"url": url, "text": text})
                 yield {"type": "source", "url": url}
@@ -80,10 +85,10 @@ def run(topic, provider, model, api_key="", base_url="", language="en"):
         yield {"type": "error", "error": str(e)}
 
 
-def _plan(topic, provider, model, api_key, base_url):
+def _plan(topic, provider, model, api_key, base_url, max_q=5):
     from chat_backend import complete_text
     sys = (
-        "You are a research planner. Break the user's topic into 4-5 specific, "
+        f"You are a research planner. Break the user's topic into {max_q} specific, "
         "non-overlapping sub-questions that together cover it well. "
         "Return ONLY a JSON array of strings — nothing else."
     )
@@ -93,7 +98,7 @@ def _plan(topic, provider, model, api_key, base_url):
     except Exception as e:
         logger.warning(f"plan failed: {e}")
         return [topic]
-    return _parse_list(raw)[:_MAX_Q] or [topic]
+    return _parse_list(raw)[:max_q] or [topic]
 
 
 def _parse_list(raw):

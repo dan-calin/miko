@@ -320,6 +320,15 @@
   .as-opt .ttl { font-size: 12.5px; color: var(--text); }
   .as-opt .grp { font-family: var(--mono); font-size: 8px; letter-spacing: 0.06em; color: var(--amberDim); margin-left: 7px; }
   .as-opt .ds { font-size: 11px; color: var(--text3); line-height: 1.45; margin-top: 1px; }
+  .as-effort { display: flex; gap: 6px; padding: 2px 10px 6px; }
+  .as-eff {
+    flex: 1; font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em;
+    padding: 5px 0; border-radius: 3px; cursor: pointer;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text2);
+    transition: color 110ms, border-color 110ms;
+  }
+  .as-eff:hover { color: var(--text); border-color: var(--borderMid); }
+  .as-eff.on { border-color: var(--amberDim); color: var(--amber); background: var(--surface3); }
   .inputbar {
     display: flex; gap: 10px; align-items: flex-end;
     background: var(--surface); border: 1px solid var(--border);
@@ -756,8 +765,22 @@ let curProvider = cfg.provider || 'gemini';
 let AS = { agents: [], skills: [] };
 let asAgent = cfg.agent || '';
 let asSkills = Array.isArray(cfg.skills) ? cfg.skills.slice() : [];
+let asEffort = cfg.effort || 'standard';   // quick | standard | deep (per model)
 
 function envKeyName(id) { return (MODELS[id] && MODELS[id].env_key) || ''; }
+
+// Agent / skills / effort are remembered PER provider+model.
+function modelKey() { return curProvider + ':' + (($('#model') && $('#model').value) || ''); }
+
+function loadModelSettings() {
+  const m = (cfg.byModel && cfg.byModel[modelKey()]) ||
+            { agent: cfg.agent, skills: cfg.skills, effort: cfg.effort };
+  asAgent  = m.agent || '';
+  asSkills = Array.isArray(m.skills) ? m.skills.slice() : [];
+  asEffort = m.effort || 'standard';
+  renderASActive();
+  if ($('#as-pop').classList.contains('show')) buildASPop();
+}
 
 function saveCfg() {
   cfg.provider = curProvider;
@@ -766,6 +789,9 @@ function saveCfg() {
   cfg.allow    = $('#allow-actions').classList.contains('on');
   cfg.agent    = asAgent;
   cfg.skills   = asSkills;
+  cfg.effort   = asEffort;
+  cfg.byModel  = cfg.byModel || {};
+  cfg.byModel[modelKey()] = { agent: asAgent, skills: asSkills, effort: asEffort };
   localStorage.setItem('miko_cfg', JSON.stringify(cfg));
   keys[curProvider] = $('#api-key').value;
   localStorage.setItem('miko_keys', JSON.stringify(keys));
@@ -826,6 +852,7 @@ function applyProvider(id, model) {
   $('#base-url').value = (cfg.provider === id && cfg.baseUrl) ? cfg.baseUrl : (p.needs_base_url ? '' : p.base_url);
   resetSaveBtn();
   updateKeyStatus();
+  loadModelSettings();   // restore this model's agent / skills / effort
   document.querySelectorAll('.mopt').forEach(o =>
     o.classList.toggle('active', o.dataset.provider === id && o.textContent === chosen));
 }
@@ -976,7 +1003,7 @@ async function send() {
         api_key: $('#api-key').value, base_url: $('#base-url').value,
         allow_actions: $('#allow-actions').classList.contains('on'),
         workspace: workspace,
-        agent: asAgent, skills: asSkills,
+        agent: asAgent, skills: asSkills, effort: asEffort,
       }),
     })).json();
     trow.remove();
@@ -1064,6 +1091,7 @@ async function sendResearch(text) {
         session_id: sessionId, message: text,
         provider: curProvider, model: $('#model').value,
         api_key: $('#api-key').value, base_url: $('#base-url').value,
+        effort: asEffort,
       }),
     });
     if (!resp.ok || !resp.body) throw new Error('Research stream unavailable (HTTP ' + resp.status + ')');
@@ -1552,14 +1580,25 @@ function asOptHTML(kind, id, title, desc, theme, sel) {
 
 function buildASPop() {
   const pop = $('#as-pop');
-  let html = '<div class="as-pop-head"><span class="as-sec-label" style="padding:0">Persona · pick one</span>' +
+  const mk = (($('#model') && $('#model').value) || curProvider);
+  let html = '<div class="as-pop-head"><span class="as-sec-label" style="padding:0">For ' +
+             mk.replace(/[<>&]/g, '') + '</span>' +
              '<button class="as-clear" id="as-clear" type="button">clear all</button></div>';
+  html += '<div class="as-sec-label">Effort · deep-research depth</div><div class="as-effort">';
+  [['quick', 'Quick'], ['standard', 'Standard'], ['deep', 'Deep']].forEach(([v, lab]) => {
+    html += `<button type="button" class="as-eff${asEffort === v ? ' on' : ''}" data-eff="${v}">${lab}</button>`;
+  });
+  html += '</div>';
+  html += '<div class="as-sec-label">Persona · pick one</div>';
   html += asOptHTML('agent', '', 'None', 'Plain Miko — no persona overlay.', '', asAgent === '');
   AS.agents.forEach(a => { html += asOptHTML('agent', a.id, a.label, a.desc, a.theme, asAgent === a.id); });
   html += '<div class="as-sec-label">Skills · toggle any</div>';
   AS.skills.forEach(s => { html += asOptHTML('skill', s.id, s.label, s.desc, s.theme, asSkills.includes(s.id)); });
   pop.innerHTML = html;
 
+  pop.querySelectorAll('.as-eff').forEach(el => el.addEventListener('click', () => {
+    asEffort = el.dataset.eff; saveCfg(); buildASPop();
+  }));
   pop.querySelectorAll('.as-opt').forEach(el => {
     el.addEventListener('click', () => {
       const { kind, id } = el.dataset;
@@ -1570,7 +1609,7 @@ function buildASPop() {
     });
   });
   $('#as-clear').addEventListener('click', () => {
-    asAgent = ''; asSkills = []; saveCfg(); buildASPop(); renderASActive();
+    asAgent = ''; asSkills = []; asEffort = 'standard'; saveCfg(); buildASPop(); renderASActive();
   });
 }
 
@@ -1608,7 +1647,7 @@ document.addEventListener('mousedown', e => {
 $('#drop-btn').addEventListener('click', () => $('#drop').classList.toggle('open'));
 document.addEventListener('mousedown', e => { if (!$('#drop').contains(e.target)) $('#drop').classList.remove('open'); });
 $('#model').addEventListener('input', () => { $('#cur-label').textContent = $('#model').value || MODELS[curProvider].label; });
-$('#model').addEventListener('change', saveCfg);
+$('#model').addEventListener('change', () => { loadModelSettings(); saveCfg(); });
 $('#api-key').addEventListener('input', updateKeyStatus);
 $('#api-key').addEventListener('change', saveCfg);
 $('#base-url').addEventListener('change', saveCfg);

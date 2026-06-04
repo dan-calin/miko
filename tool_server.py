@@ -189,13 +189,15 @@ def _build_app():
         model = body.get("model", "")
         api_key = body.get("api_key", "")
         base_url = body.get("base_url", "")
+        effort = (body.get("effort") or "standard").strip()
 
         def gen():
             import deep_research
             import conversation_store as convo
             report_text, note_path = "", ""
             for ev in deep_research.run(topic, provider, model, api_key, base_url,
-                                        language=getattr(CONFIG, "language", "en")):
+                                        language=getattr(CONFIG, "language", "en"),
+                                        effort=effort):
                 if ev.get("type") == "report":
                     report_text = ev.get("reply", "")
                     note_path = ev.get("note", "")
