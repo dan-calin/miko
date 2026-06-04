@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-model settings + effort dial, and an expanded provider list.** The Chat UI's
+  Agent/Skills popover remembers persona + skills **per provider+model** and adds an
+  **Effort** control (Quick/Standard/Deep). Effort drives three things: deep-research
+  depth, the chat **tool-call budget** (3/6/8 rounds), and — where the model supports
+  it — a **native reasoning parameter** sent to the API (OpenAI `reasoning_effort`,
+  real-Claude `output_config.effort`, Gemini 2.5/3.x thinking budget), gated per model
+  with a safe retry-without fallback so unsupported models (e.g. MiniMax) keep working.
+  Provider/model lists refreshed to current IDs (Gemini 3.5/3.1/3, GPT-5.5/5.4/5.2,
+  MiniMax-M3, DeepSeek-V4, Kimi K2.6) plus two new providers: **Anthropic Claude**
+  (real Claude — unlocks the native effort/thinking passthrough) and **xAI Grok**.
+- **Resource monitor** in the Chat UI sidebar — session tokens, last-turn tokens,
+  session time, and message count (token usage captured from each provider response).
+
 - **Memory v2 — token-efficient "lean cognitive" memory** (research-driven upgrade
   of the semantic memory; informed by Mem0, A-MEM, Zep, and 2025–26 surveys).
   Same local-only substrate (fastembed + SQLite), but a much smarter intelligence

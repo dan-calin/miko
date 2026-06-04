@@ -33,8 +33,10 @@ switch to the other language on the fly if you speak it.
   always knows what you're building.
 - 📅 **Calendar briefs** — morning / midday / night schedule briefs, and Miko always has
   today's schedule in context.
-- 💬 A **web Chat UI** (`/chat`) — type to Miko with any model (Gemini, OpenAI, DeepSeek,
-  Kimi, …), a built-in **file explorer + code editor** with right-click file ops,
+- 💬 A **web Chat UI** (`/chat`) — type to Miko with any model (Gemini, OpenAI, Anthropic
+  Claude, MiniMax, DeepSeek, Kimi, xAI Grok, or any OpenAI-compatible endpoint), with
+  **per-model settings** + an **effort** dial (which passes a native reasoning parameter
+  where supported), a built-in **file explorer + code editor** with right-click file ops,
   resumable conversations, a **resource monitor**, and a selectable **workspace** folder.
 
 ---
