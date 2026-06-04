@@ -385,6 +385,35 @@ def _run_tool(router, name: str, args: dict, allow_actions: bool,
 
 _EFFORT_ROUNDS = {"quick": 3, "standard": 6, "deep": 8}
 
+# Native reasoning-effort mapping, per provider (only for models that support it).
+_EFFORT_LEVEL = {"quick": "low", "standard": "medium", "deep": "high"}
+_EFFORT_GEMINI_BUDGET = {"quick": 0, "standard": -1, "deep": 12000}   # -1 = dynamic
+
+
+def _reasoning_kwargs(protocol: str, model: str, effort: str) -> dict:
+    """Extra API kwargs that pass the chosen effort as the provider's NATIVE reasoning
+    parameter — only for models known to support it. Empty dict otherwise."""
+    m = (model or "").lower()
+    if protocol == "openai":
+        if m.startswith(("o1", "o3", "o4")) or m.startswith("gpt-5"):
+            return {"reasoning_effort": _EFFORT_LEVEL.get(effort, "medium")}
+    elif protocol == "anthropic":
+        if "claude" in m:   # real Claude (not MiniMax via /anthropic)
+            return {"output_config": {"effort": _EFFORT_LEVEL.get(effort, "medium")}}
+    return {}
+
+
+def _create_safe(fn, base_kwargs: dict, extra: dict):
+    """Call an SDK create() with reasoning kwargs; if the provider rejects them
+    (unsupported model/endpoint), retry once without — so nothing ever breaks."""
+    if not extra:
+        return fn(**base_kwargs)
+    try:
+        return fn(**base_kwargs, **extra)
+    except Exception as e:
+        logger.warning(f"reasoning param rejected ({e}); retrying without it")
+        return fn(**base_kwargs)
+
 
 def chat(router, session_id: str, message: str, provider: str, model: str,
          api_key: str = "", base_url: str = "", allow_actions: bool = False,
@@ -442,11 +471,11 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
 
     try:
         if preset["protocol"] == "gemini":
-            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds)
+            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds, effort)
         elif preset["protocol"] == "anthropic":
-            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds)
+            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort)
         else:
-            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds)
+            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort)
     except Exception as e:
         logger.error(f"chat() error ({provider}/{model}): {e}", exc_info=True)
         return {"reply": "", "tools_used": used, "files": files, "usage": usage, "error": str(e)}
@@ -481,7 +510,7 @@ def _accum_usage(usage: dict, resp, proto: str) -> None:
 
 # ── OpenAI-compatible (OpenAI, DeepSeek, Kimi, custom) ────────────────────────
 
-def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS) -> str:
+def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard") -> str:
     from openai import OpenAI
     from tools import ALL_TOOL_DECLARATIONS_OPENAI
 
@@ -490,13 +519,14 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
     messages += [{"role": m["role"], "content": m["content"]} for m in history]
     messages.append({"role": "user", "content": message})
     tools = ALL_TOOL_DECLARATIONS_OPENAI or None
+    rk = _reasoning_kwargs("openai", model, effort)   # native reasoning_effort (if supported)
 
     for _ in range(rounds):
         kwargs = {"model": model, "messages": messages}
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-        resp = client.chat.completions.create(**kwargs)
+        resp = _create_safe(client.chat.completions.create, kwargs, rk)
         if usage is not None:
             _accum_usage(usage, resp, "openai")
         msg = resp.choices[0].message
@@ -522,7 +552,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
             result = _run_tool(router, tc.function.name, args, allow_actions, used, files)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
-    final = client.chat.completions.create(model=model, messages=messages)
+    final = _create_safe(client.chat.completions.create, {"model": model, "messages": messages}, rk)
     if usage is not None:
         _accum_usage(usage, final, "openai")
     return (final.choices[0].message.content or "").strip() or "(done)"
@@ -530,7 +560,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
 
 # ── Anthropic-compatible (MiniMax /anthropic) ────────────────────────────────
 
-def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS) -> str:
+def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard") -> str:
     import anthropic
     from tools import ALL_TOOL_DECLARATIONS_ANTHROPIC
 
@@ -538,12 +568,13 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
     messages = [{"role": m["role"], "content": m["content"]} for m in history]
     messages.append({"role": "user", "content": message})
     tools = ALL_TOOL_DECLARATIONS_ANTHROPIC or None
+    rk = _reasoning_kwargs("anthropic", model, effort)   # real-Claude effort (if supported)
 
     for _ in range(rounds):
         kwargs = {"model": model, "max_tokens": 4096, "system": system, "messages": messages}
         if tools:
             kwargs["tools"] = tools
-        resp = client.messages.create(**kwargs)
+        resp = _create_safe(client.messages.create, kwargs, rk)
         if usage is not None:
             _accum_usage(usage, resp, "anthropic")
 
@@ -579,7 +610,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
-def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS) -> str:
+def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard") -> str:
     from google import genai
     from google.genai import types
     from tools import ALL_TOOL_DECLARATIONS
@@ -594,13 +625,32 @@ def _run_gemini(router, key, model, system, history, message, allow_actions, use
     ]
     contents.append(types.Content(role="user", parts=[types.Part(text=message)]))
 
-    gen_config = types.GenerateContentConfig(
-        system_instruction=system,
-        tools=[types.Tool(function_declarations=ALL_TOOL_DECLARATIONS)] if ALL_TOOL_DECLARATIONS else [],
-    )
+    cfg_kwargs = {
+        "system_instruction": system,
+        "tools": [types.Tool(function_declarations=ALL_TOOL_DECLARATIONS)] if ALL_TOOL_DECLARATIONS else [],
+    }
+    # Native thinking budget for 2.5+ models (quick=off, standard=dynamic, deep=high).
+    budget = _EFFORT_GEMINI_BUDGET.get(effort)
+    use_thinking = budget is not None and any(t in model.lower() for t in ("2.5", "2-5", "3."))
+    if use_thinking:
+        try:
+            cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+        except Exception:
+            use_thinking = False
+    gen_config = types.GenerateContentConfig(**cfg_kwargs)
 
     for _ in range(rounds):
-        resp = client.models.generate_content(model=model, contents=contents, config=gen_config)
+        try:
+            resp = client.models.generate_content(model=model, contents=contents, config=gen_config)
+        except Exception as e:
+            if use_thinking:   # model/endpoint rejected the thinking budget → drop it
+                logger.warning(f"gemini thinking budget rejected ({e}); retrying without")
+                cfg_kwargs.pop("thinking_config", None)
+                gen_config = types.GenerateContentConfig(**cfg_kwargs)
+                use_thinking = False
+                resp = client.models.generate_content(model=model, contents=contents, config=gen_config)
+            else:
+                raise
         if usage is not None:
             _accum_usage(usage, resp, "gemini")
         candidate = resp.candidates[0] if resp.candidates else None
