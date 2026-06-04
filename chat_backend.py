@@ -92,6 +92,53 @@ def list_models() -> dict:
     return out
 
 
+def complete_text(provider: str, model: str = "", api_key: str = "", base_url: str = "",
+                  system: str = "", user: str = "", max_tokens: int = 2048) -> str:
+    """One-shot text completion (no tools) for any provider — used by pipelines such
+    as deep research that need the model to plan or synthesize. Raises on no key."""
+    preset = PROVIDERS.get(provider) or PROVIDERS["gemini"]
+    key = (api_key or "").strip() or os.getenv(preset["env_key"], "")
+    if not key:
+        raise RuntimeError(f"No API key for {preset['label']}.")
+    base = (base_url or "").strip() or preset["base_url"]
+    model = model or (preset["models"] or [""])[0]
+    proto = preset["protocol"]
+
+    if proto == "gemini":
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=key)
+        cfg = types.GenerateContentConfig(system_instruction=system) if system else None
+        resp = client.models.generate_content(
+            model=model,
+            contents=[types.Content(role="user", parts=[types.Part(text=user)])],
+            config=cfg,
+        )
+        cand = resp.candidates[0] if resp.candidates else None
+        if cand and cand.content and cand.content.parts:
+            return " ".join(p.text for p in cand.content.parts if p.text).strip()
+        return ""
+
+    if proto == "anthropic":
+        import anthropic
+        client = anthropic.Anthropic(api_key=key, base_url=base or None)
+        kwargs = {"model": model, "max_tokens": max_tokens,
+                  "messages": [{"role": "user", "content": user}]}
+        if system:
+            kwargs["system"] = system
+        resp = client.messages.create(**kwargs)
+        return " ".join(b.text for b in resp.content if hasattr(b, "text")).strip()
+
+    from openai import OpenAI
+    client = OpenAI(api_key=key, base_url=base or None)
+    msgs = []
+    if system:
+        msgs.append({"role": "system", "content": system})
+    msgs.append({"role": "user", "content": user})
+    resp = client.chat.completions.create(model=model, messages=msgs)
+    return (resp.choices[0].message.content or "").strip()
+
+
 # ── .env read/write (settings panel) ──────────────────────────────────────────
 # The Chat UI can read and persist API keys straight into the project's .env so
 # they survive restarts. This is a self-hosted, single-user tool — keys live in

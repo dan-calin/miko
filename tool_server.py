@@ -166,6 +166,51 @@ def _build_app():
         )
         return JSONResponse(result)
 
+    @app.post("/chat/research")
+    async def chat_research(request: Request, _=Depends(_auth)):
+        """Run the deep-research pipeline, streaming NDJSON progress events, then
+        persist the final report (with its saved vault note) to the conversation."""
+        from fastapi.responses import StreamingResponse
+        import json as _json
+        from config import CONFIG
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        topic = (body.get("message") or "").strip()
+        if not topic:
+            return JSONResponse({"error": "Empty message."}, status_code=400)
+
+        session_id = body.get("session_id", "default")
+        provider = body.get("provider", "gemini")
+        model = body.get("model", "")
+        api_key = body.get("api_key", "")
+        base_url = body.get("base_url", "")
+
+        def gen():
+            import deep_research
+            import conversation_store as convo
+            report_text, note_path = "", ""
+            for ev in deep_research.run(topic, provider, model, api_key, base_url,
+                                        language=getattr(CONFIG, "language", "en")):
+                if ev.get("type") == "report":
+                    report_text = ev.get("reply", "")
+                    note_path = ev.get("note", "")
+                yield _json.dumps(ev) + "\n"
+            if report_text:
+                files = ([{"path": note_path, "name": os.path.basename(note_path)}]
+                         if note_path else [])
+                try:
+                    convo.append_turn(session_id, topic, report_text, ["deep_research"], files)
+                except Exception:
+                    pass
+
+        return StreamingResponse(
+            gen(), media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @app.get("/chat/agent-skills")
     def chat_agent_skills(_=Depends(_auth)):
         import agent_skills

@@ -243,6 +243,28 @@
   .think-dots { display: flex; gap: 5px; align-items: center; padding: 5px 0; }
   .think-dots .d { width: 5px; height: 5px; border-radius: 50%; background: var(--amberDim); }
 
+  /* Deep Research progress card */
+  .rs-card {
+    border: 1px solid var(--border); border-left: 2px solid var(--amberDim);
+    border-radius: 4px; background: var(--surface); padding: 10px 12px; margin-bottom: 11px;
+  }
+  .rs-card.done { border-left-color: var(--green); }
+  .rs-head {
+    display: flex; align-items: center; gap: 8px; font-family: var(--mono);
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text2);
+  }
+  .rs-head .rs-ic { color: var(--amber); font-size: 12px; }
+  .rs-status { margin-left: auto; color: var(--text3); text-transform: none; letter-spacing: 0.02em; }
+  .rs-card.done .rs-status { color: var(--green); }
+  .rs-plan { margin: 9px 0 6px; padding-left: 20px; color: var(--text2); font-size: 12.5px; line-height: 1.6; }
+  .rs-plan li { margin: 1px 0; }
+  .rs-log { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+  .rs-step { font-family: var(--mono); font-size: 10px; color: var(--text3); display: flex; gap: 6px; align-items: baseline; }
+  .rs-step .rs-mk { color: var(--amberDim); width: 10px; flex-shrink: 0; }
+  .rs-step.done .rs-mk { color: var(--greenBright); }
+  .rs-step .rs-lb { color: var(--text2); flex-shrink: 0; }
+  .rs-step .rs-dt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
   /* Composer */
   .composer { border-top: 1px solid var(--border); padding: 16px 40px; background: var(--bg); }
   .composer-inner { max-width: 720px; margin: 0 auto; position: relative; }
@@ -942,6 +964,7 @@ async function send() {
   if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
   input.value = ''; input.style.height = 'auto'; refreshSend();
   addUser(text);
+  if (asSkills.includes('deep-research')) { sendResearch(text); return; }
   const trow = thinking();
   $('#send-btn').dataset.busy = '1';
   try {
@@ -974,6 +997,94 @@ async function send() {
   } finally {
     $('#send-btn').dataset.busy = '0'; chatEl.scrollTop = chatEl.scrollHeight; input.focus();
     loadConversations();   // refresh titles / order after the turn is saved
+  }
+}
+
+// ── Deep Research (streamed pipeline with live progress) ───
+function addResearchCard() {
+  const row = document.createElement('div'); row.className = 'row bot';
+  const g = document.createElement('div'); g.className = 'glyph'; g.textContent = 'M';
+  const c = document.createElement('div'); c.className = 'content';
+  const card = document.createElement('div'); card.className = 'rs-card';
+  card.innerHTML =
+    '<div class="rs-head"><span class="rs-ic">⌖</span> Deep Research' +
+    '<span class="rs-status">starting…</span></div>' +
+    '<ol class="rs-plan"></ol><div class="rs-log"></div>';
+  const tx = document.createElement('div'); tx.className = 'bot-text';
+  const fl = document.createElement('div'); fl.className = 'files';
+  const tl = document.createElement('div'); tl.className = 'tools';
+  const st = document.createElement('div'); st.className = 'stamp';
+  c.append(card, tx, fl, tl, st); row.append(g, c);
+  messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
+  return {
+    card, tx, fl, tl, st, steps: {}, srcCount: 0,
+    status: card.querySelector('.rs-status'),
+    plan: card.querySelector('.rs-plan'),
+    log: card.querySelector('.rs-log'),
+  };
+}
+
+function handleResearchEvent(c, ev) {
+  if (ev.type === 'status') c.status.textContent = ev.text;
+  else if (ev.type === 'plan') {
+    c.plan.innerHTML = '';
+    (ev.questions || []).forEach(q => { const li = document.createElement('li'); li.textContent = q; c.plan.appendChild(li); });
+  } else if (ev.type === 'step') {
+    let el = c.steps[ev.id];
+    if (!el) {
+      el = document.createElement('div'); el.className = 'rs-step';
+      el.innerHTML = '<span class="rs-mk">•</span><span class="rs-lb"></span><span class="rs-dt"></span>';
+      c.log.appendChild(el); c.steps[ev.id] = el;
+    }
+    el.querySelector('.rs-lb').textContent = ev.label;
+    el.querySelector('.rs-dt').textContent = ev.detail ? ' — ' + ev.detail : '';
+    if (ev.state === 'done') { el.querySelector('.rs-mk').textContent = '✓'; el.classList.add('done'); }
+  } else if (ev.type === 'source') {
+    c.srcCount++; c.status.textContent = 'read ' + c.srcCount + ' source' + (c.srcCount > 1 ? 's' : '') + '…';
+  } else if (ev.type === 'report') {
+    c.status.textContent = 'done'; c.card.classList.add('done');
+    renderBotText(c.tx, ev.reply || '(no report)');
+    c.tl.innerHTML = '<span class="chip"><span class="di">◈</span>deep_research</span>';
+    if (ev.note) renderFileChips(c.fl, [{ path: ev.note, name: ev.note.split(/[\\\/]/).pop() }]);
+    c.st.textContent = fmtTime(new Date());
+  } else if (ev.type === 'error') {
+    c.status.textContent = 'failed'; c.tx.className = 'bot-text err';
+    renderBotText(c.tx, '⚠ ' + ev.error); c.st.textContent = fmtTime(new Date());
+  }
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+async function sendResearch(text) {
+  const c = addResearchCard();
+  $('#send-btn').dataset.busy = '1';
+  try {
+    const resp = await fetch('/chat/research', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: sessionId, message: text,
+        provider: curProvider, model: $('#model').value,
+        api_key: $('#api-key').value, base_url: $('#base-url').value,
+      }),
+    });
+    if (!resp.ok || !resp.body) throw new Error('Research stream unavailable (HTTP ' + resp.status + ')');
+    const reader = resp.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (line) { try { handleResearchEvent(c, JSON.parse(line)); } catch (e) { /* skip */ } }
+      }
+    }
+  } catch (e) {
+    c.status.textContent = 'failed'; c.tx.className = 'bot-text err';
+    renderBotText(c.tx, '⚠ ' + e.message); c.st.textContent = fmtTime(new Date());
+  } finally {
+    $('#send-btn').dataset.busy = '0'; chatEl.scrollTop = chatEl.scrollHeight; input.focus();
+    loadConversations();
   }
 }
 

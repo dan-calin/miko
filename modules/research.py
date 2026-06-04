@@ -4,8 +4,11 @@ Primary: DuckDuckGo DDGS. Secondary: opens browser for deep research.
 """
 
 import logging
-import webbrowser
+import re
 import urllib.parse
+import urllib.request
+import webbrowser
+from html.parser import HTMLParser
 
 logger = logging.getLogger("miko.research")
 
@@ -182,3 +185,91 @@ def get_network_info() -> str:
     except Exception:
         lines.append("IP public: necunoscut (fără internet?)")
     return "\n".join(lines)
+
+
+# ── Structured search + page fetching (used by the deep-research pipeline) ─────
+
+def search_results(query: str, max_results: int = 6) -> list[dict]:
+    """Return structured DuckDuckGo results: [{title, body, url}] (empty on error)."""
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        from duckduckgo_search import DDGS
+    out = []
+    try:
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=max_results):
+                out.append({
+                    "title": (r.get("title") or "").strip(),
+                    "body": (r.get("body") or "").strip(),
+                    "url": (r.get("href") or r.get("url") or "").strip(),
+                })
+    except Exception as e:
+        logger.warning(f"search_results error: {e}")
+    return out
+
+
+class _TextExtractor(HTMLParser):
+    """Stdlib fallback HTML→text extractor (used when BeautifulSoup is missing)."""
+    _SKIP = {"script", "style", "noscript", "svg", "head"}
+
+    def __init__(self):
+        super().__init__()
+        self._skip = 0
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self._SKIP:
+            self._skip += 1
+
+    def handle_endtag(self, tag):
+        if tag in self._SKIP and self._skip:
+            self._skip -= 1
+
+    def handle_data(self, data):
+        if self._skip == 0:
+            t = data.strip()
+            if t:
+                self.parts.append(t)
+
+
+def _html_to_text(html: str) -> str:
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "noscript", "svg", "head",
+                         "nav", "footer", "header", "form", "aside"]):
+            tag.decompose()
+        main = soup.find("main") or soup.find("article") or soup.body or soup
+        return main.get_text("\n")
+    except Exception:
+        p = _TextExtractor()
+        try:
+            p.feed(html)
+        except Exception:
+            pass
+        return "\n".join(p.parts)
+
+
+def fetch_text(url: str, max_chars: int = 4000, timeout: int = 12) -> str:
+    """Download a page and return readable plain text (best-effort, length-capped)."""
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "Mozilla/5.0 (compatible; MikoResearch/1.0)"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            ctype = resp.headers.get("Content-Type", "").lower()
+            if ctype and "html" not in ctype and "text" not in ctype:
+                return ""   # skip PDFs, images, etc.
+            raw = resp.read(3_000_000)
+        charset = "utf-8"
+        if "charset=" in ctype:
+            charset = ctype.split("charset=")[-1].split(";")[0].strip() or "utf-8"
+        html = raw.decode(charset, errors="replace")
+    except Exception as e:
+        logger.warning(f"fetch_text {url}: {e}")
+        return ""
+
+    text = _html_to_text(html)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n\s*", "\n\n", text).strip()
+    return text[:max_chars]

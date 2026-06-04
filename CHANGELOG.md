@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Deep Research pipeline that feeds the second brain** (`deep_research.py`,
+  `chat_backend.complete_text`, `modules/research.search_results`/`fetch_text`).
+  Toggling the **Deep Research** skill now runs a real, orchestrated pipeline
+  instead of a one-shot search: it asks the model for a research plan
+  (sub-questions), web-searches each, **reads the top sources in full** (real page
+  fetching via `beautifulsoup4`), synthesizes a **cited report**, then **saves it as
+  a Markdown note in your vault and indexes it** — so research becomes permanent,
+  recall-able knowledge. The Chat UI streams **live progress** (plan → searching →
+  reading → synthesizing) in a progress card, then renders the report with a
+  clickable link to the saved note. New streaming endpoint `POST /chat/research`
+  (NDJSON); the turn is persisted like any other (with a `deep_research` chip and
+  the note as a file link).
+
 - **Semantic long-term memory / "second brain"** (`memory/embeddings.py`,
   `memory/knowledge_store.py`, `modules/knowledge.py`). Miko now learns from you and
   recalls it by meaning, across both the voice agent and the web chat:
