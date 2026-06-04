@@ -275,6 +275,14 @@ def _memory_context(message: str) -> str:
     except Exception:
         pass
 
+    try:   # what the user is building (details are recall-able vault notes)
+        import modules.projects as PR
+        pl = PR.get_active_projects_line()
+        if pl:
+            parts.append("[" + pl + "]")
+    except Exception:
+        pass
+
     return ("\n\n" + "\n\n".join(parts)) if parts else ""
 
 

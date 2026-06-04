@@ -291,6 +291,19 @@ class CommandRouter:
                 from modules.knowledge import forget
                 return forget(**args)
 
+            # ── Projects (user-mapped) ───────────────────────────────────────
+            if tool_name == "add_project":
+                from modules.projects import add_project
+                return add_project(**args)
+
+            if tool_name == "list_projects":
+                from modules.projects import list_projects
+                return list_projects()
+
+            if tool_name == "forget_project":
+                from modules.projects import forget_project
+                return forget_project(**args)
+
             # ── Notes ────────────────────────────────────────────────────────
             if tool_name == "create_note":
                 from modules.notes import _notes_manager

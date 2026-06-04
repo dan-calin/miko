@@ -27,6 +27,8 @@ FOLDERS = {
 _KIND_FOLDER = {
     "research": "resources",
     "daily": "daily",
+    "project": "projects",
+    "projects": "projects",
     "capture": "inbox",
     "note": "inbox",
 }

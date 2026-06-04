@@ -139,6 +139,13 @@ class AudioHandler:
                 sys_prompt += f"\n\n[{label}]\n{brief}"
         except Exception:
             pass
+        try:
+            import modules.projects as PR
+            pl = PR.get_active_projects_line()
+            if pl:
+                sys_prompt += f"\n\n[{pl}]"
+        except Exception:
+            pass
 
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
