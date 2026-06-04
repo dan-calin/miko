@@ -434,26 +434,50 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
     history = _get_history(session_id)
     used: list = []
     files: list = []
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     try:
         if preset["protocol"] == "gemini":
-            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files)
+            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage)
         elif preset["protocol"] == "anthropic":
-            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files)
+            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage)
         else:
-            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files)
+            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage)
     except Exception as e:
         logger.error(f"chat() error ({provider}/{model}): {e}", exc_info=True)
-        return {"reply": "", "tools_used": used, "files": files, "error": str(e)}
+        return {"reply": "", "tools_used": used, "files": files, "usage": usage, "error": str(e)}
 
     _save_turn(session_id, message, reply, used, files)
     _learn_async(message, reply, session_id)   # learn facts + episode (throttled)
-    return {"reply": reply, "tools_used": used, "files": files, "error": None}
+    return {"reply": reply, "tools_used": used, "files": files, "usage": usage, "error": None}
+
+
+def _accum_usage(usage: dict, resp, proto: str) -> None:
+    """Add a provider response's token counts into the running per-turn total."""
+    try:
+        if proto == "openai":
+            u = getattr(resp, "usage", None)
+            if u:
+                usage["prompt_tokens"] += getattr(u, "prompt_tokens", 0) or 0
+                usage["completion_tokens"] += getattr(u, "completion_tokens", 0) or 0
+        elif proto == "anthropic":
+            u = getattr(resp, "usage", None)
+            if u:
+                usage["prompt_tokens"] += getattr(u, "input_tokens", 0) or 0
+                usage["completion_tokens"] += getattr(u, "output_tokens", 0) or 0
+        elif proto == "gemini":
+            u = getattr(resp, "usage_metadata", None)
+            if u:
+                usage["prompt_tokens"] += getattr(u, "prompt_token_count", 0) or 0
+                usage["completion_tokens"] += getattr(u, "candidates_token_count", 0) or 0
+    except Exception:
+        pass
+    usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
 
 
 # ── OpenAI-compatible (OpenAI, DeepSeek, Kimi, custom) ────────────────────────
 
-def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files) -> str:
+def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None) -> str:
     from openai import OpenAI
     from tools import ALL_TOOL_DECLARATIONS_OPENAI
 
@@ -469,6 +493,8 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
         resp = client.chat.completions.create(**kwargs)
+        if usage is not None:
+            _accum_usage(usage, resp, "openai")
         msg = resp.choices[0].message
         tool_calls = msg.tool_calls or []
 
@@ -493,12 +519,14 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     final = client.chat.completions.create(model=model, messages=messages)
+    if usage is not None:
+        _accum_usage(usage, final, "openai")
     return (final.choices[0].message.content or "").strip() or "(done)"
 
 
 # ── Anthropic-compatible (MiniMax /anthropic) ────────────────────────────────
 
-def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files) -> str:
+def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None) -> str:
     import anthropic
     from tools import ALL_TOOL_DECLARATIONS_ANTHROPIC
 
@@ -512,6 +540,8 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
         if tools:
             kwargs["tools"] = tools
         resp = client.messages.create(**kwargs)
+        if usage is not None:
+            _accum_usage(usage, resp, "anthropic")
 
         tool_use = [b for b in resp.content if b.type == "tool_use"]
         if not tool_use:
@@ -537,13 +567,15 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
         messages.append({"role": "user", "content": results})
 
     final = client.messages.create(model=model, max_tokens=1024, system=system, messages=messages)
+    if usage is not None:
+        _accum_usage(usage, final, "anthropic")
     texts = [b.text for b in final.content if hasattr(b, "text")]
     return " ".join(texts).strip() or "(done)"
 
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
-def _run_gemini(router, key, model, system, history, message, allow_actions, used, files) -> str:
+def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None) -> str:
     from google import genai
     from google.genai import types
     from tools import ALL_TOOL_DECLARATIONS
@@ -565,6 +597,8 @@ def _run_gemini(router, key, model, system, history, message, allow_actions, use
 
     for _ in range(_MAX_ROUNDS):
         resp = client.models.generate_content(model=model, contents=contents, config=gen_config)
+        if usage is not None:
+            _accum_usage(usage, resp, "gemini")
         candidate = resp.candidates[0] if resp.candidates else None
         if not candidate or not candidate.content or not candidate.content.parts:
             break

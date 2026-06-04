@@ -383,6 +383,14 @@
   .ws-pick:hover .ws-pick-go { color: var(--amber); }
   .ws-pick-hint { font-size: 11px; color: var(--text3); line-height: 1.5; margin-top: 7px; }
 
+  /* Session monitor */
+  .mon { display: flex; flex-direction: column; gap: 5px; }
+  .mon-row {
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.03em; color: var(--text3);
+  }
+  .mon-row span:last-child { color: var(--text2); }
+
   /* "Set as workspace" control in the overlay crumb bar */
   .ws-setbar {
     display: flex; align-items: center; gap: 8px; padding: 8px 14px;
@@ -655,6 +663,18 @@
           <span class="ws-pick-go">change</span>
         </button>
         <div class="ws-pick-hint">The folder Miko works in and the explorer opens to.</div>
+      </div>
+      <div class="rule"></div>
+
+      <!-- Session monitor -->
+      <div class="section">
+        <div class="seclabel">Session</div>
+        <div class="mon">
+          <div class="mon-row"><span>Tokens (session)</span><span id="mon-tok">0</span></div>
+          <div class="mon-row"><span>Last turn</span><span id="mon-turn">—</span></div>
+          <div class="mon-row"><span>Time</span><span id="mon-time">0m</span></div>
+          <div class="mon-row"><span>Messages</span><span id="mon-msgs">0</span></div>
+        </div>
       </div>
     </div>
 
@@ -1014,6 +1034,7 @@ async function send() {
       if (data.tools_used && data.tools_used.length)
         tl.innerHTML = data.tools_used.map(t => `<span class="chip"><span class="di">◈</span>${t}</span>`).join('');
       renderFileChips(fl, data.files);
+      updateMonitor((data.usage && data.usage.total_tokens) || 0);
     }
     st.textContent = fmtTime(new Date());
   } catch (e) {
@@ -1124,6 +1145,30 @@ async function clearChat() {
 
 function refreshSend() { $('#send-btn').classList.toggle('can', $('#input').value.trim().length > 0); }
 
+// ── Session monitor (tokens + time) ────────────────────────
+function monAll() { try { return JSON.parse(localStorage.getItem('miko_monitor') || '{}'); } catch (e) { return {}; } }
+function monState() {
+  const all = monAll();
+  if (!all[sessionId]) { all[sessionId] = { tokens: 0, last: 0, start: Date.now() }; localStorage.setItem('miko_monitor', JSON.stringify(all)); }
+  return all[sessionId];
+}
+function updateMonitor(turnTokens) {
+  const all = monAll();
+  const s = all[sessionId] || { tokens: 0, last: 0, start: Date.now() };
+  s.tokens += (turnTokens || 0); s.last = turnTokens || 0;
+  all[sessionId] = s; localStorage.setItem('miko_monitor', JSON.stringify(all));
+  renderMonitor();
+}
+function renderMonitor() {
+  const s = monState();
+  $('#mon-tok').textContent = s.tokens.toLocaleString();
+  $('#mon-turn').textContent = s.last ? ('+' + s.last.toLocaleString()) : '—';
+  const mins = Math.max(0, Math.floor((Date.now() - (s.start || Date.now())) / 60000));
+  $('#mon-time').textContent = mins >= 60 ? Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm' : mins + 'm';
+  $('#mon-msgs').textContent = messagesEl.querySelectorAll('.row').length;
+}
+setInterval(() => { if ($('#mon-time')) renderMonitor(); }, 30000);
+
 // ── Conversations (persistent history) ─────────────────────
 function relTime(iso) {
   if (!iso) return '';
@@ -1184,6 +1229,7 @@ async function openConversation(id) {
   });
   if (!(conv.messages || []).length) emptyState();
   chatEl.scrollTop = chatEl.scrollHeight;
+  renderMonitor();
   loadConversations();
 }
 
@@ -1191,6 +1237,7 @@ function newConversation() {
   sessionId = 'web-' + Math.random().toString(36).slice(2);
   localStorage.setItem('miko_session', sessionId);
   emptyState();
+  renderMonitor();
   loadConversations();
   $('#input').focus();
 }
@@ -1696,6 +1743,7 @@ emptyState();
 checkServer();
 loadWorkspace();
 loadAgentSkills();
+renderMonitor();
 loadModels().then(() => input.focus());
 // Restore the last conversation (if it still has messages), then list all.
 fetch('/chat/conversation?id=' + encodeURIComponent(sessionId))
