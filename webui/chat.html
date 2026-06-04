@@ -437,9 +437,39 @@
     height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 10px; color: var(--text3); font-size: 13px;
   }
+
+  /* Offline / no-server warning */
+  .offline-banner {
+    display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+    align-items: center; gap: 12px; padding: 10px 16px;
+    background: #1a1206; border-bottom: 1px solid #5a3a12;
+    font-family: var(--font); font-size: 13px; color: #e3b876;
+  }
+  .offline-banner.show { display: flex; }
+  .offline-banner .ob-mark { color: var(--amber); font-size: 14px; flex-shrink: 0; }
+  .offline-banner .ob-text { flex: 1; line-height: 1.5; }
+  .offline-banner code {
+    font-family: var(--mono); font-size: 11.5px; color: #f0d6a8;
+    background: #2a1c08; border: 1px solid #5a3a12; border-radius: 3px; padding: 1px 6px;
+  }
+  .offline-banner .ob-retry {
+    flex-shrink: 0; font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+    padding: 5px 12px; border-radius: 3px; cursor: pointer;
+    background: var(--amber); border: 1px solid var(--amber); color: #0b0b0b;
+  }
+  .offline-banner .ob-retry:hover { background: #d4b063; }
 </style>
 </head>
 <body>
+<!-- Shown when the page can't reach Miko's tool server (server down or opened as a file). -->
+<div id="offline-banner" class="offline-banner">
+  <span class="ob-mark">⚠</span>
+  <span class="ob-text" id="ob-text">
+    Can't reach Miko's tool server. Start it, then reload —
+    <code>python start_tools_server.py</code> (tools only) or <code>python main.py</code> (with voice).
+  </span>
+  <button class="ob-retry" id="ob-retry" type="button">Retry</button>
+</div>
 <div id="app">
   <!-- ── Sidebar ─────────────────────────────────────────── -->
   <aside>
@@ -1205,8 +1235,35 @@ input.addEventListener('input', () => {
 });
 input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 
+// ── Server health ──────────────────────────────────────────
+// The Chat UI is served BY the tool server. If the page can't reach it (server
+// not running, or chat.html opened directly as a file), warn the user.
+async function checkServer() {
+  if (location.protocol === 'file:') {
+    $('#ob-text').innerHTML =
+      'This page was opened as a file. Miko\'s Chat UI must be served by the tool server — ' +
+      'start it with <code>python start_tools_server.py</code>, then open ' +
+      '<code>http://localhost:7832/chat</code>.';
+    $('#offline-banner').classList.add('show');
+    return false;
+  }
+  try {
+    const r = await fetch('/', { cache: 'no-store' });
+    if (!r.ok) throw new Error('bad status');
+    $('#offline-banner').classList.remove('show');
+    return true;
+  } catch (e) {
+    $('#offline-banner').classList.add('show');
+    return false;
+  }
+}
+$('#ob-retry').addEventListener('click', async () => {
+  if (await checkServer()) { loadModels(); loadConversations(); loadWorkspace(); }
+});
+
 setAllow(!!cfg.allow);
 emptyState();
+checkServer();
 loadWorkspace();
 loadModels().then(() => input.focus());
 // Restore the last conversation (if it still has messages), then list all.
