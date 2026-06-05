@@ -43,6 +43,11 @@ def start(command_router) -> None:
         _start_briefs(CONFIG.owner_name)
     except Exception as e:
         logger.warning(f"schedule briefs not started: {e}")
+    try:
+        from modules.scheduled_tasks import start as _start_tasks
+        _start_tasks()
+    except Exception as e:
+        logger.warning(f"scheduled tasks not started: {e}")
     logger.info(f"Tool server listening on {host}:{port}")
 
 

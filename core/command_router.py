@@ -287,6 +287,19 @@ class CommandRouter:
                 from modules.email_box import send_email
                 return send_email(**args)
 
+            # ── Scheduled tasks ──────────────────────────────────────────────
+            if tool_name == "schedule_task":
+                from modules.scheduled_tasks import schedule_task
+                return schedule_task(**args)
+
+            if tool_name == "list_scheduled_tasks":
+                from modules.scheduled_tasks import list_scheduled_tasks
+                return list_scheduled_tasks()
+
+            if tool_name == "cancel_scheduled_task":
+                from modules.scheduled_tasks import cancel_scheduled_task
+                return cancel_scheduled_task(**args)
+
             # ── Research ─────────────────────────────────────────────────────
             if tool_name == "web_search":
                 from modules.research import web_search
