@@ -828,7 +828,7 @@ let AS = { agents: [], skills: [] };
 let asAgent = cfg.agent || '';
 let asSkills = Array.isArray(cfg.skills) ? cfg.skills.slice() : [];
 let asEffort = cfg.effort || 'standard';   // quick | standard | deep (per model)
-let approveMode = !!cfg.approve;           // require approval for edits & commands
+let approveMode = cfg.approve !== false;   // require approval for edits & commands (default ON)
 
 function envKeyName(id) { return (MODELS[id] && MODELS[id].env_key) || ''; }
 
