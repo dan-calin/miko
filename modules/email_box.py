@@ -1,0 +1,242 @@
+"""
+modules/email_box.py — IMAP/SMTP email for Miko (read, triage, draft, send).
+
+Gives the Chief-of-Staff / email-ops skills a real mailbox. Read-only IMAP for
+listing/reading/searching; SMTP for sending (a sensitive action — gated behind
+confirmation/approval like other sends). Configure in .env:
+
+  EMAIL_USER, EMAIL_PASS            (account + app password)
+  EMAIL_IMAP_HOST, EMAIL_IMAP_PORT  (default port 993, SSL)
+  EMAIL_SMTP_HOST, EMAIL_SMTP_PORT  (default port 587, STARTTLS; 465 = SSL)
+  EMAIL_FROM                        (optional display From, defaults to EMAIL_USER)
+"""
+
+import logging
+import os
+from email.header import decode_header, make_header
+from email.utils import parseaddr
+
+logger = logging.getLogger("miko.email")
+
+TOOL_DECLARATIONS = [
+    {
+        "name": "list_emails",
+        "description": (
+            "List recent emails from the inbox (newest first): sender, subject, date. "
+            "Use for 'check my email', 'what's in my inbox', 'any new mail'. Set "
+            "unread_only=true for just unread."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "limit": {"type": "INTEGER", "description": "How many to list (default 10)."},
+                "unread_only": {"type": "BOOLEAN", "description": "Only unread (default false)."},
+            },
+        },
+    },
+    {
+        "name": "read_email",
+        "description": "Read the full body of an email matched by a subject keyword or sender.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "query": {"type": "STRING", "description": "A keyword from the subject or the sender."}
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_emails",
+        "description": "Search the mailbox for emails matching keywords (subject/body/sender).",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {"query": {"type": "STRING", "description": "Search terms."}},
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "send_email",
+        "description": (
+            "Send an email. SENSITIVE — read the message back to the user and get "
+            "confirmation/approval before sending."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "to": {"type": "STRING", "description": "Recipient address."},
+                "subject": {"type": "STRING", "description": "Subject line."},
+                "body": {"type": "STRING", "description": "Plain-text body."},
+            },
+            "required": ["to", "subject", "body"],
+        },
+    },
+]
+
+
+class _Cfg:
+    def __init__(self):
+        self.user = os.getenv("EMAIL_USER", "").strip()
+        self.password = os.getenv("EMAIL_PASS", "").strip()
+        self.imap_host = os.getenv("EMAIL_IMAP_HOST", "").strip()
+        self.imap_port = int(os.getenv("EMAIL_IMAP_PORT", "993") or 993)
+        self.smtp_host = os.getenv("EMAIL_SMTP_HOST", "").strip()
+        self.smtp_port = int(os.getenv("EMAIL_SMTP_PORT", "587") or 587)
+        self.from_addr = os.getenv("EMAIL_FROM", "").strip() or self.user
+
+    def imap_ready(self):
+        return bool(self.user and self.password and self.imap_host)
+
+    def smtp_ready(self):
+        return bool(self.user and self.password and self.smtp_host)
+
+
+def _dec(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        return str(make_header(decode_header(value)))
+    except Exception:
+        return value
+
+
+def _body_text(msg) -> str:
+    """Extract a readable plain-text body from an email.message.Message."""
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain" and "attachment" not in str(part.get("Content-Disposition", "")):
+                try:
+                    return part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace")
+                except Exception:
+                    continue
+        # fall back to stripped HTML
+        for part in msg.walk():
+            if part.get_content_type() == "text/html":
+                try:
+                    from modules.research import _html_to_text
+                    raw = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace")
+                    return _html_to_text(raw)
+                except Exception:
+                    continue
+        return ""
+    try:
+        return msg.get_payload(decode=True).decode(msg.get_content_charset() or "utf-8", errors="replace")
+    except Exception:
+        return str(msg.get_payload())
+
+
+def _imap():
+    import imaplib
+    cfg = _Cfg()
+    M = imaplib.IMAP4_SSL(cfg.imap_host, cfg.imap_port)
+    M.login(cfg.user, cfg.password)
+    return M
+
+
+def list_emails(limit: int = 10, unread_only: bool = False, folder: str = "INBOX") -> str:
+    cfg = _Cfg()
+    if not cfg.imap_ready():
+        return "Email isn't configured. Set EMAIL_USER / EMAIL_PASS / EMAIL_IMAP_HOST in .env."
+    import email as _email
+    try:
+        M = _imap()
+        M.select(folder, readonly=True)
+        typ, data = M.search(None, "UNSEEN" if unread_only else "ALL")
+        ids = data[0].split()[-int(limit or 10):][::-1]
+        if not ids:
+            M.logout()
+            return "No emails found." if not unread_only else "No unread emails."
+        lines = [f"{'Unread' if unread_only else 'Recent'} emails:"]
+        for n, i in enumerate(ids, 1):
+            typ, md = M.fetch(i, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+            hdr = _email.message_from_bytes(md[0][1])
+            frm = parseaddr(_dec(hdr.get("From", "")))[1] or _dec(hdr.get("From", ""))
+            subj = _dec(hdr.get("Subject", "(no subject)"))
+            date = _dec(hdr.get("Date", ""))[:25]
+            lines.append(f"{n}. {subj} — {frm} ({date})")
+        M.logout()
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"list_emails error: {e}")
+        return f"Couldn't reach the mailbox: {e}"
+
+
+def read_email(query: str) -> str:
+    cfg = _Cfg()
+    if not cfg.imap_ready():
+        return "Email isn't configured."
+    import email as _email
+    try:
+        M = _imap()
+        M.select("INBOX", readonly=True)
+        typ, data = M.search(None, "TEXT", f'"{query}"')
+        ids = data[0].split()
+        if not ids:
+            typ, data = M.search(None, "FROM", f'"{query}"')
+            ids = data[0].split()
+        if not ids:
+            M.logout()
+            return f"No email matching '{query}'."
+        typ, md = M.fetch(ids[-1], "(RFC822)")
+        msg = _email.message_from_bytes(md[0][1])
+        M.logout()
+        frm = _dec(msg.get("From", ""))
+        subj = _dec(msg.get("Subject", "(no subject)"))
+        body = _body_text(msg).strip()
+        if len(body) > 2000:
+            body = body[:2000] + "\n… (truncated)"
+        return f"From: {frm}\nSubject: {subj}\n\n{body}"
+    except Exception as e:
+        logger.error(f"read_email error: {e}")
+        return f"Couldn't read that email: {e}"
+
+
+def search_emails(query: str) -> str:
+    cfg = _Cfg()
+    if not cfg.imap_ready():
+        return "Email isn't configured."
+    import email as _email
+    try:
+        M = _imap()
+        M.select("INBOX", readonly=True)
+        typ, data = M.search(None, "TEXT", f'"{query}"')
+        ids = data[0].split()[-10:][::-1]
+        if not ids:
+            M.logout()
+            return f"No emails matching '{query}'."
+        lines = [f"Emails matching '{query}':"]
+        for i in ids:
+            typ, md = M.fetch(i, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+            hdr = _email.message_from_bytes(md[0][1])
+            frm = parseaddr(_dec(hdr.get("From", "")))[1]
+            lines.append(f"- {_dec(hdr.get('Subject', '(no subject)'))} — {frm}")
+        M.logout()
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"search_emails error: {e}")
+        return f"Search failed: {e}"
+
+
+def send_email(to: str, subject: str, body: str) -> str:
+    cfg = _Cfg()
+    if not cfg.smtp_ready():
+        return "Email sending isn't configured. Set EMAIL_SMTP_HOST / EMAIL_USER / EMAIL_PASS in .env."
+    import smtplib
+    from email.message import EmailMessage
+    try:
+        msg = EmailMessage()
+        msg["From"] = cfg.from_addr
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg.set_content(body or "")
+        if cfg.smtp_port == 465:
+            server = smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, timeout=20)
+        else:
+            server = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=20)
+            server.starttls()
+        server.login(cfg.user, cfg.password)
+        server.send_message(msg)
+        server.quit()
+        return f"Sent to {to}: \"{subject}\"."
+    except Exception as e:
+        logger.error(f"send_email error: {e}")
+        return f"Couldn't send: {e}"

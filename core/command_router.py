@@ -20,6 +20,7 @@ REQUIRES_CONFIRMATION: frozenset = frozenset({
     "send_discord_dm",
     "send_discord_channel",
     "send_interactive_hub",
+    "send_email",
     "shutdown_computer",
     "restart_computer",
     "format_drive",          # blocked anyway, but belt+suspenders
@@ -268,6 +269,23 @@ class CommandRouter:
             if tool_name == "get_trending":
                 from modules.youtube_player import get_trending
                 return get_trending(**args)
+
+            # ── Email ────────────────────────────────────────────────────────
+            if tool_name == "list_emails":
+                from modules.email_box import list_emails
+                return list_emails(**args)
+
+            if tool_name == "read_email":
+                from modules.email_box import read_email
+                return read_email(**args)
+
+            if tool_name == "search_emails":
+                from modules.email_box import search_emails
+                return search_emails(**args)
+
+            if tool_name == "send_email":
+                from modules.email_box import send_email
+                return send_email(**args)
 
             # ── Research ─────────────────────────────────────────────────────
             if tool_name == "web_search":
