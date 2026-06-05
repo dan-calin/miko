@@ -300,6 +300,27 @@ class CommandRouter:
                 from modules.scheduled_tasks import cancel_scheduled_task
                 return cancel_scheduled_task(**args)
 
+            # ── Browser automation ───────────────────────────────────────────
+            if tool_name == "browser_open":
+                from modules.browser import browser_open
+                return browser_open(**args)
+
+            if tool_name == "browser_click":
+                from modules.browser import browser_click
+                return browser_click(**args)
+
+            if tool_name == "browser_type":
+                from modules.browser import browser_type
+                return browser_type(**args)
+
+            if tool_name == "browser_extract":
+                from modules.browser import browser_extract
+                return browser_extract()
+
+            if tool_name == "browser_screenshot":
+                from modules.browser import browser_screenshot
+                return browser_screenshot()
+
             # ── Research ─────────────────────────────────────────────────────
             if tool_name == "web_search":
                 from modules.research import web_search

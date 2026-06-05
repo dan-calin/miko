@@ -62,3 +62,6 @@ pypresence>=4.3.0
 
 # ── Fuzzy matching (for file search) ─────────────────────────────────────────
 rapidfuzz>=3.9.0
+
+# ── Browser automation (optional — pip install playwright && playwright install chromium) ─
+playwright>=1.40.0
