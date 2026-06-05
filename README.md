@@ -333,6 +333,22 @@ Spoken replies are kept to one or two sentences (no filler). Beyond STANDBY (wak
 follow-up window), there's a stricter **MUTE** mode ("mute yourself" / "complete silence" /
 "leave me alone") — wake-word only, no window — exited with "Miko, wake up".
 
+### Email, browser, scheduled tasks & MCP
+
+Four optional capability systems Miko can use when configured:
+
+- **Email** — read, search, and send mail over IMAP/SMTP (`list_emails`, `read_email`,
+  `search_emails`, `send_email`). Set `EMAIL_USER`/`EMAIL_PASS`/`IMAP_HOST`/`SMTP_HOST` in
+  `.env`. Sending is gated by approval mode; reading never marks mail unread.
+- **Browser automation** — Miko *drives* a real headless browser (open, click, type, extract,
+  screenshot) for logins and multi-step flows, not just HTML fetches. Needs
+  `pip install playwright && python -m playwright install chromium`.
+- **Scheduled tasks** — recurring prompts that run Miko headlessly and DM you the result
+  (`schedule_task "every 30m" "..."`, `list_scheduled_tasks`, `cancel_scheduled_task`).
+- **MCP client** — connect Miko to external [Model Context Protocol](https://modelcontextprotocol.io)
+  servers (stdio or SSE) in `data/mcp_servers.json`; their tools become `mcp_<server>_<tool>`
+  available to every chat model. Needs `pip install mcp`.
+
 > Optional but recommended for fully-offline embeddings: `pip install fastembed`. Without it,
 > Miko falls back to a provider embedding API, then to keyword search. The async memory model
 > defaults to a cheap `gemini-2.5-flash-lite` (override with `MIKO_MEMORY_MODEL`).

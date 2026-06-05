@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Four new capability systems** (inspired by the Odysseus agent):
+  - **Email (IMAP/SMTP)** — `list_emails`, `read_email`, `search_emails`, `send_email`
+    over stdlib imap/smtp. Reads headers without marking unread (BODY.PEEK), extracts
+    text from HTML mail, and `send_email` is gated by approval mode. Configured via
+    `EMAIL_USER`/`EMAIL_PASS`/`IMAP_HOST`/`SMTP_HOST` in `.env`; degrades gracefully
+    when unset.
+  - **Browser automation (Playwright)** — Miko can *drive* a headless browser:
+    `browser_open`, `browser_click`, `browser_type`, `browser_extract`,
+    `browser_screenshot`. A single persistent Chromium runs on one dedicated worker
+    thread (Playwright's sync API is thread-bound) so calls from the chat pool / voice
+    loop are serialized safely.
+  - **Scheduled agent tasks** — `schedule_task`, `list_scheduled_tasks`,
+    `cancel_scheduled_task`. Recurring prompts ("every 30m", "daily at 08:00") run Miko
+    headlessly and DM the result over Discord; registry in `data/scheduled_tasks.json`,
+    polled by a background daemon.
+  - **MCP client** — Miko connects to external Model Context Protocol servers
+    (stdio or SSE) listed in `data/mcp_servers.json`, discovers their tools, and exposes
+    them to every chat model as `mcp_<server>_<tool>`. Async sessions live in one
+    dedicated event-loop thread; declarations merge into the Gemini/OpenAI/Anthropic
+    tool sets at request time. No-op when unconfigured.
+
 - **Approval mode — review file/command changes before they apply** (Claude-Code-style
   permissions). A sidebar **Approve Changes** toggle: when on, mutating tools (file
   writes/moves/deletes, `run_command`, and the destructive/send tools) are **not executed**
