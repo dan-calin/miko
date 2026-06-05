@@ -499,6 +499,25 @@ def _create_safe(fn, base_kwargs: dict, extra: dict):
         return fn(**base_kwargs)
 
 
+def _mcp_tools(protocol: str) -> list:
+    """Tool declarations for any connected MCP servers, in the given protocol's format.
+    Returns [] if MCP isn't configured/available — so it just adds to the base tool set."""
+    try:
+        import modules.mcp_client as MC
+        base = MC.get_tool_declarations()   # Gemini-format
+        if not base:
+            return []
+        if protocol == "openai":
+            from tools import _to_openai_tool
+            return [_to_openai_tool(d) for d in base]
+        if protocol == "anthropic":
+            from tools import _to_anthropic_tool
+            return [_to_anthropic_tool(d) for d in base]
+        return base
+    except Exception:
+        return []
+
+
 def chat(router, session_id: str, message: str, provider: str, model: str,
          api_key: str = "", base_url: str = "", allow_actions: bool = False,
          owner_name: str = "Roxan", language: str = "en", workspace: str = "",
@@ -605,7 +624,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
     messages = [{"role": "system", "content": system}]
     messages += [{"role": m["role"], "content": m["content"]} for m in history]
     messages.append({"role": "user", "content": message})
-    tools = ALL_TOOL_DECLARATIONS_OPENAI or None
+    tools = (ALL_TOOL_DECLARATIONS_OPENAI + _mcp_tools("openai")) or None
     rk = _reasoning_kwargs("openai", model, effort)   # native reasoning_effort (if supported)
 
     for _ in range(rounds):
@@ -654,7 +673,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
     client = anthropic.Anthropic(api_key=key, base_url=base or None)
     messages = [{"role": m["role"], "content": m["content"]} for m in history]
     messages.append({"role": "user", "content": message})
-    tools = ALL_TOOL_DECLARATIONS_ANTHROPIC or None
+    tools = (ALL_TOOL_DECLARATIONS_ANTHROPIC + _mcp_tools("anthropic")) or None
     rk = _reasoning_kwargs("anthropic", model, effort)   # real-Claude effort (if supported)
 
     for _ in range(rounds):
@@ -712,9 +731,10 @@ def _run_gemini(router, key, model, system, history, message, allow_actions, use
     ]
     contents.append(types.Content(role="user", parts=[types.Part(text=message)]))
 
+    _decls = ALL_TOOL_DECLARATIONS + _mcp_tools("gemini")
     cfg_kwargs = {
         "system_instruction": system,
-        "tools": [types.Tool(function_declarations=ALL_TOOL_DECLARATIONS)] if ALL_TOOL_DECLARATIONS else [],
+        "tools": [types.Tool(function_declarations=_decls)] if _decls else [],
     }
     # Native thinking budget for 2.5+ models (quick=off, standard=dynamic, deep=high).
     budget = _EFFORT_GEMINI_BUDGET.get(effort)

@@ -65,3 +65,6 @@ rapidfuzz>=3.9.0
 
 # ── Browser automation (optional — pip install playwright && playwright install chromium) ─
 playwright>=1.40.0
+
+# ── MCP client (connect Miko to external Model Context Protocol servers) ───────
+mcp>=1.0.0

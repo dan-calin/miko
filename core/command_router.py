@@ -198,6 +198,11 @@ class CommandRouter:
         """
         logger.info(f"Dispatch: {tool_name}({list(args.keys())})")
         try:
+            # ── MCP (external servers — dynamic tool names mcp_<server>_<tool>) ─
+            if tool_name.startswith("mcp_"):
+                from modules.mcp_client import call_tool
+                return call_tool(tool_name, args)
+
             # ── Media control ────────────────────────────────────────────────
             if tool_name == "set_volume":
                 from modules.media_control import set_volume

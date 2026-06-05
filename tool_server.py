@@ -48,6 +48,11 @@ def start(command_router) -> None:
         _start_tasks()
     except Exception as e:
         logger.warning(f"scheduled tasks not started: {e}")
+    try:
+        from modules.mcp_client import start as _start_mcp
+        _start_mcp()
+    except Exception as e:
+        logger.warning(f"MCP client not started: {e}")
     logger.info(f"Tool server listening on {host}:{port}")
 
 
