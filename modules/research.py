@@ -41,16 +41,21 @@ TOOL_DECLARATIONS = [
     {
         "name": "deep_research",
         "description": (
-            "Run a thorough multi-source research pipeline on a topic: it plans "
-            "sub-questions, searches the web, reads sources, writes a CITED report, and "
+            "Run a thorough, multi-round research pipeline on a topic: it distills the "
+            "subject, plans sub-questions, searches the web and reads sources in parallel "
+            "across several rounds (finding and filling gaps), writes a CITED report, and "
             "SAVES it as a note in the vault. Use for 'research', 'deep dive', "
             "'investigate', 'find out everything about'. Returns a short summary to say "
-            "back (the full cited report is in the vault). Takes ~30s."
+            "back (the full cited report is in the vault)."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "topic": {"type": "STRING", "description": "The research topic or question."}
+                "topic": {"type": "STRING", "description": "The research topic or question."},
+                "effort": {
+                    "type": "STRING",
+                    "description": "Depth: 'quick', 'standard' (default), or 'deep' (more rounds/sources).",
+                },
             },
             "required": ["topic"],
         },
@@ -152,9 +157,9 @@ def _open_search_in_browser(query: str) -> None:
     webbrowser.open(f"https://duckduckgo.com/?q={encoded}")
 
 
-def deep_research(topic: str) -> str:
+def deep_research(topic: str, effort: str = "standard") -> str:
     """Run the orchestrated deep-research pipeline and return a short spoken summary.
-    The full cited report is saved to the vault by the pipeline. Synchronous (~30s)."""
+    The full cited report is saved to the vault by the pipeline. Synchronous."""
     topic = (topic or "").strip()
     if not topic:
         return "What should I research, sefu?"
@@ -170,6 +175,7 @@ def deep_research(topic: str) -> str:
             topic, provider="gemini", model="gemini-2.5-flash",
             api_key=getattr(CONFIG, "gemini_api_key", ""),
             language=getattr(CONFIG, "language", "en"),
+            effort=(effort or "standard"),
         ):
             t = ev.get("type")
             if t == "report":

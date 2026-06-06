@@ -235,6 +235,10 @@ def _build_app():
         api_key = body.get("api_key", "")
         base_url = body.get("base_url", "")
         effort = (body.get("effort") or "standard").strip()
+        agent = (body.get("agent") or "").strip()
+        skills = body.get("skills") or []
+        if not isinstance(skills, list):
+            skills = []
 
         def gen():
             import deep_research
@@ -242,7 +246,7 @@ def _build_app():
             report_text, note_path = "", ""
             for ev in deep_research.run(topic, provider, model, api_key, base_url,
                                         language=getattr(CONFIG, "language", "en"),
-                                        effort=effort):
+                                        effort=effort, agent=agent, skills=skills):
                 if ev.get("type") == "report":
                     report_text = ev.get("reply", "")
                     note_path = ev.get("note", "")
