@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Live activity view + Stop button (streaming chat).** Chat now streams progress as
+  it runs — a "Working" card shows each tool call live (`→ name(args) … ✓`) and which
+  reasoning round Miko is on, collapsing to just the reply for plain answers. The send
+  button turns into a **Stop** button mid-turn (AbortController → server-side
+  `is_disconnected` cancel); deep research is cancelable the same way. New
+  `POST /chat/message/stream` (NDJSON); `/chat/message` kept as a fallback. A cancelled
+  turn isn't persisted.
+- **Sub-agents (`spawn_agents`).** Miko can summon up to 5 focused sub-agents that run
+  **in parallel**, each an independent read-only agent (web search, deep research,
+  recall, file read, browser) that returns its findings for Miko to synthesize.
+  Sub-agents can't edit/send/delete and can't spawn their own sub-agents (depth guard).
+
+### Changed
+
+- **Deep research is actually deep now.** Replaced the single-pass (~30s, 7Q/8 sources)
+  pipeline with **iterative rounds** (quick=1 / standard=2 / deep=3): search → read →
+  gap-analysis → follow-up questions, stopping early when coverage is complete.
+  Searches and page-reads run **in parallel**, sources are **ranked** by query-term
+  overlap and **de-duplicated by domain** (max 2/domain). Critically, it now **distills
+  a clean research subject** from a chatty request and **never searches the raw
+  conversational message** — the bug that turned "research my quant bot" into searching
+  the whole sentence and surfacing Yandex Translate. The `deep_research` tool now honors
+  an `effort` argument, and the persona (agent/skills) flows through research.
+- **Voice memory recall** — the voice prompt now treats `recall` as a reflex (call it
+  before answering anything about the user's history/notes/projects), closing the gap
+  where voice had shallower recall than chat. The local **fastembed** model cache is
+  pinned to `data/fastembed/` for stable offline embeddings across restarts.
+
 - **Four new capability systems** (inspired by the Odysseus agent):
   - **Email (IMAP/SMTP)** — `list_emails`, `read_email`, `search_emails`, `send_email`
     over stdlib imap/smtp. Reads headers without marking unread (BODY.PEEK), extracts

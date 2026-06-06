@@ -301,10 +301,21 @@ notes with `[[wikilinks]]`. Deleting a note also clears it from recall.
 
 ### Deep Research → permanent knowledge
 
-Toggle the **Deep Research** skill (or say "research …"): Miko plans sub-questions, web-searches
-each, **reads the top sources in full**, writes a **cited** report, and **saves it as a linked
+Toggle the **Deep Research** skill (or say "research …"): Miko **distills a clean subject** from
+your request, then runs **iterative rounds** (1/2/3 by effort) of plan → **parallel** search →
+**parallel** read → gap-analysis → follow-up questions, stopping when coverage is complete. Sources
+are ranked and de-duplicated by domain. It writes a **cited** report and **saves it as a linked
 note in `Resources/`** — so next time you ask, plain recall already knows it. The Chat UI streams
-live progress (plan → searching → reading → synthesizing); by voice you get a spoken summary.
+live progress and you can **Stop** mid-run; by voice you get a spoken summary.
+
+### Live activity, Stop & sub-agents
+
+Normal chat **streams what Miko is doing** — a "Working" card shows each tool call as it runs
+(`→ web_search(…) ✓`) and which reasoning round it's on, so the menu isn't a black box. The Send
+button becomes a **Stop** button while a turn (or research) is running. And Miko can **summon
+sub-agents** (`spawn_agents`): up to five focused, read-only agents that run **in parallel** —
+each searches/reads/recalls on its own and reports back — so big jobs (research several angles,
+inspect many files) finish faster. Sub-agents can't make changes or spawn their own sub-agents.
 
 ### Agents, skills & per-model settings
 
