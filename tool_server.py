@@ -363,6 +363,76 @@ def _build_app():
 
         return _ndjson_stream(request, factory, on_event)
 
+    @app.post("/chat/code")
+    async def chat_code(request: Request, _=Depends(_auth)):
+        """Start a Miko↔Claude-Code pair-programming session and stream the live
+        debate (checkpoint/miko/claude/awaiting/done) as NDJSON, cancelable."""
+        from config import CONFIG
+        import modules.claude_code as CC
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        goal = (body.get("message") or "").strip()
+        project_dir = (body.get("project_dir") or "").strip()
+        if not goal or not project_dir:
+            return JSONResponse({"error": "Need a project_dir and a goal."}, status_code=400)
+        mode = "controlled" if body.get("mode") == "controlled" else "autonomous"
+        rm = (body.get("research_model") or "gemini-3.5-flash").strip()
+        if rm == "chat":
+            provider, model, key = body.get("provider", "gemini"), body.get("model", ""), body.get("api_key", "")
+        else:
+            provider, model, key = "gemini", rm, ""
+        max_rounds = int(body.get("max_rounds") or 6)
+        research = (body.get("research") or "").strip()
+
+        started = CC.start_session(project_dir, goal, mode=mode, research=research,
+                                   provider=provider, model=model, api_key=key,
+                                   max_rounds=max_rounds)
+        if started.get("error"):
+            return JSONResponse({"error": started["error"]}, status_code=400)
+        token = started["token"]
+
+        def factory(should_cancel):
+            def gen():
+                yield {"type": "session", "token": token, "repo": started["repo"], "mode": mode}
+                for ev in CC.run(token, should_cancel):
+                    yield ev
+            return gen()
+
+        return _ndjson_stream(request, factory)
+
+    @app.post("/chat/code/continue")
+    async def chat_code_continue(request: Request, _=Depends(_auth)):
+        """Resume a controlled session for the next round (after the user approves)."""
+        import modules.claude_code as CC
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        token = (body.get("token") or "").strip()
+        if not token:
+            return JSONResponse({"error": "Missing token."}, status_code=400)
+
+        def factory(should_cancel):
+            return CC.run(token, should_cancel)
+
+        return _ndjson_stream(request, factory)
+
+    @app.post("/chat/code/revert")
+    async def chat_code_revert(request: Request, _=Depends(_auth)):
+        """Revert the repo to a checkpoint (UI Revert button)."""
+        import modules.claude_code as CC
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        token = (body.get("token") or "").strip()
+        snap = (body.get("snap") or "").strip()
+        if not token:
+            return JSONResponse({"error": "Missing token."}, status_code=400)
+        return {"message": CC.revert_round(token, snap)}
+
     @app.get("/chat/agent-skills")
     def chat_agent_skills(_=Depends(_auth)):
         import agent_skills

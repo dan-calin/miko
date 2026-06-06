@@ -265,6 +265,31 @@
   .rs-step .rs-lb { color: var(--text2); flex-shrink: 0; }
   .rs-step .rs-dt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rs-card.rs-collapsed { display: none; }   /* plain text reply → hide activity chrome */
+  /* Pair-programming */
+  .pair-bar { display: none; gap: 8px; align-items: center; margin: 0 0 7px; }
+  .pair-bar.show { display: flex; }
+  .pair-dir { flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 4px; color: var(--text); font-size: 12px; font-family: var(--mono); padding: 6px 9px; }
+  .pair-dir:focus { outline: none; border-color: var(--amberDim); }
+  .as-btn.pair-on { border-color: var(--amber); color: var(--amber); background: rgba(196,162,87,0.08); }
+  .pc-turn { margin: 7px 0; padding: 7px 10px; border-radius: 5px; border: 1px solid var(--border); }
+  .pc-turn.miko { border-left: 2px solid var(--amber); }
+  .pc-turn.claude { border-left: 2px solid #7c93c9; }
+  .pc-who { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text3); display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
+  .pc-turn.miko .pc-who { color: var(--amber); }
+  .pc-turn.claude .pc-who { color: #93a7d6; }
+  .pc-body { font-size: 12.5px; line-height: 1.55; color: var(--text2); white-space: pre-wrap; }
+  .pc-files { font-family: var(--mono); font-size: 10px; color: var(--text3); margin-top: 4px; }
+  .pc-ckpt { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10px;
+    color: var(--text3); margin: 6px 0; }
+  .pc-revert { background: var(--surface); border: 1px solid var(--border); color: var(--text3);
+    border-radius: 3px; font-size: 10px; padding: 2px 8px; cursor: pointer; }
+  .pc-revert:hover { border-color: var(--amber); color: var(--amber); }
+  .pc-revert.done { color: var(--green); border-color: var(--green); cursor: default; }
+  .pc-approve { background: var(--amber); border: 1px solid var(--amber); color: #0b0b0b;
+    border-radius: 4px; font-size: 12px; font-weight: 600; padding: 6px 14px; cursor: pointer; margin-top: 6px; }
+  .pc-approve:hover { background: #d4b063; }
   .rs-card.act .rs-ic { animation: mkpulse 1.1s ease-in-out infinite; }
   .rs-card.act.done .rs-ic { animation: none; color: var(--green); }
   @keyframes mkpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
@@ -750,9 +775,19 @@
           <button class="as-btn" id="as-btn" type="button" title="Choose an ECC persona and skills for Miko">
             <span>⚙</span> Agent / Skills
           </button>
+          <button class="as-btn" id="pair-btn" type="button" title="Pair-program: Miko directs Claude Code in a repo">
+            <span>⚒</span> Pair
+          </button>
           <div class="as-active" id="as-active"></div>
         </div>
         <div class="as-pop" id="as-pop"></div>
+        <div class="pair-bar" id="pair-bar">
+          <input id="pair-dir" class="pair-dir" type="text" placeholder="project folder — absolute path (e.g. C:\Users\you\my-bot)" spellcheck="false">
+          <div class="as-effort pair-mode">
+            <button type="button" class="as-eff on" data-mode="autonomous" title="Miko & Claude run to the handshake; revert anytime">Autonomous</button>
+            <button type="button" class="as-eff" data-mode="controlled" title="Pause after each round to approve or revert">Controlled</button>
+          </div>
+        </div>
         <div class="inputbar">
           <textarea id="input" rows="1" placeholder="Message Miko…"></textarea>
           <button class="send" id="send-btn" type="button" aria-label="Send message">
@@ -838,6 +873,9 @@ let asSkills = Array.isArray(cfg.skills) ? cfg.skills.slice() : [];
 let asEffort = cfg.effort || 'standard';   // quick | standard | deep (per model)
 let asResearch = cfg.researchModel || 'gemini-3.5-flash';   // research engine (global)
 let approveMode = cfg.approve !== false;   // require approval for edits & commands (default ON)
+let pairMode = false;                       // pair-programming (Miko ↔ Claude Code) active
+let pairKind = cfg.pairKind || 'autonomous';   // autonomous | controlled
+let curCodeToken = null;                    // active pair session token
 
 function envKeyName(id) { return (MODELS[id] && MODELS[id].env_key) || ''; }
 
@@ -864,6 +902,7 @@ function saveCfg() {
   cfg.skills   = asSkills;
   cfg.effort   = asEffort;
   cfg.researchModel = asResearch;
+  cfg.pairKind = pairKind;
   cfg.byModel  = cfg.byModel || {};
   cfg.byModel[modelKey()] = { agent: asAgent, skills: asSkills, effort: asEffort };
   localStorage.setItem('miko_cfg', JSON.stringify(cfg));
@@ -1206,6 +1245,7 @@ async function send() {
   if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
   input.value = ''; input.style.height = 'auto'; refreshSend();
   addUser(text);
+  if (pairMode) { sendCode(text); return; }
   if (asSkills.includes('deep-research')) { sendResearch(text); return; }
   const c = addActivityCard();
   setBusy(true);
@@ -1348,6 +1388,120 @@ async function sendResearch(text) {
     curAbort = null; setBusy(false); chatEl.scrollTop = chatEl.scrollHeight; input.focus();
     loadConversations();
   }
+}
+
+// ── Pair programming (Miko ↔ Claude Code) ──────────────────
+function addCodeCard() {
+  const row = document.createElement('div'); row.className = 'row bot';
+  const g = document.createElement('div'); g.className = 'glyph'; g.textContent = 'M';
+  const c = document.createElement('div'); c.className = 'content';
+  const card = document.createElement('div'); card.className = 'rs-card act';
+  card.innerHTML =
+    '<div class="rs-head"><span class="rs-ic mk-dot">⚒</span> Pair Programming' +
+    '<span class="rs-status">starting…</span></div><div class="rs-log pc-log"></div>';
+  const st = document.createElement('div'); st.className = 'stamp';
+  c.append(card, st); row.append(g, c);
+  messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
+  return { card, st, token: null, lastSnap: null,
+    status: card.querySelector('.rs-status'), log: card.querySelector('.pc-log') };
+}
+
+function pcTurn(c, who, text, files) {
+  const el = document.createElement('div'); el.className = 'pc-turn ' + who;
+  const label = who === 'miko' ? 'Miko · instructor' : 'Claude Code · coder';
+  el.innerHTML = '<div class="pc-who">' + label + '</div><div class="pc-body"></div>';
+  el.querySelector('.pc-body').textContent = text || '';
+  if (files && files.length) {
+    const f = document.createElement('div'); f.className = 'pc-files';
+    f.textContent = '↳ ' + files.join(', ');
+    el.appendChild(f);
+  }
+  c.log.appendChild(el); chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function pcCheckpoint(c, round, snap) {
+  const el = document.createElement('div'); el.className = 'pc-ckpt';
+  el.innerHTML = '<span>◴ checkpoint · round ' + round + '</span>';
+  const b = document.createElement('button'); b.className = 'pc-revert'; b.textContent = 'Revert to here';
+  b.addEventListener('click', async () => {
+    if (!c.token) return;
+    b.textContent = 'reverting…';
+    try {
+      const r = await (await fetch('/chat/code/revert', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: c.token, snap }),
+      })).json();
+      b.textContent = '✓ reverted'; b.classList.add('done');
+    } catch (e) { b.textContent = 'revert failed'; }
+  });
+  el.appendChild(b); c.log.appendChild(el); chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function pcApprove(c) {
+  const el = document.createElement('div');
+  const b = document.createElement('button'); b.className = 'pc-approve'; b.textContent = '▶ Approve · next round';
+  b.addEventListener('click', () => { el.remove(); continueCode(c); });
+  el.appendChild(b); c.log.appendChild(el); chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function handleCodeEvent(c, ev) {
+  if (ev.type === 'session') { c.token = ev.token; curCodeToken = ev.token; c.status.textContent = ev.mode + ' · ' + ev.repo; }
+  else if (ev.type === 'status') c.status.textContent = ev.text;
+  else if (ev.type === 'checkpoint') pcCheckpoint(c, ev.round, ev.snap);
+  else if (ev.type === 'miko') pcTurn(c, 'miko', ev.text);
+  else if (ev.type === 'claude') pcTurn(c, 'claude', ev.text, ev.files);
+  else if (ev.type === 'awaiting') { c.status.textContent = 'awaiting your approval'; pcApprove(c); }
+  else if (ev.type === 'done') { c.status.textContent = '✓ ' + (ev.summary || 'done') + ' · ' + ev.rounds + ' rounds'; c.card.classList.add('done'); c.st.textContent = fmtTime(new Date()); }
+  else if (ev.type === 'cancelled') { c.status.textContent = 'stopped'; c.card.classList.add('done'); c.st.textContent = fmtTime(new Date()); }
+  else if (ev.type === 'error') { c.status.textContent = 'failed'; pcTurn(c, 'miko', '⚠ ' + ev.error); c.st.textContent = fmtTime(new Date()); }
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+async function streamCode(url, payload, c) {
+  setBusy(true); curAbort = new AbortController();
+  try {
+    const resp = await fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      signal: curAbort.signal, body: JSON.stringify(payload),
+    });
+    if (!resp.ok || !resp.body) {
+      let msg = 'Pair session unavailable (HTTP ' + resp.status + ')';
+      try { const j = await resp.json(); if (j.error) msg = j.error; } catch (e) {}
+      throw new Error(msg);
+    }
+    const reader = resp.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (line) { try { handleCodeEvent(c, JSON.parse(line)); } catch (e) {} }
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') handleCodeEvent(c, { type: 'cancelled' });
+    else handleCodeEvent(c, { type: 'error', error: e.message });
+  } finally {
+    curAbort = null; setBusy(false); chatEl.scrollTop = chatEl.scrollHeight; input.focus();
+  }
+}
+
+function sendCode(goal) {
+  const dir = ($('#pair-dir').value || workspace || '').trim();
+  const c = addCodeCard();
+  if (!dir) { handleCodeEvent(c, { type: 'error', error: 'Set a project folder first.' }); return; }
+  streamCode('/chat/code', {
+    session_id: sessionId, message: goal, project_dir: dir, mode: pairKind,
+    provider: curProvider, model: $('#model').value, api_key: $('#api-key').value,
+    base_url: $('#base-url').value, research_model: asResearch,
+  }, c);
+}
+
+function continueCode(c) {
+  streamCode('/chat/code/continue', { token: c.token }, c);
 }
 
 async function clearChat() {
@@ -1911,6 +2065,21 @@ document.addEventListener('mousedown', e => {
   if (pop.classList.contains('show') && !pop.contains(e.target) && !btn.contains(e.target))
     pop.classList.remove('show');
 });
+
+// ── Pair programming toggle ────────────────────────────────
+function setPairMode(on) {
+  pairMode = on;
+  $('#pair-btn').classList.toggle('pair-on', on);
+  $('#pair-bar').classList.toggle('show', on);
+  $('#input').placeholder = on ? 'Describe what to build — Miko will direct Claude Code…' : 'Message Miko…';
+  if (on && !$('#pair-dir').value) $('#pair-dir').value = workspace || '';
+}
+$('#pair-btn').addEventListener('click', () => setPairMode(!pairMode));
+$('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(el => el.addEventListener('click', () => {
+  pairKind = el.dataset.mode; saveCfg();
+  $('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(b => b.classList.toggle('on', b === el));
+}));
+$('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(b => b.classList.toggle('on', b.dataset.mode === pairKind));
 
 // ── Wiring ─────────────────────────────────────────────────
 $('#drop-btn').addEventListener('click', () => $('#drop').classList.toggle('open'));
