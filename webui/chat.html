@@ -836,7 +836,7 @@ let AS = { agents: [], skills: [] };
 let asAgent = cfg.agent || '';
 let asSkills = Array.isArray(cfg.skills) ? cfg.skills.slice() : [];
 let asEffort = cfg.effort || 'standard';   // quick | standard | deep (per model)
-let asResearch = cfg.researchModel || 'gemini-2.5-flash';   // research engine (global)
+let asResearch = cfg.researchModel || 'gemini-3.5-flash';   // research engine (global)
 let approveMode = cfg.approve !== false;   // require approval for edits & commands (default ON)
 
 function envKeyName(id) { return (MODELS[id] && MODELS[id].env_key) || ''; }
@@ -1850,8 +1850,8 @@ function buildASPop() {
   });
   html += '</div>';
   html += '<div class="as-sec-label">Research engine · model for deep research</div><div class="as-effort as-research">';
-  [['gemini-2.5-flash', '2.5 Flash'], ['gemini-3-flash', '3 Flash'], ['gemini-3.5-flash', '3.5 Flash'],
-   ['gemini-2.5-pro', '2.5 Pro'], ['chat', 'Chat model']].forEach(([v, lab]) => {
+  [['gemini-3.5-flash', '3.5 Flash'], ['gemini-3.1-flash-lite', '3.1 Lite · 500/day'],
+   ['gemini-2.5-flash', '2.5 Flash'], ['chat', 'Chat model']].forEach(([v, lab]) => {
     html += `<button type="button" class="as-eff${asResearch === v ? ' on' : ''}" data-research="${v}">${lab}</button>`;
   });
   html += '</div>';

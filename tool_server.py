@@ -331,7 +331,7 @@ def _build_app():
 
         # Research engine: defaults to a Gemini text model (free tier, reliable for the
         # JSON planning/synthesis) decoupled from the chat model. "chat" = use chat model.
-        rm = body.get("research_model", "gemini-2.5-flash")
+        rm = body.get("research_model", "gemini-3.5-flash")
         rm = (rm or "").strip()
         if rm and rm != "chat":
             r_provider, r_model, r_key, r_base = "gemini", rm, "", ""   # uses LLM_API_KEY via env

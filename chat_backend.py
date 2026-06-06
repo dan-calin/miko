@@ -38,8 +38,8 @@ PROVIDERS = {
         "protocol": "gemini",
         "base_url": "",
         "env_key": "LLM_API_KEY",
-        "models": ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3-flash",
-                   "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"],
+        "models": ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite",
+                   "gemini-2.5-flash", "gemini-2.5-pro"],
     },
     "openai": {
         "label": "OpenAI",
