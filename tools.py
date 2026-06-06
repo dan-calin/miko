@@ -61,6 +61,7 @@ ALL_TOOL_DECLARATIONS: list = (
     + _safe_import("modules.email_box")
     + _safe_import("modules.scheduled_tasks")
     + _safe_import("modules.browser")
+    + _safe_import("modules.subagents")
     + _safe_import("modules.os_control")
     + _safe_import("modules.file_indexer")
     + _safe_import("modules.journey")

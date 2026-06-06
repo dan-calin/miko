@@ -203,6 +203,10 @@ class CommandRouter:
                 from modules.mcp_client import call_tool
                 return call_tool(tool_name, args)
 
+            if tool_name == "spawn_agents":
+                from modules.subagents import spawn_agents
+                return spawn_agents(**args)
+
             # ── Media control ────────────────────────────────────────────────
             if tool_name == "set_volume":
                 from modules.media_control import set_volume
