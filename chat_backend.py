@@ -240,7 +240,9 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
         f"You are Miko, {owner_name}'s personal assistant, reachable through a text chat. "
         "You have tools that control the user's Windows PC, Discord, calendars, web search, "
         "notes, and files. Use the tools when needed; never make up results. Be concise and "
-        "direct. Reply in the language the user writes in."
+        "direct. IMPORTANT: always write your reply in the SAME language as the user's latest "
+        "message (the user is writing in English → reply in English). Some tool descriptions "
+        "are in Romanian; ignore that — it must not change your reply language."
     )
     if workspace:
         base += (
@@ -589,6 +591,10 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
         pass
 
     system = _system_prompt(owner_name, language, workspace)
+    # Give chat the current date/time (voice already has it) so trivial "what time is
+    # it" questions are answered directly instead of reaching for run_command.
+    from datetime import datetime as _dt
+    system = f"[CURRENT DATE & TIME]\nIt is now {_dt.now():%A, %d %B %Y, %H:%M} (local time).\n\n" + system
     if agent or skills:
         try:
             import agent_skills

@@ -213,7 +213,8 @@ def update_from_conversation_async(
                     model=minimax_model, max_tokens=512,
                     messages=[{"role": "user", "content": prompt}],
                 )
-                return resp.content[0].text.strip() if resp.content else ""
+                # Skip non-text blocks (e.g. ThinkingBlock from MiniMax-M2 / Claude).
+                return " ".join(b.text for b in (resp.content or []) if hasattr(b, "text")).strip()
             from openai import OpenAI
             client = OpenAI(api_key=minimax_api_key, base_url=minimax_base_url)
             resp = client.chat.completions.create(
