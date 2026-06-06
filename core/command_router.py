@@ -207,6 +207,10 @@ class CommandRouter:
                 from modules.subagents import spawn_agents
                 return spawn_agents(**args)
 
+            if tool_name == "code_with_claude":
+                from modules.claude_code import code_with_claude
+                return code_with_claude(**args)
+
             # ── Media control ────────────────────────────────────────────────
             if tool_name == "set_volume":
                 from modules.media_control import set_volume
