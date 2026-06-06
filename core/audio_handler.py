@@ -131,6 +131,17 @@ class AudioHandler:
                 sys_prompt += f"\n\n[{label}]\n" + "\n".join(f"- {i}" for i in insights)
         except Exception:
             pass
+        # Voice can't re-query memory per utterance the way chat does, so make recall a
+        # reflex: before answering anything that depends on the user's history, notes,
+        # projects, or past conversations, call the `recall` tool first.
+        if is_en:
+            sys_prompt += ("\n\n[MEMORY]\nBefore answering questions about the user's past, "
+                           "their notes, projects, or anything 'do you remember…', call the "
+                           "`recall` tool first, then answer from what it returns.")
+        else:
+            sys_prompt += ("\n\n[MEMORIE]\nÎnainte să răspunzi la întrebări despre trecutul "
+                           "utilizatorului, notițele, proiectele lui sau 'îți amintești…', "
+                           "folosește întâi unealta `recall`, apoi răspunde din ce găsești.")
         try:
             import schedule_briefs
             brief = schedule_briefs.get_today_brief()

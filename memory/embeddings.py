@@ -37,7 +37,16 @@ class _Backend:
 class _FastEmbed(_Backend):
     def __init__(self):
         from fastembed import TextEmbedding
-        self._model = TextEmbedding("BAAI/bge-small-en-v1.5")
+        # Pin the offline model cache next to the app so it's stable across restarts
+        # (otherwise fastembed uses a volatile temp dir and may re-download on cold start).
+        cache_dir = None
+        try:
+            from config import CONFIG
+            cache_dir = str((CONFIG.data_dir / "fastembed"))
+        except Exception:
+            pass
+        self._model = (TextEmbedding("BAAI/bge-small-en-v1.5", cache_dir=cache_dir)
+                       if cache_dir else TextEmbedding("BAAI/bge-small-en-v1.5"))
         self.name = "fastembed:bge-small-en-v1.5"
         self.dim = 384
 
