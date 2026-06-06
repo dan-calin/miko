@@ -22,6 +22,53 @@ logger = logging.getLogger("miko.toolserver")
 _router = None
 
 
+def _ndjson_stream(request, gen_factory, on_event=None):
+    """Stream a sync generator's events as NDJSON, with client-disconnect → cancel.
+
+    gen_factory(should_cancel) must return a sync generator of JSON-able event dicts;
+    `should_cancel` is a zero-arg callable the generator polls to abort cooperatively.
+    on_event(ev) runs per event (for side effects like persisting the final result).
+    """
+    import asyncio
+    import json as _json
+    import threading
+    from fastapi.responses import StreamingResponse
+
+    cancel = threading.Event()
+
+    async def agen():
+        loop = asyncio.get_event_loop()
+        gen = gen_factory(cancel.is_set)
+        _SENT = object()
+
+        def _nxt():
+            try:
+                return next(gen)
+            except StopIteration:
+                return _SENT
+
+        try:
+            while True:
+                if await request.is_disconnected():
+                    cancel.set()
+                item = await loop.run_in_executor(None, _nxt)
+                if item is _SENT:
+                    break
+                if on_event:
+                    try:
+                        on_event(item)
+                    except Exception:
+                        pass
+                yield _json.dumps(item) + "\n"
+        finally:
+            cancel.set()
+
+    return StreamingResponse(
+        agen(), media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 def start(command_router) -> None:
     """Start the tool HTTP server in a daemon thread. Called from main.py."""
     global _router
@@ -186,6 +233,50 @@ def _build_app():
         )
         return JSONResponse(result)
 
+    @app.post("/chat/message/stream")
+    async def chat_message_stream(request: Request, _=Depends(_auth)):
+        """Same as /chat/message but streams live progress (round/tool_start/tool_end)
+        as NDJSON, ending with a {"type":"reply"} event. Cancelable by disconnecting."""
+        from chat_backend import chat_stream
+        from config import CONFIG
+        if _router is None:
+            raise HTTPException(status_code=503, detail="Router not initialised")
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        message = (body.get("message") or "").strip()
+        if not message:
+            return JSONResponse({"error": "Empty message."}, status_code=400)
+
+        import file_browser
+        workspace = (body.get("workspace") or "").strip() or file_browser.get_workspace()
+        skills = body.get("skills") or []
+        if not isinstance(skills, list):
+            skills = []
+
+        def factory(should_cancel):
+            return chat_stream(
+                _router,
+                body.get("session_id", "default"),
+                message,
+                body.get("provider", "gemini"),
+                body.get("model", ""),
+                body.get("api_key", ""),
+                body.get("base_url", ""),
+                bool(body.get("allow_actions", False)),
+                CONFIG.owner_name,
+                getattr(CONFIG, "language", "en"),
+                workspace,
+                (body.get("agent") or "").strip(),
+                skills,
+                (body.get("effort") or "standard").strip(),
+                bool(body.get("approval", False)),
+                should_cancel=should_cancel,
+            )
+
+        return _ndjson_stream(request, factory)
+
     @app.post("/chat/approve")
     async def chat_approve(request: Request, _=Depends(_auth)):
         """Execute an action the user approved in the Chat UI (file write/command/…)."""
@@ -215,10 +306,8 @@ def _build_app():
 
     @app.post("/chat/research")
     async def chat_research(request: Request, _=Depends(_auth)):
-        """Run the deep-research pipeline, streaming NDJSON progress events, then
-        persist the final report (with its saved vault note) to the conversation."""
-        from fastapi.responses import StreamingResponse
-        import json as _json
+        """Run the deep-research pipeline, streaming NDJSON progress events (cancelable
+        by disconnecting), then persist the final report + its vault note."""
         from config import CONFIG
 
         try:
@@ -240,29 +329,30 @@ def _build_app():
         if not isinstance(skills, list):
             skills = []
 
-        def gen():
+        def factory(should_cancel):
             import deep_research
-            import conversation_store as convo
-            report_text, note_path = "", ""
-            for ev in deep_research.run(topic, provider, model, api_key, base_url,
-                                        language=getattr(CONFIG, "language", "en"),
-                                        effort=effort, agent=agent, skills=skills):
-                if ev.get("type") == "report":
-                    report_text = ev.get("reply", "")
-                    note_path = ev.get("note", "")
-                yield _json.dumps(ev) + "\n"
-            if report_text:
-                files = ([{"path": note_path, "name": os.path.basename(note_path)}]
-                         if note_path else [])
-                try:
-                    convo.append_turn(session_id, topic, report_text, ["deep_research"], files)
-                except Exception:
-                    pass
+            return deep_research.run(topic, provider, model, api_key, base_url,
+                                     language=getattr(CONFIG, "language", "en"),
+                                     effort=effort, agent=agent, skills=skills,
+                                     should_cancel=should_cancel)
 
-        return StreamingResponse(
-            gen(), media_type="application/x-ndjson",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
+        state = {"report": "", "note": ""}
+
+        def on_event(ev):
+            if ev.get("type") == "report":
+                state["report"] = ev.get("reply", "")
+                state["note"] = ev.get("note", "")
+                if state["report"]:
+                    import conversation_store as convo
+                    files = ([{"path": state["note"], "name": os.path.basename(state["note"])}]
+                             if state["note"] else [])
+                    try:
+                        convo.append_turn(session_id, topic, state["report"],
+                                          ["deep_research"], files)
+                    except Exception:
+                        pass
+
+        return _ndjson_stream(request, factory, on_event)
 
     @app.get("/chat/agent-skills")
     def chat_agent_skills(_=Depends(_auth)):

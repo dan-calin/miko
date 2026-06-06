@@ -264,6 +264,10 @@
   .rs-step.done .rs-mk { color: var(--greenBright); }
   .rs-step .rs-lb { color: var(--text2); flex-shrink: 0; }
   .rs-step .rs-dt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rs-card.rs-collapsed { display: none; }   /* plain text reply → hide activity chrome */
+  .rs-card.act .rs-ic { animation: mkpulse 1.1s ease-in-out infinite; }
+  .rs-card.act.done .rs-ic { animation: none; color: var(--green); }
+  @keyframes mkpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
 
   /* Composer */
   .composer { border-top: 1px solid var(--border); padding: 16px 40px; background: var(--bg); }
@@ -348,6 +352,10 @@
   }
   .send.can { background: var(--amber); border-color: var(--amber); color: #0b0b0b; cursor: pointer; }
   .send.can:hover { background: #d4b063; border-color: #d4b063; }
+  .send.stop { background: var(--surface); border-color: var(--border); color: var(--text); cursor: pointer; }
+  .send.stop:hover { border-color: var(--amber); color: var(--amber); }
+  .send.stop svg { display: none; }
+  .send.stop::after { content: ''; width: 9px; height: 9px; background: currentColor; border-radius: 1px; }
 
   .hints {
     display: flex; align-items: center; gap: 8px; margin-top: 8px;
@@ -1113,7 +1121,82 @@ function greeting() {
   return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 
-// ── Send ───────────────────────────────────────────────────
+// ── Send (streamed: live activity + Stop) ──────────────────
+let curAbort = null;
+
+function setBusy(on) {
+  const b = $('#send-btn');
+  b.dataset.busy = on ? '1' : '0';
+  b.classList.toggle('stop', on);
+  b.setAttribute('aria-label', on ? 'Stop' : 'Send message');
+}
+function onSendClick() {
+  if ($('#send-btn').dataset.busy === '1') { if (curAbort) curAbort.abort(); }
+  else send();
+}
+
+// A streaming bot bubble with a collapsible live activity log (rounds + tool calls).
+function addActivityCard() {
+  const row = document.createElement('div'); row.className = 'row bot';
+  const g = document.createElement('div'); g.className = 'glyph'; g.textContent = 'M';
+  const c = document.createElement('div'); c.className = 'content';
+  const card = document.createElement('div'); card.className = 'rs-card act';
+  card.innerHTML =
+    '<div class="rs-head"><span class="rs-ic mk-dot">●</span> Working' +
+    '<span class="rs-status">thinking…</span></div><div class="rs-log"></div>';
+  const tx = document.createElement('div'); tx.className = 'bot-text';
+  const fl = document.createElement('div'); fl.className = 'files';
+  const tl = document.createElement('div'); tl.className = 'tools';
+  const pn = document.createElement('div'); pn.className = 'pending';
+  const st = document.createElement('div'); st.className = 'stamp';
+  c.append(card, tx, fl, tl, pn, st); row.append(g, c);
+  messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
+  return { card, tx, fl, tl, pn, st, _last: null,
+    status: card.querySelector('.rs-status'), log: card.querySelector('.rs-log') };
+}
+
+function finishActivity(c, label) {
+  if (c.log.children.length === 0) c.card.classList.add('rs-collapsed');  // plain reply → hide chrome
+  else { c.status.textContent = label; c.card.classList.add('done'); }
+}
+
+function handleChatEvent(c, ev) {
+  if (ev.type === 'round') {
+    c.status.textContent = ev.n > 1 ? ('thinking… (step ' + ev.n + ')') : 'thinking…';
+  } else if (ev.type === 'tool_start') {
+    const el = document.createElement('div'); el.className = 'rs-step';
+    el.innerHTML = '<span class="rs-mk">→</span><span class="rs-lb"></span><span class="rs-dt"></span>';
+    el.querySelector('.rs-lb').textContent = ev.name;
+    el.querySelector('.rs-dt').textContent = ev.args ? ' — ' + ev.args : '';
+    c.log.appendChild(el); c._last = el;
+    c.status.textContent = 'using ' + ev.name + '…';
+  } else if (ev.type === 'tool_end') {
+    if (c._last) {
+      const mk = ev.status === 'ok' ? '✓' : (ev.status === 'proposed' ? '⏸' : '⚠');
+      c._last.querySelector('.rs-mk').textContent = mk;
+      c._last.classList.add('done');
+    }
+  } else if (ev.type === 'reply') {
+    finishActivity(c, 'done');
+    renderBotText(c.tx, ev.reply || '(no response)');
+    if (ev.tools_used && ev.tools_used.length)
+      c.tl.innerHTML = ev.tools_used.map(t => `<span class="chip"><span class="di">◈</span>${t}</span>`).join('');
+    renderFileChips(c.fl, ev.files);
+    if (ev.pending && ev.pending.length) renderPending(c.pn, ev.pending);
+    updateMonitor((ev.usage && ev.usage.total_tokens) || 0);
+    c.st.textContent = fmtTime(new Date());
+  } else if (ev.type === 'cancelled') {
+    finishActivity(c, 'stopped');
+    if (!c.tx.textContent) renderBotText(c.tx, '⏹ Stopped.');
+    c.st.textContent = fmtTime(new Date());
+  } else if (ev.type === 'error') {
+    finishActivity(c, 'failed');
+    c.tx.className = 'bot-text err'; renderBotText(c.tx, '⚠ ' + ev.error);
+    c.st.textContent = fmtTime(new Date());
+  }
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
 async function send() {
   const input = $('#input'), text = input.value.trim();
   if (!text || $('#send-btn').dataset.busy === '1') return;
@@ -1122,11 +1205,14 @@ async function send() {
   input.value = ''; input.style.height = 'auto'; refreshSend();
   addUser(text);
   if (asSkills.includes('deep-research')) { sendResearch(text); return; }
-  const trow = thinking();
-  $('#send-btn').dataset.busy = '1';
+  const c = addActivityCard();
+  setBusy(true);
+  curAbort = new AbortController();
+  let gotFinal = false;
   try {
-    const data = await (await fetch('/chat/message', {
+    const resp = await fetch('/chat/message/stream', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
+      signal: curAbort.signal,
       body: JSON.stringify({
         session_id: sessionId, message: text,
         provider: curProvider, model: $('#model').value,
@@ -1135,26 +1221,31 @@ async function send() {
         workspace: workspace,
         agent: asAgent, skills: asSkills, effort: asEffort, approval: approveMode,
       }),
-    })).json();
-    trow.remove();
-    const { tx, tl, fl, pn, st } = addBot();
-    if (data.error) { tx.className = 'bot-text err'; renderBotText(tx, '⚠ ' + data.error); }
-    else {
-      renderBotText(tx, data.reply || '(no response)');
-      if (data.tools_used && data.tools_used.length)
-        tl.innerHTML = data.tools_used.map(t => `<span class="chip"><span class="di">◈</span>${t}</span>`).join('');
-      renderFileChips(fl, data.files);
-      if (data.pending && data.pending.length) renderPending(pn, data.pending);
-      updateMonitor((data.usage && data.usage.total_tokens) || 0);
+    });
+    if (!resp.ok || !resp.body) throw new Error('Stream unavailable (HTTP ' + resp.status + ')');
+    const reader = resp.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (!line) continue;
+        try {
+          const ev = JSON.parse(line);
+          if (ev.type === 'reply' || ev.type === 'cancelled' || ev.type === 'error') gotFinal = true;
+          handleChatEvent(c, ev);
+        } catch (e) { /* skip partial */ }
+      }
     }
-    st.textContent = fmtTime(new Date());
+    if (!gotFinal) handleChatEvent(c, { type: 'cancelled' });
   } catch (e) {
-    trow.remove();
-    const { tx, st } = addBot();
-    tx.className = 'bot-text err'; renderBotText(tx, '⚠ Network error: ' + e.message);
-    st.textContent = fmtTime(new Date());
+    if (e.name === 'AbortError') handleChatEvent(c, { type: 'cancelled' });
+    else handleChatEvent(c, { type: 'error', error: 'Network error: ' + e.message });
   } finally {
-    $('#send-btn').dataset.busy = '0'; chatEl.scrollTop = chatEl.scrollHeight; input.focus();
+    curAbort = null; setBusy(false); chatEl.scrollTop = chatEl.scrollHeight; input.focus();
     loadConversations();   // refresh titles / order after the turn is saved
   }
 }
@@ -1198,8 +1289,14 @@ function handleResearchEvent(c, ev) {
     el.querySelector('.rs-lb').textContent = ev.label;
     el.querySelector('.rs-dt').textContent = ev.detail ? ' — ' + ev.detail : '';
     if (ev.state === 'done') { el.querySelector('.rs-mk').textContent = '✓'; el.classList.add('done'); }
+  } else if (ev.type === 'round') {
+    c.status.textContent = 'round ' + ev.n + (ev.of ? ' / ' + ev.of : '') + '…';
   } else if (ev.type === 'source') {
     c.srcCount++; c.status.textContent = 'read ' + c.srcCount + ' source' + (c.srcCount > 1 ? 's' : '') + '…';
+  } else if (ev.type === 'cancelled') {
+    c.status.textContent = 'stopped'; c.card.classList.add('done');
+    if (!c.tx.textContent) renderBotText(c.tx, '⏹ Research stopped.');
+    c.st.textContent = fmtTime(new Date());
   } else if (ev.type === 'report') {
     c.status.textContent = 'done'; c.card.classList.add('done');
     renderBotText(c.tx, ev.reply || '(no report)');
@@ -1215,15 +1312,17 @@ function handleResearchEvent(c, ev) {
 
 async function sendResearch(text) {
   const c = addResearchCard();
-  $('#send-btn').dataset.busy = '1';
+  setBusy(true);
+  curAbort = new AbortController();
   try {
     const resp = await fetch('/chat/research', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
+      signal: curAbort.signal,
       body: JSON.stringify({
         session_id: sessionId, message: text,
         provider: curProvider, model: $('#model').value,
         api_key: $('#api-key').value, base_url: $('#base-url').value,
-        effort: asEffort,
+        effort: asEffort, agent: asAgent, skills: asSkills,
       }),
     });
     if (!resp.ok || !resp.body) throw new Error('Research stream unavailable (HTTP ' + resp.status + ')');
@@ -1240,10 +1339,11 @@ async function sendResearch(text) {
       }
     }
   } catch (e) {
-    c.status.textContent = 'failed'; c.tx.className = 'bot-text err';
-    renderBotText(c.tx, '⚠ ' + e.message); c.st.textContent = fmtTime(new Date());
+    if (e.name === 'AbortError') handleResearchEvent(c, { type: 'cancelled' });
+    else { c.status.textContent = 'failed'; c.tx.className = 'bot-text err';
+      renderBotText(c.tx, '⚠ ' + e.message); c.st.textContent = fmtTime(new Date()); }
   } finally {
-    $('#send-btn').dataset.busy = '0'; chatEl.scrollTop = chatEl.scrollHeight; input.focus();
+    curAbort = null; setBusy(false); chatEl.scrollTop = chatEl.scrollHeight; input.focus();
     loadConversations();
   }
 }
@@ -1812,7 +1912,7 @@ $('#base-url').addEventListener('change', saveCfg);
 $('#save-env').addEventListener('click', saveToEnv);
 $('#allow-actions').addEventListener('click', () => { setAllow(!$('#allow-actions').classList.contains('on')); saveCfg(); });
 $('#approve-mode').addEventListener('click', () => { approveMode = !approveMode; setApprove(approveMode); saveCfg(); });
-$('#send-btn').addEventListener('click', send);
+$('#send-btn').addEventListener('click', onSendClick);
 $('#clear-btn').addEventListener('click', clearChat);
 $('#conv-new').addEventListener('click', newConversation);
 $('#ws-pick').addEventListener('click', () => openWorkspace());

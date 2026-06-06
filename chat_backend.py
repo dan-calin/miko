@@ -431,14 +431,31 @@ def _action_preview(name: str, args: dict) -> dict:
     return {"kind": "action", "summary": name.replace("_", " ")}
 
 
+def _emit(emit, event: dict) -> None:
+    """Best-effort progress callback (used by the streaming chat path)."""
+    if emit:
+        try:
+            emit(event)
+        except Exception:
+            pass
+
+
 def _run_tool(router, name: str, args: dict, allow_actions: bool,
-              used: list, files: list, approval: bool = False, pending: list = None) -> str:
+              used: list, files: list, approval: bool = False, pending: list = None,
+              emit=None) -> str:
     from core.command_router import REQUIRES_CONFIRMATION
 
     used.append(name)
+    _emit(emit, {"type": "tool_start", "name": name, "args": _args_summary(args)})
+
+    def done(result: str, status: str = "ok") -> str:
+        _emit(emit, {"type": "tool_end", "name": name, "status": status,
+                     "summary": _result_summary(result)})
+        return result
+
     safe, reason = router._safety_check(name, args)
     if not safe:
-        return f"[blocked for security: {reason}]"
+        return done(f"[blocked for security: {reason}]", "blocked")
 
     # Approval mode: queue mutating/destructive actions for the user to approve,
     # instead of running them. Read-only tools still run normally.
@@ -447,22 +464,38 @@ def _run_tool(router, name: str, args: dict, allow_actions: bool,
         action = {"id": "act-" + uuid.uuid4().hex[:8], "tool": name, "args": args}
         action.update(_action_preview(name, args))
         pending.append(action)
-        return (f"[PROPOSED — queued for the user's approval (id {action['id']}). It has "
-                "NOT run yet. Tell the user what you're proposing and that you're waiting "
-                "for their approval; do NOT claim it's done.]")
+        return done(
+            f"[PROPOSED — queued for the user's approval (id {action['id']}). It has "
+            "NOT run yet. Tell the user what you're proposing and that you're waiting "
+            "for their approval; do NOT claim it's done.]", "proposed")
 
     if name in REQUIRES_CONFIRMATION and not allow_actions:
-        return (
+        return done(
             f"[blocked] '{name}' is a sensitive action. The user must enable "
-            "'Allow actions' in the chat UI before this can run."
-        )
+            "'Allow actions' in the chat UI before this can run.", "blocked")
     try:
         result = str(router._dispatch_module(name, args))
         _collect_files(name, args, result, files)
-        return result
+        return done(result)
     except Exception as e:
         logger.error(f"chat tool error {name}: {e}", exc_info=True)
-        return f"[error running {name}: {e}]"
+        return done(f"[error running {name}: {e}]", "error")
+
+
+def _args_summary(args: dict) -> str:
+    """A compact, safe one-line preview of tool args for the activity view."""
+    try:
+        parts = []
+        for k, v in (args or {}).items():
+            s = str(v).replace("\n", " ")
+            parts.append(f"{k}={s[:60]}" + ("…" if len(s) > 60 else ""))
+        return ", ".join(parts)[:200]
+    except Exception:
+        return ""
+
+
+def _result_summary(result: str) -> str:
+    return (str(result).replace("\n", " ")[:200]).strip()
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -521,8 +554,13 @@ def _mcp_tools(protocol: str) -> list:
 def chat(router, session_id: str, message: str, provider: str, model: str,
          api_key: str = "", base_url: str = "", allow_actions: bool = False,
          owner_name: str = "Roxan", language: str = "en", workspace: str = "",
-         agent: str = "", skills=None, effort: str = "standard", approval: bool = False) -> dict:
-    """Run one chat turn. Returns {"reply": str, "tools_used": [...], "error": str|None}."""
+         agent: str = "", skills=None, effort: str = "standard", approval: bool = False,
+         emit=None, should_cancel=None) -> dict:
+    """Run one chat turn. Returns {"reply": str, "tools_used": [...], "error": str|None}.
+
+    emit: optional callback(event_dict) for live progress (tool_start/tool_end/round).
+    should_cancel: optional zero-arg callable; the tool-loop stops when it returns True.
+    """
     preset = PROVIDERS.get(provider)
     if not preset:
         return {"reply": "", "tools_used": [], "error": f"Unknown provider '{provider}'."}
@@ -575,20 +613,79 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
 
     try:
         if preset["protocol"] == "gemini":
-            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending)
+            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel)
         elif preset["protocol"] == "anthropic":
-            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending)
+            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel)
         else:
-            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending)
+            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel)
     except Exception as e:
         logger.error(f"chat() error ({provider}/{model}): {e}", exc_info=True)
         return {"reply": "", "tools_used": used, "files": files, "usage": usage,
                 "pending": pending, "error": str(e)}
 
-    _save_turn(session_id, message, reply, used, files)
-    _learn_async(message, reply, session_id)   # learn facts + episode (throttled)
+    cancelled = _cancelled(should_cancel) or reply == "(cancelled)"
+    if not cancelled:                          # don't persist a half-finished turn
+        _save_turn(session_id, message, reply, used, files)
+        _learn_async(message, reply, session_id)   # learn facts + episode (throttled)
     return {"reply": reply, "tools_used": used, "files": files, "usage": usage,
-            "pending": pending, "error": None}
+            "pending": pending, "cancelled": cancelled, "error": None}
+
+
+def _cancelled(should_cancel) -> bool:
+    try:
+        return bool(should_cancel and should_cancel())
+    except Exception:
+        return False
+
+
+def chat_stream(*args, should_cancel=None, **kwargs):
+    """Generator wrapper around chat() that yields live progress events.
+
+    Yields {"type": "tool_start"|"tool_end"|"round", ...} as the turn runs, then a
+    final {"type": "reply", ...} (or {"type": "cancelled"} / {"type": "error"}).
+    Runs chat() in a worker thread and bridges its emit() callback through a queue,
+    so the runners stay simple synchronous functions.
+    """
+    import queue as _queue
+    import threading
+
+    q: _queue.Queue = _queue.Queue()
+    _SENTINEL = object()
+    result_box = {}
+
+    def _emit_cb(ev):
+        q.put(ev)
+
+    def _worker():
+        try:
+            result_box["result"] = chat(*args, emit=_emit_cb,
+                                        should_cancel=should_cancel, **kwargs)
+        except Exception as e:
+            result_box["error"] = str(e)
+        finally:
+            q.put(_SENTINEL)
+
+    t = threading.Thread(target=_worker, daemon=True, name="ChatStream")
+    t.start()
+
+    while True:
+        ev = q.get()
+        if ev is _SENTINEL:
+            break
+        yield ev
+
+    if "error" in result_box:
+        yield {"type": "error", "error": result_box["error"]}
+        return
+    res = result_box.get("result", {}) or {}
+    if res.get("cancelled"):
+        yield {"type": "cancelled", **{k: res.get(k) for k in
+               ("tools_used", "files", "usage", "pending")}}
+        return
+    yield {"type": "reply", "reply": res.get("reply", ""),
+           "tools_used": res.get("tools_used", []), "files": res.get("files", []),
+           "usage": res.get("usage", {}), "pending": res.get("pending", []),
+           "error": res.get("error")}
 
 
 def _accum_usage(usage: dict, resp, proto: str) -> None:
@@ -616,7 +713,7 @@ def _accum_usage(usage: dict, resp, proto: str) -> None:
 
 # ── OpenAI-compatible (OpenAI, DeepSeek, Kimi, custom) ────────────────────────
 
-def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None) -> str:
+def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None) -> str:
     from openai import OpenAI
     from tools import ALL_TOOL_DECLARATIONS_OPENAI
 
@@ -627,7 +724,10 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
     tools = (ALL_TOOL_DECLARATIONS_OPENAI + _mcp_tools("openai")) or None
     rk = _reasoning_kwargs("openai", model, effort)   # native reasoning_effort (if supported)
 
-    for _ in range(rounds):
+    for _r in range(rounds):
+        if _cancelled(should_cancel):
+            return "(cancelled)"
+        _emit(emit, {"type": "round", "n": _r + 1})
         kwargs = {"model": model, "messages": messages}
         if tools:
             kwargs["tools"] = tools
@@ -655,7 +755,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
                 args = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
                 args = {}
-            result = _run_tool(router, tc.function.name, args, allow_actions, used, files, approval, pending)
+            result = _run_tool(router, tc.function.name, args, allow_actions, used, files, approval, pending, emit)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     final = _create_safe(client.chat.completions.create, {"model": model, "messages": messages}, rk)
@@ -666,7 +766,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
 
 # ── Anthropic-compatible (MiniMax /anthropic) ────────────────────────────────
 
-def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None) -> str:
+def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None) -> str:
     import anthropic
     from tools import ALL_TOOL_DECLARATIONS_ANTHROPIC
 
@@ -676,7 +776,10 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
     tools = (ALL_TOOL_DECLARATIONS_ANTHROPIC + _mcp_tools("anthropic")) or None
     rk = _reasoning_kwargs("anthropic", model, effort)   # real-Claude effort (if supported)
 
-    for _ in range(rounds):
+    for _r in range(rounds):
+        if _cancelled(should_cancel):
+            return "(cancelled)"
+        _emit(emit, {"type": "round", "n": _r + 1})
         kwargs = {"model": model, "max_tokens": 4096, "system": system, "messages": messages}
         if tools:
             kwargs["tools"] = tools
@@ -703,7 +806,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
         results = []
         for block in tool_use:
             args = dict(block.input) if block.input else {}
-            result = _run_tool(router, block.name, args, allow_actions, used, files, approval, pending)
+            result = _run_tool(router, block.name, args, allow_actions, used, files, approval, pending, emit)
             results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
         messages.append({"role": "user", "content": results})
 
@@ -716,7 +819,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
-def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None) -> str:
+def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None) -> str:
     from google import genai
     from google.genai import types
     from tools import ALL_TOOL_DECLARATIONS
@@ -746,7 +849,10 @@ def _run_gemini(router, key, model, system, history, message, allow_actions, use
             use_thinking = False
     gen_config = types.GenerateContentConfig(**cfg_kwargs)
 
-    for _ in range(rounds):
+    for _r in range(rounds):
+        if _cancelled(should_cancel):
+            return "(cancelled)"
+        _emit(emit, {"type": "round", "n": _r + 1})
         try:
             resp = client.models.generate_content(model=model, contents=contents, config=gen_config)
         except Exception as e:
@@ -775,7 +881,7 @@ def _run_gemini(router, key, model, system, history, message, allow_actions, use
         for part in fc_parts:
             fc = part.function_call
             args = dict(fc.args) if fc.args else {}
-            result = _run_tool(router, fc.name, args, allow_actions, used, files, approval, pending)
+            result = _run_tool(router, fc.name, args, allow_actions, used, files, approval, pending, emit)
             response_parts.append(
                 types.Part(function_response=types.FunctionResponse(
                     name=fc.name, response={"result": result}))
