@@ -55,7 +55,8 @@ def _run_claude(repo: str, prompt: str, session_id: str, resume: bool,
     try:
         proc = subprocess.run(
             argv, cwd=repo, input=prompt, capture_output=True, text=True,
-            timeout=timeout,
+            encoding="utf-8", errors="replace",   # Claude emits UTF-8; Windows defaults
+            timeout=timeout,                       # to cp1252 and crashes the reader thread
             # On Windows `claude` is a .cmd shim; shell=True lets it resolve.
             shell=(os.name == "nt"),
         )
@@ -85,6 +86,7 @@ def _run_claude(repo: str, prompt: str, session_id: str, resume: bool,
 
 def _git(repo: str, *args, check: bool = False) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace",
                           shell=(os.name == "nt"), check=check)
 
 
