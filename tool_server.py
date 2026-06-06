@@ -329,9 +329,18 @@ def _build_app():
         if not isinstance(skills, list):
             skills = []
 
+        # Research engine: defaults to a Gemini text model (free tier, reliable for the
+        # JSON planning/synthesis) decoupled from the chat model. "chat" = use chat model.
+        rm = body.get("research_model", "gemini-2.5-flash")
+        rm = (rm or "").strip()
+        if rm and rm != "chat":
+            r_provider, r_model, r_key, r_base = "gemini", rm, "", ""   # uses LLM_API_KEY via env
+        else:
+            r_provider, r_model, r_key, r_base = provider, model, api_key, base_url
+
         def factory(should_cancel):
             import deep_research
-            return deep_research.run(topic, provider, model, api_key, base_url,
+            return deep_research.run(topic, r_provider, r_model, r_key, r_base,
                                      language=getattr(CONFIG, "language", "en"),
                                      effort=effort, agent=agent, skills=skills,
                                      should_cancel=should_cancel)

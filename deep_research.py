@@ -155,6 +155,24 @@ def run(topic, provider, model, api_key="", base_url="", language="en",
 
 # ── Planning / distillation ────────────────────────────────────────────────────
 
+def _complete(provider, model, api_key, base_url, sys, user, max_tokens):
+    """complete_text with one rate-limit backoff — free Gemini tiers cap at a few
+    requests/minute, so a 429 mid-run pauses and retries instead of failing the report."""
+    import time
+    from chat_backend import complete_text
+    for attempt in range(2):
+        try:
+            return complete_text(provider, model, api_key, base_url, sys, user, max_tokens=max_tokens)
+        except Exception as e:
+            msg = str(e).lower()
+            rate = any(s in msg for s in ("429", "rate", "quota", "resource_exhausted", "exhausted"))
+            if rate and attempt == 0:
+                logger.warning("research model rate-limited; backing off 18s")
+                time.sleep(18)
+                continue
+            raise
+
+
 def _overlay(agent, skills) -> str:
     """The agent/skills persona overlay to steer planning + synthesis."""
     if not agent and not skills:
@@ -169,7 +187,6 @@ def _overlay(agent, skills) -> str:
 def _distill(topic, provider, model, api_key, base_url, max_q, overlay):
     """Turn a possibly-chatty request into (clean subject, [sub-questions]).
     Falls back to keyword extraction — never returns the raw blob as a query."""
-    from chat_backend import complete_text
     sys = (overlay +
         "You are a research planner. The user's message may be chatty. Extract the real "
         "research SUBJECT, then write specific, non-overlapping, search-engine-friendly "
@@ -178,8 +195,8 @@ def _distill(topic, provider, model, api_key, base_url, max_q, overlay):
     )
     raw = ""
     try:
-        raw = complete_text(provider, model, api_key, base_url, sys,
-                            f"Message: {topic}", max_tokens=1500) or ""
+        raw = _complete(provider, model, api_key, base_url, sys,
+                        f"Message: {topic}", max_tokens=1500) or ""
     except Exception as e:
         logger.warning(f"distill failed: {e}")
 
@@ -276,7 +293,6 @@ def _gaps(subject, readings, provider, model, api_key, base_url, max_q, overlay)
     """Ask what's still unanswered; return follow-up sub-questions ([] = done)."""
     if not readings:
         return []
-    from chat_backend import complete_text
     notes = "\n\n".join(f"{r['url']}\n{r['text'][:1200]}" for r in readings[-8:])[:12000]
     sys = (overlay +
         "You are a research editor. Given the subject and what's been gathered so far, "
@@ -285,8 +301,8 @@ def _gaps(subject, readings, provider, model, api_key, base_url, max_q, overlay)
         'Return ONLY JSON: {"done": true} OR {"questions": ["...", "..."]}. No prose.'
     )
     try:
-        raw = complete_text(provider, model, api_key, base_url, sys,
-                            f"SUBJECT: {subject}\n\nGATHERED:\n{notes}", max_tokens=400) or ""
+        raw = _complete(provider, model, api_key, base_url, sys,
+                        f"SUBJECT: {subject}\n\nGATHERED:\n{notes}", max_tokens=400) or ""
     except Exception as e:
         logger.warning(f"gap analysis failed: {e}")
         return []
@@ -371,7 +387,6 @@ def _rank_urls(round_results, subject, seen_urls):
 # ── Synthesis + persistence ─────────────────────────────────────────────────────
 
 def _synthesize(subject, collected, readings, provider, model, api_key, base_url, language, overlay):
-    from chat_backend import complete_text
     ctx = [f"SUBJECT: {subject}", "", "SEARCH RESULTS (snippets):"]
     n = 0
     for c in collected:
@@ -396,8 +411,8 @@ def _synthesize(subject, collected, readings, provider, model, api_key, base_url
         "NOT emit any function-call or tool-call syntax. " + lang
     )
     try:
-        out = complete_text(provider, model, api_key, base_url, sys, context,
-                            max_tokens=3500) or "(no report generated)"
+        out = _complete(provider, model, api_key, base_url, sys, context,
+                        max_tokens=3500) or "(no report generated)"
         return _strip_control_tokens(out)
     except Exception as e:
         logger.warning(f"synthesis failed: {e}")
