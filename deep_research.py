@@ -179,28 +179,65 @@ def _distill(topic, provider, model, api_key, base_url, max_q, overlay):
     raw = ""
     try:
         raw = complete_text(provider, model, api_key, base_url, sys,
-                            f"Message: {topic}", max_tokens=600) or ""
+                            f"Message: {topic}", max_tokens=1500) or ""
     except Exception as e:
         logger.warning(f"distill failed: {e}")
 
-    subject, questions = "", []
-    m = re.search(r"\{.*\}", raw, re.S)
-    if m:
-        try:
-            obj = json.loads(m.group(0))
-            subject = str(obj.get("subject", "")).strip()
-            questions = [str(q).strip() for q in obj.get("questions", []) if str(q).strip()]
-        except Exception:
-            pass
-    if not questions:                       # tolerate a bare JSON array of questions
-        questions = _parse_list(raw)
-    questions = questions[:max_q]
+    subject, questions = _extract_plan(raw)
+    questions = _clean_questions(questions)[:max_q]
 
     if not subject:
         subject = _keyword_subject(topic)
     if not questions:                       # last-resort: keyword queries, NOT the blob
         questions = _keyword_queries(topic, subject)
     return subject, questions
+
+
+def _extract_plan(raw: str):
+    """Pull (subject, questions) out of the planner output — robust to truncated/
+    malformed JSON, so a half-finished response can never become a search query."""
+    subject, questions = "", []
+    # 1) Best case: a complete JSON object.
+    m = re.search(r"\{.*\}", raw, re.S)
+    if m:
+        try:
+            obj = json.loads(m.group(0))
+            subject = str(obj.get("subject", "")).strip()
+            questions = [str(q).strip() for q in obj.get("questions", []) if str(q).strip()]
+            if questions:
+                return subject, questions
+        except Exception:
+            pass
+    # 2) Salvage: regex the subject + the quoted strings inside a "questions" array,
+    #    even if the JSON is unterminated.
+    sm = re.search(r'"subject"\s*:\s*"((?:[^"\\]|\\.)*)"', raw)
+    if sm:
+        subject = sm.group(1).strip()
+    qm = re.search(r'"questions"\s*:\s*\[(.*)', raw, re.S)
+    if qm:
+        questions = [s.strip() for s in re.findall(r'"((?:[^"\\]|\\.)*)"', qm.group(1))]
+    if not questions:                       # 3) bare array or line-based fallback
+        questions = _parse_list(raw)
+    return subject, questions
+
+
+def _clean_questions(questions) -> list:
+    """Drop anything that isn't a real, searchable question (no JSON junk, no blobs)."""
+    out, seen = [], set()
+    for q in questions or []:
+        q = str(q).strip().strip('"').strip()
+        if not q or len(q) < 6 or len(q) > 240:
+            continue
+        if "{" in q or "}" in q or '"subject"' in q or '"questions"' in q:
+            continue
+        if not re.search(r"[A-Za-z]", q):
+            continue
+        k = q.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(q)
+    return out
 
 
 def _keyword_subject(topic: str) -> str:
@@ -354,14 +391,31 @@ def _synthesize(subject, collected, readings, provider, model, api_key, base_url
         "(matching the numbered snippets) or the source URL. Every nontrivial claim must "
         "cite a source. Flag thin or conflicting evidence; never invent facts. Structure: "
         "a one-paragraph Executive Summary, themed sections with findings, Key Takeaways "
-        "(bullets), then a numbered Sources list with URLs. " + lang
+        "(bullets), then a numbered Sources list with URLs. "
+        "Output ONLY the report as plain Markdown prose — do NOT call any tools and do "
+        "NOT emit any function-call or tool-call syntax. " + lang
     )
     try:
-        return complete_text(provider, model, api_key, base_url, sys, context,
-                             max_tokens=3500) or "(no report generated)"
+        out = complete_text(provider, model, api_key, base_url, sys, context,
+                            max_tokens=3500) or "(no report generated)"
+        return _strip_control_tokens(out)
     except Exception as e:
         logger.warning(f"synthesis failed: {e}")
         return f"(synthesis failed: {e})"
+
+
+def _strip_control_tokens(text: str) -> str:
+    """Remove tool-call/control-token leakage some models (e.g. MiniMax) emit as text."""
+    if not text:
+        return text
+    text = re.sub(r"<tool_call>.*?</tool_call>", "", text, flags=re.S | re.I)
+    text = re.sub(r"</?tool_call>", "", text, flags=re.I)
+    # Truncate at any remaining provider control marker — everything after is junk.
+    for marker in ("<tool_call", "]<]minimax", "]minimax[>", "<|tool", "<function_call"):
+        i = text.find(marker)
+        if i != -1:
+            text = text[:i]
+    return text.strip()
 
 
 def _sources(collected, readings):
