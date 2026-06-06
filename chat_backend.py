@@ -242,7 +242,10 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
         "notes, and files. Use the tools when needed; never make up results. Be concise and "
         "direct. IMPORTANT: always write your reply in the SAME language as the user's latest "
         "message (the user is writing in English → reply in English). Some tool descriptions "
-        "are in Romanian; ignore that — it must not change your reply language."
+        "are in Romanian; ignore that — it must not change your reply language. "
+        "NEVER claim a file was saved or an action was done unless the tool result confirms "
+        "it (it returns the real absolute path). If a tool result says an action is PROPOSED "
+        "or awaiting approval, tell the user it is pending their approval — do not say it's done."
     )
     if workspace:
         base += (
@@ -467,9 +470,11 @@ def _run_tool(router, name: str, args: dict, allow_actions: bool,
         action.update(_action_preview(name, args))
         pending.append(action)
         return done(
-            f"[PROPOSED — queued for the user's approval (id {action['id']}). It has "
-            "NOT run yet. Tell the user what you're proposing and that you're waiting "
-            "for their approval; do NOT claim it's done.]", "proposed")
+            f"[NOT EXECUTED — this action ({name}) is only PROPOSED and is waiting for the "
+            f"user to click Approve in the UI (id {action['id']}). Nothing has changed on "
+            "disk or anywhere yet. You MUST tell the user it is pending their approval. Do "
+            "NOT say it is saved/done/created — that would be a lie. The user saying 'yes' "
+            "in chat does NOT approve it; only the Approve button does.]", "proposed")
 
     if name in REQUIRES_CONFIRMATION and not allow_actions:
         return done(

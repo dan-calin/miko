@@ -429,8 +429,23 @@ def _find_start_menu_shortcut(name: str) -> Optional[Path]:
 
 # ── File operations ───────────────────────────────────────────────────────────
 
+def _resolve_ws(path: str) -> str:
+    """Resolve a relative path against the user's workspace folder, so a bare filename
+    lands where the prompt promises (the workspace) — not the server's working dir."""
+    if not path:
+        return path
+    if not Path(path).is_absolute():
+        ws = os.getenv("MIKO_WORKSPACE", "").strip()
+        if ws and os.path.isdir(ws):
+            return str(Path(ws) / path)
+    return path
+
+
 def file_op(action: str, path: str, destination: str = "", content: str = "") -> str:
     action = action.lower().strip()
+    path = _resolve_ws(path)
+    if destination:
+        destination = _resolve_ws(destination)
 
     # Safety check for write/delete operations
     if action in ("delete", "write", "move", "rename"):
@@ -466,7 +481,9 @@ def file_op(action: str, path: str, destination: str = "", content: str = "") ->
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
-            return f"Am creat fișierul '{path}', sefu."
+            if not p.exists():
+                return f"Write reported no error but the file is missing at {p.resolve()}."
+            return f"Created file at {p.resolve()} ({len(content)} chars)."
         except Exception as e:
             return f"N-am putut crea fișierul: {e}"
 
@@ -540,7 +557,9 @@ def file_op(action: str, path: str, destination: str = "", content: str = "") ->
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
-            return f"Am scris în fișierul '{p.name}', sefu."
+            if not p.exists():
+                return f"Write reported no error but the file is missing at {p.resolve()}."
+            return f"Wrote {len(content)} chars to {p.resolve()}."
         except Exception as e:
             return f"N-am putut scrie în fișier: {e}"
 
