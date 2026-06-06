@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pair programming — Miko directs Claude Code (CLI) as a coding teammate.** Miko is
+  the boss/instructor, Claude Code is the coder. Miko gives an instruction, Claude
+  implements it in a real repo and reports back, Miko reviews and pushes back, and they
+  iterate until a **two-way handshake** (Miko proposes done + Claude agrees). Drives the
+  installed `claude` CLI headlessly (`-p --output-format json`, fixed `--session-id` so
+  turns resume one conversation). Two modes: **Autonomous** (runs to the handshake) and
+  **Controlled** (pauses after each round to Approve the next one). **Every round is
+  git-checkpointed**, so any change is revertible from the UI with a per-round
+  **Revert** button (like `/undo`). New `⚒ Pair` toggle in the composer (project folder
+  + mode), a live transcript panel, and a `code_with_claude` tool for voice/mid-chat.
+  Endpoints: `POST /chat/code`, `/chat/code/continue`, `/chat/code/revert`.
+
 - **Live activity view + Stop button (streaming chat).** Chat now streams progress as
   it runs — a "Working" card shows each tool call live (`→ name(args) … ✓`) and which
   reasoning round Miko is on, collapsing to just the reply for plain answers. The send

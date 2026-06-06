@@ -308,6 +308,18 @@ are ranked and de-duplicated by domain. It writes a **cited** report and **saves
 note in `Resources/`** — so next time you ask, plain recall already knows it. The Chat UI streams
 live progress and you can **Stop** mid-run; by voice you get a spoken summary.
 
+### Pair programming — Miko ↔ Claude Code
+
+Miko can direct **Claude Code** (the CLI) as a coding teammate: **Miko = boss/instructor,
+Claude Code = coder.** Toggle **⚒ Pair** in the composer, point it at a project folder,
+pick **Autonomous** (run to completion) or **Controlled** (approve each round), and type a
+goal. Miko instructs → Claude implements in the repo and reports → Miko reviews and pushes
+back → they iterate until a **two-way handshake** (both agree it's done). It drives the
+installed `claude` CLI headlessly with a resumed session, and **git-checkpoints every
+round** so any change is **revertible from the UI** (per-round Revert button, like `/undo`).
+Needs Claude Code installed (`npm i -g @anthropic-ai/claude-code`). A `code_with_claude`
+tool exposes the same loop to voice / mid-chat.
+
 ### Live activity, Stop & sub-agents
 
 Normal chat **streams what Miko is doing** — a "Working" card shows each tool call as it runs
