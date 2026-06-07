@@ -2090,19 +2090,21 @@ const AS_THEME = {
 };
 
 async function loadAgentSkills() {
-  try { AS = await (await fetch('/chat/agent-skills')).json(); }
+  // Unified catalog (Phase 2): agents + skills (with pairs_with) + MCP capabilities.
+  try { AS = await (await fetch('/chat/catalog')).json(); }
   catch (e) { return; }   // offline — selector stays empty
+  AS.capabilities = AS.capabilities || [];
   buildASPop();
   renderASActive();
 }
 
-function asOptHTML(kind, id, title, desc, theme, sel) {
+function asOptHTML(kind, id, title, desc, theme, sel, extra) {
   const mark = sel ? (kind === 'agent' ? '●' : '✓') : '';
   const grp = theme ? `<span class="grp">${AS_THEME[theme] || theme}</span>` : '';
   const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
   return `<div class="as-opt ${kind === 'agent' ? 'radio' : ''} ${sel ? 'sel' : ''}" data-kind="${kind}" data-id="${id}">
     <span class="mark">${mark}</span>
-    <span class="body"><div class="ttl">${esc(title)}${grp}</div><div class="ds">${esc(desc)}</div></span>
+    <span class="body"><div class="ttl">${esc(title)}${grp}</div><div class="ds">${esc(desc)}</div>${extra || ''}</span>
   </div>`;
 }
 
@@ -2127,7 +2129,30 @@ function buildASPop() {
   html += asOptHTML('agent', '', 'None', 'Plain Miko — no persona overlay.', '', asAgent === '');
   AS.agents.forEach(a => { html += asOptHTML('agent', a.id, a.label, a.desc, a.theme, asAgent === a.id); });
   html += '<div class="as-sec-label">Skills · toggle any</div>';
-  AS.skills.forEach(s => { html += asOptHTML('skill', s.id, s.label, s.desc, s.theme, asSkills.includes(s.id)); });
+  AS.skills.forEach(s => {
+    let extra = '';
+    if (s.pairs_with && s.pairs_with.length) {
+      const parts = s.pairs_with.map(p => `${(p.id || '').replace(/[<>&]/g, '')}${p.installed ? ' ✓' : ' · add'}`);
+      extra = `<div style="font-size:11px;opacity:.6;margin-top:3px">⚡ pairs with: ${parts.join(', ')}</div>`;
+    }
+    html += asOptHTML('skill', s.id, s.label, s.desc, s.theme, asSkills.includes(s.id), extra);
+  });
+  // Capabilities (MCP servers) — informational; configured in data/mcp_servers.json.
+  // Not toggleable here (they're runnable tools, not prompt overlays), so no .as-opt class.
+  html += '<div class="as-sec-label">Capabilities · MCP servers (executable)</div>';
+  if (!AS.capabilities.length) {
+    html += '<div style="font-size:12px;opacity:.55;padding:6px 10px">None configured. Add servers in data/mcp_servers.json.</div>';
+  } else {
+    const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    AS.capabilities.forEach(c => {
+      const dot = c.connected ? '🟢' : '⚪';
+      const n = c.tool_count || 0;
+      html += `<div class="as-cap" style="display:flex;gap:8px;padding:7px 10px;opacity:.9;cursor:default">
+        <span style="width:14px;text-align:center">${dot}</span>
+        <span><div style="font-weight:600">${esc(c.label)} <span style="font-weight:400;opacity:.6;font-size:11px">${n} tool${n === 1 ? '' : 's'}</span></div>
+        <div style="font-size:12px;opacity:.65">${c.connected ? 'connected' : 'offline'} · ${esc(c.transport)}</div></span></div>`;
+    });
+  }
   pop.innerHTML = html;
 
   pop.querySelectorAll('.as-eff[data-eff]').forEach(el => el.addEventListener('click', () => {
