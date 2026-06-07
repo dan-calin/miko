@@ -199,13 +199,16 @@ def _miko(state: dict, user_msg: str) -> str:
         "write code yourself — you instruct and evaluate.\n"
         f"GOAL: {state['goal']}\n"
         + (f"RESEARCH/CONTEXT:\n{state['research'][:4000]}\n" if state.get("research") else "")
-        + "Keep instructions specific and bounded. When (and only when) you are convinced "
-        "the goal is fully and correctly met, reply with exactly 'DONE: <one-line summary>'."
+        + "Give EXACTLY ONE focused instruction per turn — never bundle multiple numbered "
+        "steps (the user approves each round, so there is always a next turn for the next "
+        "step). Keep each instruction specific, bounded, and COMPLETE (never trail off). "
+        "When (and only when) you are convinced the goal is fully and correctly met, reply "
+        "with exactly 'DONE: <one-line summary>'."
     )
     try:
         return (complete_text(state.get("provider", "gemini"), state.get("model", ""),
                               state.get("key", ""), state.get("base", ""),
-                              sys, user_msg, max_tokens=1200) or "").strip()
+                              sys, user_msg, max_tokens=2000) or "").strip()
     except Exception as e:
         logger.warning(f"miko turn failed: {e}")
         return f"(Miko could not respond: {e})"
@@ -250,15 +253,21 @@ def _step(state, should_cancel=None) -> dict:
     state["checkpoints"].append({"round": rnd, "snap": snap, "files": []})
     events.append({"type": "checkpoint", "round": rnd, "snap": snap})
 
+    # The user (Miko's boss) may inject direction for this round.
+    guide = (state.pop("guidance", "") or "").strip()
+    guide_block = (f"\n\nThe user (your boss) gives this direction for THIS step — follow "
+                   f"it: {guide}") if guide else ""
+
     # 1) Miko's instruction for this round.
     if rnd == 1:
-        instr = _miko(state, "Begin. Give Claude its first concrete instruction toward the goal.")
+        instr = _miko(state, "Begin. Give Claude its first concrete instruction toward the goal." + guide_block)
     else:
         last = state["history"][-1]["text"] if state["history"] else ""
         files = state["checkpoints"][-2]["files"] if len(state["checkpoints"]) > 1 else []
         instr = _miko(state,
             f"Claude's last report:\n{last[:2500]}\n\nFiles changed last round: {files}\n\n"
-            "Review it. Give the next concrete instruction, or reply 'DONE: ...' if the goal is fully met.")
+            "Review it. Give the next concrete instruction, or reply 'DONE: ...' if the goal "
+            "is fully met." + guide_block)
     state["history"].append({"role": "Miko", "text": instr})
     events.append({"type": "miko", "round": rnd, "text": instr})
 
@@ -298,14 +307,17 @@ def _step(state, should_cancel=None) -> dict:
     return {"events": events, "done": False}
 
 
-def run(token, should_cancel=None):
+def run(token, should_cancel=None, guidance=""):
     """Generator yielding the live pair-programming events. Autonomous mode loops to the
-    handshake; controlled mode runs one round then pauses for approval."""
+    handshake; controlled mode runs one round then pauses for approval. `guidance` is
+    optional user direction injected into the next round."""
     _load_registry()
     state = _SESSIONS.get(token)
     if not state:
         yield {"type": "error", "error": "Unknown session."}
         return
+    if guidance:
+        state["guidance"] = guidance
     state["status"] = "running"
     yield {"type": "status", "text": f"Pairing on: {state['goal'][:80]}"}
 

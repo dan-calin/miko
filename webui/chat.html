@@ -290,6 +290,9 @@
   .pc-approve { background: var(--amber); border: 1px solid var(--amber); color: #0b0b0b;
     border-radius: 4px; font-size: 12px; font-weight: 600; padding: 6px 14px; cursor: pointer; margin-top: 6px; }
   .pc-approve:hover { background: #d4b063; }
+  .pc-next { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .pc-next .pc-guide { width: 100%; }
+  .pc-next .pc-approve { margin-top: 0; align-self: flex-start; }
   .rs-card.act .rs-ic { animation: mkpulse 1.1s ease-in-out infinite; }
   .rs-card.act.done .rs-ic { animation: none; color: var(--green); }
   @keyframes mkpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
@@ -1438,10 +1441,14 @@ function pcCheckpoint(c, round, snap) {
 }
 
 function pcApprove(c) {
-  const el = document.createElement('div');
+  const el = document.createElement('div'); el.className = 'pc-next';
+  const gi = document.createElement('input'); gi.className = 'pair-dir pc-guide';
+  gi.type = 'text'; gi.placeholder = 'optional: tell Miko what to focus on next (e.g. "step 2 is the per-symbol WR reframe")';
   const b = document.createElement('button'); b.className = 'pc-approve'; b.textContent = '▶ Approve · next round';
-  b.addEventListener('click', () => { el.remove(); continueCode(c); });
-  el.appendChild(b); c.log.appendChild(el); chatEl.scrollTop = chatEl.scrollHeight;
+  b.addEventListener('click', () => { const g = gi.value.trim(); el.remove(); continueCode(c, g); });
+  gi.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); b.click(); } });
+  el.append(gi, b); c.log.appendChild(el); chatEl.scrollTop = chatEl.scrollHeight;
+  gi.focus();
 }
 
 function handleCodeEvent(c, ev) {
@@ -1500,8 +1507,8 @@ function sendCode(goal) {
   }, c);
 }
 
-function continueCode(c) {
-  streamCode('/chat/code/continue', { token: c.token }, c);
+function continueCode(c, guidance) {
+  streamCode('/chat/code/continue', { token: c.token, guidance: guidance || '' }, c);
 }
 
 async function clearChat() {

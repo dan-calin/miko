@@ -413,9 +413,10 @@ def _build_app():
         token = (body.get("token") or "").strip()
         if not token:
             return JSONResponse({"error": "Missing token."}, status_code=400)
+        guidance = (body.get("guidance") or "").strip()
 
         def factory(should_cancel):
-            return CC.run(token, should_cancel)
+            return CC.run(token, should_cancel, guidance=guidance)
 
         return _ndjson_stream(request, factory)
 
