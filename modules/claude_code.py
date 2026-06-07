@@ -224,6 +224,10 @@ def _miko(state: dict, user_msg: str) -> str:
         "not ask Claude to re-read a file it has already read, or re-locate files it has "
         "already located. If the information already exists in the conversation, USE it "
         "and move the work forward to the next concrete step. "
+        "In particular: the checklist, priorities, and any reference document already read "
+        "are SETTLED and remain in context — never ask to read, print, list, or re-state "
+        "them again. Every turn must be a NEW concrete action (locate something not yet "
+        "found, or write/modify code), not a re-confirmation of what is already known. "
         "When (and only when) you are convinced the goal is fully and correctly met, reply "
         "with exactly 'DONE: <one-line summary>'."
     )
@@ -264,6 +268,26 @@ def _miko_ledger(state, last_n=8) -> str:
     if done:
         parts.append("[FILES ALREADY CHANGED]\n" + "\n".join(done[-last_n:]))
     return "\n\n".join(parts)
+
+
+def _is_redundant(instr: str, state: dict, threshold: float = 0.82, last_n: int = 6) -> bool:
+    """Deterministic seatbelt behind the ledger: True if `instr` is a near-verbatim
+    repeat of a recent Miko instruction. Catches the literal broken-record case (e.g.
+    'read and display the checklist' issued again) so we can re-prompt instead of
+    spending an expensive Claude round on it. Lexical only (stdlib difflib) — the
+    semantic 'stop re-confirming priorities' case is handled by the system prompt."""
+    import difflib
+    if not instr or instr.strip().upper().startswith("DONE:"):
+        return False
+    norm = lambda s: " ".join(s.lower().split())
+    cur = norm(instr)
+    if len(cur) < 12:
+        return False
+    prior = [norm(h["text"]) for h in state.get("history", []) if h.get("role") == "Miko"]
+    return any(
+        difflib.SequenceMatcher(None, cur, p).ratio() >= threshold
+        for p in prior[-last_n:]
+    )
 
 
 def start_session(repo, goal, mode="autonomous", research="", provider="gemini",
@@ -314,12 +338,21 @@ def _step(state, should_cancel=None) -> dict:
         files = state["checkpoints"][-2]["files"] if len(state["checkpoints"]) > 1 else []
         ledger = _miko_ledger(state)
         ledger_block = f"{ledger}\n\n" if ledger else ""
-        instr = _miko(state,
+        base_msg = (
             f"{ledger_block}"
             f"Claude's last report:\n{last[:2500]}\n\nFiles changed last round: {files}\n\n"
             "Review it. Give the next concrete instruction that ADVANCES the work (not one "
             "already in your ledger above), or reply 'DONE: ...' if the goal is fully met."
             + guide_block)
+        instr = _miko(state, base_msg)
+        # Seatbelt behind the ledger: if Miko still produced a near-verbatim repeat,
+        # push it once for a distinct next step before spending a Claude round on it.
+        if _is_redundant(instr, state):
+            logger.info("Miko instruction was redundant — re-prompting for a distinct step.")
+            instr = _miko(state, base_msg + "\n\nNOTE: that repeats an instruction you "
+                          "already gave. Do NOT re-read, re-list, or re-locate anything "
+                          "already covered. Give a DIFFERENT concrete action that moves the "
+                          "work FORWARD, or 'DONE: ...'.")
     state["history"].append({"role": "Miko", "text": instr})
     events.append({"type": "miko", "round": rnd, "text": instr})
 
