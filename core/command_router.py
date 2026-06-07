@@ -245,6 +245,10 @@ class CommandRouter:
                 from modules.discord_bot import leave_voice
                 return leave_voice()
 
+            if tool_name == "reconnect_discord":
+                from modules.discord_bot import reconnect_discord
+                return reconnect_discord()
+
             if tool_name == "stop_audio":
                 from modules.discord_bot import stop_audio
                 return stop_audio()

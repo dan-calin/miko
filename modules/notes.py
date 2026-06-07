@@ -151,7 +151,7 @@ class NotesManager:
                 )
                 logger.info(f"Appended to note: {filepath.name}")
                 _index_note(filepath)
-                return f"Am adăugat la notița '{filepath.stem}', sefu."
+                return f"Am adăugat la notița '{filepath.stem}' ({filepath.parent}), sefu."
             else:
                 body = frontmatter
                 if title:
@@ -160,7 +160,7 @@ class NotesManager:
                 filepath.write_text(body, encoding="utf-8")
                 logger.info(f"Created note: {filepath.name}")
                 _index_note(filepath)
-                return f"Am creat notița '{filename}', sefu."
+                return f"Am creat notița '{filename}' în {filepath.parent}, sefu."
 
     def read_note(self, title: str) -> str:
         if not title:

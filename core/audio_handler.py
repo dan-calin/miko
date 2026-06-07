@@ -57,15 +57,16 @@ class AudioHandler:
         """
         Inject text into the live session so Miko speaks it aloud.
         Thread-safe — can be called from any daemon thread.
+
+        Uses send_realtime_input(text=) instead of send_client_content to avoid
+        interleaving ordered and realtime channels on the same session, which
+        gemini-3.1-flash-live-preview rejects with 'invalid argument'.
         """
         if not self._loop or not self.session:
             return
         try:
             asyncio.run_coroutine_threadsafe(
-                self.session.send_client_content(
-                    turns={"parts": [{"text": text}]},
-                    turn_complete=True,
-                ),
+                self.session.send_realtime_input(text=text),
                 self._loop,
             )
         except Exception as e:
@@ -238,7 +239,7 @@ class AudioHandler:
         """Forwards mic queue chunks to the Gemini Live WebSocket."""
         while True:
             msg = await self.out_queue.get()
-            await self.session.send_realtime_input(media=msg)
+            await self.session.send_realtime_input(audio=msg)
 
     async def _play_audio(self) -> None:
         """Plays audio received from Gemini in real time."""
@@ -332,8 +333,10 @@ class AudioHandler:
                             if full_out and (not _standby or _wake):
                                 print(f"[Miko] {full_out}")
 
-                            # Trigger memory extraction every N turns
-                            if full_in and len(full_in) > 5:
+                            # Trigger memory extraction every N turns — but NOT for
+                            # ambient speech in STANDBY/MUTE (no wake word), so passing
+                            # conversation doesn't get ingested as if you talked to Miko.
+                            if full_in and len(full_in) > 5 and (not _standby or _wake):
                                 from memory.memory_manager import update_from_conversation_async
                                 update_from_conversation_async(
                                     self._memory_file,
@@ -348,12 +351,28 @@ class AudioHandler:
 
                     # ── Tool calls ───────────────────────────────────────────
                     if response.tool_call:
-                        responses = []
-                        for fc in response.tool_call.function_calls:
-                            logger.info(f"Tool call: {fc.name}")
-                            fr = await self._execute_tool(fc)
-                            responses.append(fr)
-                        await self.session.send_tool_response(function_responses=responses)
+                        # STANDBY/MUTE guard: the model hears everything (we need the
+                        # audio to detect the wake word), but it must NOT *act* on what
+                        # it hears unless this turn was woken. Otherwise ambient speech
+                        # like "send a message…" gets executed silently by accident.
+                        if _standby and not _wake:
+                            blocked = []
+                            for fc in response.tool_call.function_calls:
+                                logger.info(f"STANDBY blocked tool (no wake word): {fc.name}")
+                                blocked.append(types.FunctionResponse(
+                                    id=fc.id,
+                                    name=fc.name,
+                                    response={"result": "Ignored: Miko is in standby and "
+                                              "was not addressed (no wake word). Take no action."},
+                                ))
+                            await self.session.send_tool_response(function_responses=blocked)
+                        else:
+                            responses = []
+                            for fc in response.tool_call.function_calls:
+                                logger.info(f"Tool call: {fc.name}")
+                                fr = await self._execute_tool(fc)
+                                responses.append(fr)
+                            await self.session.send_tool_response(function_responses=responses)
 
         except Exception as e:
             logger.error(f"Receive loop error: {e}")

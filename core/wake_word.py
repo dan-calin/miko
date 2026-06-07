@@ -10,10 +10,15 @@ import unicodedata
 # All accepted forms of the wake word (STT often mishears accents/names)
 # NOTE: "micro" removed — too many false positives (microphone, Microsoft, etc.)
 # "mika" added — common STT mishear of "miko"
+# Core name + the spellings Gemini's STT most often emits for "Miko" (Romanian
+# accent included). Each missed spelling = another shout, so be generous here;
+# a false wake in STANDBY is mild (you just get a reply you didn't ask for).
 _WAKE_PATTERNS = re.compile(
-    r"\b(miko|mico|myko|mika|"
+    r"\b("
+    r"miko|mico|myko|mika|meeko|mikko|meeco|miyko|mihko|meko|micko|"
     r"alo\s+(miko|mika)|hey\s+(miko|mika)|"
-    r"hei\s+(miko|mika)|salut\s+miko|buna\s+miko)\b",
+    r"hei\s+(miko|mika)|salut\s+miko|buna\s+miko"
+    r")\b",
     re.IGNORECASE,
 )
 

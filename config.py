@@ -98,7 +98,7 @@ def load_config() -> MikoConfig:
         minimax_model=os.getenv("MINIMAX_MODEL", "MiniMax-Text-01"),
         live_model=os.getenv(
             "LIVE_MODEL",
-            "models/gemini-2.5-flash-native-audio-preview-12-2025"
+            "models/gemini-3.1-flash-live-preview"
         ),
         voice_name=os.getenv("MIKO_VOICE", "Aoede"),
         owner_name=os.getenv("OWNER_NAME", "Roxan"),

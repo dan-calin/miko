@@ -219,6 +219,11 @@ def _miko(state: dict, user_msg: str) -> str:
         + "Give EXACTLY ONE focused instruction per turn — never bundle multiple numbered "
         "steps (the user approves each round, so there is always a next turn for the next "
         "step). Keep each instruction specific, bounded, and COMPLETE (never trail off). "
+        "You will be shown a ledger of the instructions you have ALREADY given and the "
+        "files already changed. NEVER repeat an instruction that is in that ledger — do "
+        "not ask Claude to re-read a file it has already read, or re-locate files it has "
+        "already located. If the information already exists in the conversation, USE it "
+        "and move the work forward to the next concrete step. "
         "When (and only when) you are convinced the goal is fully and correctly met, reply "
         "with exactly 'DONE: <one-line summary>'."
     )
@@ -233,6 +238,32 @@ def _miko(state: dict, user_msg: str) -> str:
 
 def _history_str(state, last_n=6) -> str:
     return "\n\n".join(f"{h['role']}: {h['text'][:1200]}" for h in state["history"][-last_n:])
+
+
+def _miko_ledger(state, last_n=8) -> str:
+    """Compact self-memory for Miko: the instructions it has ALREADY issued, plus the
+    files actually changed per round.
+
+    Without this, _miko only sees Claude's latest report and — having no memory of its
+    own prior turns — keeps re-issuing settled instructions ('re-read the checklist',
+    're-locate the files'), burning an expensive Claude round each time on pure
+    re-orientation. The ledger lets Miko see it already covered that ground and advance.
+    """
+    instrs = [h["text"] for h in state.get("history", []) if h.get("role") == "Miko"]
+    parts = []
+    if instrs:
+        shown = instrs[-last_n:]
+        base = len(instrs) - len(shown) + 1
+        lines = [f"  {base + i}. {' '.join(t.split())[:160]}" for i, t in enumerate(shown)]
+        parts.append(
+            "[INSTRUCTIONS YOU HAVE ALREADY GIVEN — do NOT repeat any of these; build on "
+            "them and advance the work]\n" + "\n".join(lines)
+        )
+    done = [f"  R{cp.get('round')}: {', '.join(cp['files'])}"
+            for cp in state.get("checkpoints", []) if cp.get("files")]
+    if done:
+        parts.append("[FILES ALREADY CHANGED]\n" + "\n".join(done[-last_n:]))
+    return "\n\n".join(parts)
 
 
 def start_session(repo, goal, mode="autonomous", research="", provider="gemini",
@@ -281,10 +312,14 @@ def _step(state, should_cancel=None) -> dict:
     else:
         last = state["history"][-1]["text"] if state["history"] else ""
         files = state["checkpoints"][-2]["files"] if len(state["checkpoints"]) > 1 else []
+        ledger = _miko_ledger(state)
+        ledger_block = f"{ledger}\n\n" if ledger else ""
         instr = _miko(state,
+            f"{ledger_block}"
             f"Claude's last report:\n{last[:2500]}\n\nFiles changed last round: {files}\n\n"
-            "Review it. Give the next concrete instruction, or reply 'DONE: ...' if the goal "
-            "is fully met." + guide_block)
+            "Review it. Give the next concrete instruction that ADVANCES the work (not one "
+            "already in your ledger above), or reply 'DONE: ...' if the goal is fully met."
+            + guide_block)
     state["history"].append({"role": "Miko", "text": instr})
     events.append({"type": "miko", "round": rnd, "text": instr})
 

@@ -62,7 +62,13 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "open_url",
-        "description": "Deschide un URL în browserul implicit.",
+        "description": (
+            "Deschide un URL sau o adresă locală în browserul implicit al userului. "
+            "Folosește ASTA ori de câte ori userul zice 'deschide <site/pagină/interfața ta web>' "
+            "— inclusiv adrese localhost (ex: http://localhost:7832/chat). "
+            "Doar lansează browserul — NU descarcă pagina și NU verifică dacă s-a încărcat, "
+            "deci nu inventa erori de conexiune. Spune EXACT ce returnează unealta, nimic în plus."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
@@ -194,11 +200,25 @@ def deep_research(topic: str, effort: str = "standard") -> str:
 
 
 def open_url(url: str) -> str:
+    import os
+    u = (url or "").strip().strip("<>\"'")
+    if not u:
+        return "Nu mi-ai dat niciun URL de deschis, sefu."
+    # Add a scheme so the OS opens it as a URL (default browser), not a file path.
+    if "://" not in u:
+        u = "http://" + u
     try:
-        webbrowser.open(url)
-        return f"Am deschis {url} în browser, sefu."
+        if os.name == "nt":
+            # Hands the URL to the default browser via the shell and RAISES if the
+            # association/launch fails — so we never claim success falsely.
+            os.startfile(u)
+            return f"Am deschis {u} în browser, sefu."
+        # POSIX: webbrowser.open returns False when no browser could be launched.
+        if webbrowser.open(u):
+            return f"Am deschis {u} în browser, sefu."
+        return f"N-am putut deschide {u} — n-am găsit un browser disponibil, sefu."
     except Exception as e:
-        return f"N-am putut deschide URL-ul: {e}"
+        return f"N-am putut deschide URL-ul {u}: {e}"
 
 
 def weather(city: str = "") -> str:

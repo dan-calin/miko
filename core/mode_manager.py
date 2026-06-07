@@ -188,13 +188,17 @@ class ModeManager:
             if is_en:
                 return (
                     "\n\n[CURRENT MODE: STANDBY]\n"
-                    "You are in STANDBY. Do NOT respond to ANYTHING you hear in the background. "
-                    "Respond ONLY when you directly hear 'Miko' or 'Hey Miko'."
+                    "Ignore background conversation that isn't addressed to you. "
+                    "But the MOMENT you hear your name — 'Miko', 'Hey Miko', or anything "
+                    "close to it — respond right away and act on the request. Don't stay "
+                    "silent, don't second-guess, and don't wait to be called twice."
                 )
             return (
                 "\n\n[MODUL CURENT: STANDBY]\n"
-                "Ești în STANDBY. NU răspunzi la NIMIC din ce auzi ambiental. "
-                "Răspunzi EXCLUSIV când auzi direct 'Miko' sau 'Hey Miko'."
+                "Ignoră conversațiile ambientale care nu ți se adresează. "
+                "Dar ÎN MOMENTUL în care îți auzi numele — 'Miko', 'Hey Miko' sau ceva "
+                "apropiat — răspunde imediat și execută cererea. Nu tăcea, nu sta pe gânduri "
+                "și nu aștepta să fii strigat de două ori."
             )
         if mode == Mode.AUTO:
             if is_en:

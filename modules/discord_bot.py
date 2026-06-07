@@ -134,6 +134,15 @@ TOOL_DECLARATIONS = [
         "parameters": {"type": "OBJECT", "properties": {}},
     },
     {
+        "name": "reconnect_discord",
+        "description": (
+            "Reconectează botul la Discord de la zero (sesiune nouă) FĂRĂ a reporni aplicația. "
+            "Folosește când Discord pare 'blocat' — de ex. spui că ești pe voice dar botul nu te vede, "
+            "sau nu mai primește mesaje. Repară starea învechită fără restart."
+        ),
+        "parameters": {"type": "OBJECT", "properties": {}},
+    },
+    {
         "name": "speak_on_discord",
         "description": "Dictează un text prin TTS în voice channel-ul Discord.",
         "parameters": {
@@ -190,8 +199,8 @@ intents                 = discord.Intents.default()
 intents.members         = True
 intents.message_content = True
 intents.presences       = True
+intents.voice_states    = True   # explicit: needed to see who's sitting in voice channels
 
-bot    = discord.Client(intents=intents)
 _loop: Optional[asyncio.AbstractEventLoop] = None
 _ready = threading.Event()
 
@@ -243,79 +252,92 @@ _load_contacts()
 
 # ── Bot events ────────────────────────────────────────────────────────────────
 
-@bot.event
-async def on_ready():
-    global _start_time
-    _start_time = _dt.datetime.now(_dt.timezone.utc)
-    logger.info(f"Discord bot online as '{bot.user}' | Guild: {GUILD_ID}")
-    _ready.set()
+def _build_bot() -> discord.Client:
+    """
+    Create a fresh client with its event handlers registered. Re-callable so
+    `reconnect_discord()` can stand up a brand-new gateway session (a full
+    IDENTIFY → fresh GUILD_CREATE → current voice states) without restarting
+    the whole app. Handlers close over `client`, not the module global, so they
+    keep working on the new instance even before `bot` is reassigned.
+    """
+    client = discord.Client(intents=intents)
 
+    @client.event
+    async def on_ready():
+        global _start_time
+        _start_time = _dt.datetime.now(_dt.timezone.utc)
+        logger.info(f"Discord bot online as '{client.user}' | Guild: {GUILD_ID}")
+        _ready.set()
 
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author == bot.user:
-        return
-    if _start_time and message.created_at < _start_time:
-        return
+    @client.event
+    async def on_message(message: discord.Message):
+        if message.author == client.user:
+            return
+        if _start_time and message.created_at < _start_time:
+            return
 
-    if isinstance(message.channel, discord.DMChannel):
-        sender = message.author.display_name
-        audio_data = None
-        content = message.content
+        if isinstance(message.channel, discord.DMChannel):
+            sender = message.author.display_name
+            audio_data = None
+            content = message.content
 
-        for attachment in message.attachments:
-            is_voice = False
-            if attachment.content_type and attachment.content_type.startswith("audio/"):
-                is_voice = True
-            else:
-                try:
-                    if attachment.flags.value & 8192:
-                        is_voice = True
-                except Exception:
-                    pass
+            for attachment in message.attachments:
+                is_voice = False
+                if attachment.content_type and attachment.content_type.startswith("audio/"):
+                    is_voice = True
+                else:
+                    try:
+                        if attachment.flags.value & 8192:
+                            is_voice = True
+                    except Exception:
+                        pass
 
-            if is_voice:
-                try:
-                    audio_bytes = await attachment.read()
-                    mime = attachment.content_type or "audio/ogg"
-                    audio_data = (audio_bytes, mime)
-                    content = "[Voice message]"
-                    logger.debug(f"Voice DM from {sender}: {mime}, {len(audio_bytes)} bytes")
-                except Exception as e:
-                    logger.warning(f"Failed to read voice attachment from {sender}: {e}")
-                break
+                if is_voice:
+                    try:
+                        audio_bytes = await attachment.read()
+                        mime = attachment.content_type or "audio/ogg"
+                        audio_data = (audio_bytes, mime)
+                        content = "[Voice message]"
+                        logger.debug(f"Voice DM from {sender}: {mime}, {len(audio_bytes)} bytes")
+                    except Exception as e:
+                        logger.warning(f"Failed to read voice attachment from {sender}: {e}")
+                    break
 
-        _message_queue.append((sender, content, True, audio_data))
-        _save_contact(sender)
-        if audio_data is None:
-            logger.debug(f"DM from {sender}: {content[:60]}")
+            _message_queue.append((sender, content, True, audio_data))
+            _save_contact(sender)
+            if audio_data is None:
+                logger.debug(f"DM from {sender}: {content[:60]}")
 
-    elif bot.user in message.mentions:
-        sender  = message.author.display_name
-        _message_queue.append((sender, message.content, False, None))
-        _save_contact(sender)
-        logger.debug(f"Mention from {sender}")
+        elif client.user in message.mentions:
+            sender  = message.author.display_name
+            _message_queue.append((sender, message.content, False, None))
+            _save_contact(sender)
+            logger.debug(f"Mention from {sender}")
 
-
-@bot.event
-async def on_voice_state_update(
-    member: discord.Member,
-    before: discord.VoiceState,
-    after: discord.VoiceState,
-):
-    global _pending_call_target
-    if member == bot.user:
-        return
-    if (
-        after.channel is not None
-        and (before.channel is None or before.channel != after.channel)
-        and _pending_call_target
+    @client.event
+    async def on_voice_state_update(
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
     ):
-        tgt = _pending_call_target.lower()
-        if member.display_name.lower() == tgt or member.name.lower() == tgt:
-            _voice_notifications.append(f"{member.display_name} a intrat pe voice, sefu!")
-            logger.info(f"{member.display_name} joined voice — call answered")
-            _pending_call_target = None
+        global _pending_call_target
+        if member == client.user:
+            return
+        if (
+            after.channel is not None
+            and (before.channel is None or before.channel != after.channel)
+            and _pending_call_target
+        ):
+            tgt = _pending_call_target.lower()
+            if member.display_name.lower() == tgt or member.name.lower() == tgt:
+                _voice_notifications.append(f"{member.display_name} a intrat pe voice, sefu!")
+                logger.info(f"{member.display_name} joined voice — call answered")
+                _pending_call_target = None
+
+    return client
+
+
+bot = _build_bot()
 
 
 # ── Bot startup ───────────────────────────────────────────────────────────────
@@ -340,6 +362,38 @@ def start() -> None:
 
 def is_ready() -> bool:
     return _ready.is_set()
+
+
+def reconnect_discord() -> str:
+    """
+    Force a fresh gateway session without restarting the app. Closes the current
+    client and starts a brand-new one, which re-IDENTIFIES and pulls a fresh
+    GUILD_CREATE — the only thing that recovers voice states the old session
+    missed (the 'I don't see you in voice until you restart me' case).
+    """
+    global bot, _voice_client
+    if not TOKEN:
+        return "Discord nu e configurat, sefu."
+
+    old_bot, old_loop = bot, _loop
+    _ready.clear()
+
+    # Tear down the old session on its own loop; that ends its run thread cleanly.
+    if old_bot is not None and old_loop is not None and not old_loop.is_closed():
+        try:
+            fut = asyncio.run_coroutine_threadsafe(old_bot.close(), old_loop)
+            fut.result(timeout=10)
+        except Exception as e:
+            logger.debug(f"old client close during reconnect: {e}")
+    _voice_client = None
+
+    # Fresh client + fresh thread/loop.
+    bot = _build_bot()
+    start()
+
+    if _ready.wait(timeout=20):
+        return "M-am reconectat la Discord, sefu — văd din nou cine e pe voice."
+    return "Am repornit conexiunea Discord, dar încă se sincronizează, sefu. Mai încearcă în câteva secunde."
 
 
 # ── Cross-thread coroutine runner ─────────────────────────────────────────────
@@ -395,6 +449,39 @@ def _find_owner_voice_channel(owner_name: str) -> Optional[discord.VoiceChannel]
             if m.voice and m.voice.channel:
                 return m.voice.channel
     return None
+
+
+async def _resolve_owner_vc_fresh(owner_name: str) -> Optional[discord.VoiceChannel]:
+    """
+    Failure-path self-heal for a stale member/voice cache: force a member chunk on
+    the bot's own loop, then re-scan. Catches the common 'members weren't chunked
+    yet' case that otherwise needs a full restart. Runs ON the bot loop, so awaiting
+    guild.chunk() is safe. (Note: this can't recover voice states the gateway never
+    delivered — only a reconnect fixes that.)
+    """
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return None
+    try:
+        if not guild.chunked:
+            await guild.chunk()
+    except Exception as e:
+        logger.debug(f"chunk() during voice resolve failed: {e}")
+    owner_l = owner_name.lower()
+    for m in guild.members:
+        if (m.display_name.lower() == owner_l or m.name.lower() == owner_l) \
+                and m.voice and m.voice.channel:
+            return m.voice.channel
+    return None
+
+
+def _resolve_owner_vc(owner_name: str) -> Optional[discord.VoiceChannel]:
+    """Cache lookup first; on a miss, chunk-and-retry on the bot loop once."""
+    vc = _find_owner_voice_channel(owner_name)
+    if vc:
+        return vc
+    fresh = _run_coro(_resolve_owner_vc_fresh(owner_name), timeout=20)
+    return fresh if isinstance(fresh, discord.VoiceChannel) else None
 
 
 def resolve_voice_channel(name: str) -> Optional[tuple]:
@@ -532,7 +619,7 @@ def get_dm_history(user_name: str, limit: int = 5) -> str:
 def join_voice(owner_name: str = "Roxan") -> str:
     from config import CONFIG
     owner = owner_name or CONFIG.owner_name
-    vc    = _find_owner_voice_channel(owner)
+    vc    = _resolve_owner_vc(owner)
     if not vc:
         return "Nu ești pe niciun canal de voice, sefu."
 
@@ -570,7 +657,7 @@ def leave_voice() -> str:
 def call_discord(person_name: str, owner_name: str = "Roxan") -> str:
     from config import CONFIG
     owner = owner_name or CONFIG.owner_name
-    vc    = _find_owner_voice_channel(owner)
+    vc    = _resolve_owner_vc(owner)
     if not vc:
         return "Sefu, nu ești conectat la niciun voice channel. Intră undeva și apoi cheamă-l!"
     member = _find_member(person_name)
@@ -608,7 +695,7 @@ def call_discord(person_name: str, owner_name: str = "Roxan") -> str:
 def stream_youtube_on_voice(song_name: str, owner_name: str = "Roxan") -> str:
     from config import CONFIG
     owner = owner_name or CONFIG.owner_name
-    vc    = _find_owner_voice_channel(owner)
+    vc    = _resolve_owner_vc(owner)
     if not vc:
         return "Sefu, nu ești conectat la niciun voice channel. Intră undeva și apoi dă comanda!"
 
@@ -734,7 +821,7 @@ def speak_on_discord(text: str, owner_name: str = "Roxan") -> str:
     if not text:
         return "Nu am primit text pentru a vorbi, sefu."
     owner = owner_name or CONFIG.owner_name
-    vc    = _find_owner_voice_channel(owner)
+    vc    = _resolve_owner_vc(owner)
     if not vc:
         return "Sefu, nu ești conectat la niciun voice channel."
 
