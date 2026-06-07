@@ -2165,11 +2165,14 @@ loadAgentSkills();
 renderMonitor();
 loadModels().then(() => input.focus());
 // Restore the last conversation (if it still has messages), then list all.
-fetch('/chat/conversation?id=' + encodeURIComponent(sessionId))
-  .then(r => r.ok ? r.json() : null)
-  .then(conv => { if (conv && conv.messages && conv.messages.length) openConversation(sessionId); })
-  .catch(() => {})
-  .finally(() => { loadConversations(); restorePairSession(); });
+(async () => {
+  try {
+    const conv = await (await fetch('/chat/conversation?id=' + encodeURIComponent(sessionId))).json();
+    if (conv && conv.messages && conv.messages.length) await openConversation(sessionId);
+  } catch (e) { /* ignore */ }
+  loadConversations();
+  await restorePairSession();   // append the active pair card LAST so nothing wipes it
+})();
 // Workspace deep link: ?workspace[=<folder-or-file>].
 if (URLP.has('workspace')) {
   const wp = URLP.get('workspace');

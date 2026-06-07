@@ -181,7 +181,9 @@ def _build_app():
         from pathlib import Path
         html_path = Path(__file__).resolve().parent / "webui" / "chat.html"
         try:
-            return HTMLResponse(html_path.read_text(encoding="utf-8"))
+            # no-store so a server restart always serves the latest UI (no stale cache)
+            return HTMLResponse(html_path.read_text(encoding="utf-8"),
+                                headers={"Cache-Control": "no-store, max-age=0"})
         except Exception as e:
             return PlainTextResponse(f"Chat UI not found: {e}", status_code=500)
 
