@@ -43,6 +43,17 @@ _EFFORT = {
     "deep":     {"rounds": 3, "subq": 6, "results": 8, "fetch": 14, "chars": 4000, "workers": 8},
 }
 
+# Conservative profiles above are tuned for Gemini's free tier (5–15 RPM): every extra
+# round/sub-question is another planning + synthesis LLM call, so we stay modest. On a
+# high-throughput provider (MiniMax et al.) the rate-limit governor comes off, so we run
+# meaningfully wider — more rounds, more sub-questions/sources, and longer page extracts.
+_HIGH_THROUGHPUT = {"minimax", "openai", "anthropic", "deepseek", "kimi"}
+_EFFORT_HIGH = {
+    "quick":    {"rounds": 1, "subq": 4, "results": 6,  "fetch": 6,  "chars": 4000, "workers": 6},
+    "standard": {"rounds": 2, "subq": 6, "results": 8,  "fetch": 12, "chars": 6000, "workers": 8},
+    "deep":     {"rounds": 4, "subq": 8, "results": 10, "fetch": 20, "chars": 8000, "workers": 10},
+}
+
 _STOP = {
     "ok", "okay", "so", "we", "have", "this", "that", "the", "a", "an", "is", "are",
     "it", "its", "but", "and", "or", "i", "you", "miko", "please", "can", "could",
@@ -60,7 +71,8 @@ def run(topic, provider, model, api_key="", base_url="", language="en",
     should_cancel: optional zero-arg callable returning True to abort cooperatively.
     """
     from modules import research as R
-    cfg = _EFFORT.get(effort, _EFFORT["standard"])
+    table = _EFFORT_HIGH if (provider or "").lower() in _HIGH_THROUGHPUT else _EFFORT
+    cfg = table.get(effort, table["standard"])
     overlay = _overlay(agent, skills)
 
     def cancelled():

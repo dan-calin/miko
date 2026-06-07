@@ -2121,7 +2121,7 @@ function buildASPop() {
   html += '</div>';
   html += '<div class="as-sec-label">Research engine · model for deep research</div><div class="as-effort as-research">';
   [['gemini-3.5-flash', '3.5 Flash'], ['gemini-3.1-flash-lite', '3.1 Lite · 500/day'],
-   ['gemini-2.5-flash', '2.5 Flash'], ['chat', 'Chat model']].forEach(([v, lab]) => {
+   ['gemini-2.5-flash', '2.5 Flash'], ['minimax', 'MiniMax · wider/deep'], ['chat', 'Chat model']].forEach(([v, lab]) => {
     html += `<button type="button" class="as-eff${asResearch === v ? ' on' : ''}" data-research="${v}">${lab}</button>`;
   });
   html += '</div>';

@@ -335,7 +335,13 @@ def _build_app():
         # JSON planning/synthesis) decoupled from the chat model. "chat" = use chat model.
         rm = body.get("research_model", "gemini-3.5-flash")
         rm = (rm or "").strip()
-        if rm and rm != "chat":
+        if rm == "minimax":
+            # High rate limit → deep research runs wider (see _EFFORT_HIGH).
+            r_provider = "minimax"
+            r_model = getattr(CONFIG, "minimax_model", "") or "MiniMax-Text-01"
+            r_key = getattr(CONFIG, "minimax_api_key", "")
+            r_base = getattr(CONFIG, "minimax_base_url", "")
+        elif rm and rm != "chat":
             r_provider, r_model, r_key, r_base = "gemini", rm, "", ""   # uses LLM_API_KEY via env
         else:
             r_provider, r_model, r_key, r_base = provider, model, api_key, base_url
@@ -381,8 +387,15 @@ def _build_app():
             return JSONResponse({"error": "Need a project_dir and a goal."}, status_code=400)
         mode = "controlled" if body.get("mode") == "controlled" else "autonomous"
         rm = (body.get("research_model") or "gemini-3.5-flash").strip()
-        if rm == "chat":
+        base = ""
+        if rm == "minimax":
+            provider = "minimax"
+            model = getattr(CONFIG, "minimax_model", "") or "MiniMax-Text-01"
+            key = getattr(CONFIG, "minimax_api_key", "")
+            base = getattr(CONFIG, "minimax_base_url", "")
+        elif rm == "chat":
             provider, model, key = body.get("provider", "gemini"), body.get("model", ""), body.get("api_key", "")
+            base = body.get("base_url", "")
         else:
             provider, model, key = "gemini", rm, ""
         max_rounds = int(body.get("max_rounds") or 6)
@@ -390,7 +403,7 @@ def _build_app():
 
         started = CC.start_session(project_dir, goal, mode=mode, research=research,
                                    provider=provider, model=model, api_key=key,
-                                   max_rounds=max_rounds)
+                                   base_url=base, max_rounds=max_rounds)
         if started.get("error"):
             return JSONResponse({"error": started["error"]}, status_code=400)
         token = started["token"]
