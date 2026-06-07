@@ -257,7 +257,7 @@ def _run_fanout(topic, provider, model, api_key, base_url, language, overlay, cf
             if cancelled():
                 yield {"type": "cancelled"}; return
             yield {"type": "status", "text": f"Writing section {i}/{len(sections)}: {title}"}
-            body = _write_section(subject, title, i, context,
+            body = _write_section(subject, title, i, sections, context,
                                   provider, model, api_key, base_url, lang, overlay)
             if body:
                 parts.append(body)
@@ -375,17 +375,21 @@ def _plan_outline(subject, briefs, provider, model, api_key, base_url, overlay):
     return []
 
 
-def _write_section(subject, title, idx, context, provider, model, api_key, base_url, lang, overlay):
+def _write_section(subject, title, idx, all_titles, context, provider, model, api_key, base_url, lang, overlay):
     """Write ONE report section from the briefings — its own call, so it never truncates."""
+    others = "; ".join(t for t in all_titles if t != title)
     sys = (overlay +
         f"You are writing ONE section of a research report on '{subject}', titled "
         f"'{title}'. Using ONLY the branch briefings provided, write a thorough, "
         f"well-structured section in {lang} for THAT title: integrate the relevant "
         "findings, keep inline [n]/URL citations, be specific (numbers, names, mechanisms), "
-        "and flag thin or conflicting evidence. Do NOT write other sections, an "
-        "introduction, or a conclusion. Output Markdown prose only — no tool-call syntax.")
+        "and flag thin or conflicting evidence. "
+        f"The report's OTHER sections are: {others}. Cover ONLY your own section — do not "
+        "duplicate material (or re-quote the same headline statistics) that belongs to "
+        "those. Do NOT write an introduction or conclusion. Finish your last sentence "
+        "(never trail off). Output Markdown prose only — no tool-call syntax.")
     body = _strip_control_tokens(_complete(provider, model, api_key, base_url, sys,
-                                           context, max_tokens=2200) or "").strip()
+                                           context, max_tokens=3200) or "").strip()
     if not body:
         return ""
     if not body.lstrip().startswith("#"):
@@ -400,9 +404,9 @@ def _exec_summary(subject, section_parts, provider, model, api_key, base_url, la
         f"Write a tight 1-2 paragraph EXECUTIVE SUMMARY in {lang} for a research report on "
         f"'{subject}', from the section drafts provided. Lead with the most important, "
         "concrete findings (key numbers and conclusions). No heading, no citation list, "
-        "no fluff. Markdown prose only.")
+        "no fluff. Finish your last sentence. Markdown prose only.")
     return _strip_control_tokens(_complete(provider, model, api_key, base_url, sys,
-                                           joined, max_tokens=600) or "").strip()
+                                           joined, max_tokens=900) or "").strip()
 
 
 def _assemble_report(summary, parts, language):
