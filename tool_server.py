@@ -401,6 +401,17 @@ def _build_app():
         max_rounds = int(body.get("max_rounds") or 6)
         research = (body.get("research") or "").strip()
 
+        # Research→build bridge: the active persona/skills (e.g. a skill distilled from a
+        # deep-research run) become Miko-the-instructor's domain context for the build.
+        try:
+            import agent_skills
+            overlay = agent_skills.build_overlay((body.get("agent") or "").strip(),
+                                                 body.get("skills") or [])
+            if overlay:
+                research = (overlay + ("\n\n" + research if research else "")).strip()
+        except Exception:
+            pass
+
         started = CC.start_session(project_dir, goal, mode=mode, research=research,
                                    provider=provider, model=model, api_key=key,
                                    base_url=base, max_rounds=max_rounds)

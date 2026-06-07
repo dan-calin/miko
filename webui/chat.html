@@ -1564,6 +1564,7 @@ function sendCode(goal) {
     session_id: sessionId, message: goal, project_dir: dir, mode: pairKind,
     provider: curProvider, model: $('#model').value, api_key: $('#api-key').value,
     base_url: $('#base-url').value, research_model: asResearch,
+    agent: asAgent, skills: asSkills,   // active persona/skills → Miko's build context
   }, c);
 }
 
