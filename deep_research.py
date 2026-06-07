@@ -242,8 +242,33 @@ def _run_fanout(topic, provider, model, api_key, base_url, language, overlay, cf
     if cancelled():
         yield {"type": "cancelled"}; return
 
-    yield {"type": "status", "text": f"Synthesizing {len(branches)} briefings…"}
-    report = _synthesize_fanout(subject, branches, provider, model, api_key, base_url, language, overlay)
+    # Section-wise synthesis: plan an outline, then write each section in its own call so
+    # the report doesn't truncate (the single-pass 4k-token synthesis was the bottleneck —
+    # 30 briefings crammed into one call ran out of room a third of the way through).
+    briefs = [b for b in branches if b.get("report")]
+    lang = "Romanian" if language == "ro" else "English"
+    yield {"type": "status", "text": "Planning the report outline…"}
+    sections = _plan_outline(subject, briefs, provider, model, api_key, base_url, overlay)
+
+    if sections:
+        context = _briefs_context(subject, briefs)
+        parts = []
+        for i, title in enumerate(sections, 1):
+            if cancelled():
+                yield {"type": "cancelled"}; return
+            yield {"type": "status", "text": f"Writing section {i}/{len(sections)}: {title}"}
+            body = _write_section(subject, title, i, context,
+                                  provider, model, api_key, base_url, lang, overlay)
+            if body:
+                parts.append(body)
+            yield {"type": "step", "id": f"sec{i}", "label": f"Section {i}",
+                   "detail": title[:48], "state": "done"}
+        yield {"type": "status", "text": "Writing executive summary…"}
+        summary = _exec_summary(subject, parts, provider, model, api_key, base_url, lang, overlay)
+        report = _assemble_report(summary, parts, language)
+    else:
+        yield {"type": "status", "text": f"Synthesizing {len(briefs)} briefings…"}
+        report = _synthesize_fanout(subject, briefs, provider, model, api_key, base_url, language, overlay)
     sources = _fanout_sources(branches)
 
     note_path = ""
@@ -320,8 +345,76 @@ def _branch_report(subject, question, results, reads, provider, model, api_key, 
         return ""
 
 
+def _briefs_context(subject, briefs):
+    """All branch briefings as one context blob (shared across section calls)."""
+    parts = [f"SUBJECT: {subject}", "", "BRANCH BRIEFINGS (each answers one sub-question):"]
+    for b in briefs:
+        parts.append(f"\n### {b['q']}\n{b['report']}")
+    return "\n".join(parts)[:_CTX_CAP]
+
+
+def _plan_outline(subject, briefs, provider, model, api_key, base_url, overlay):
+    """Propose 4-6 report section titles from the sub-questions investigated (JSON)."""
+    qs = "\n".join(f"- {b['q']}" for b in briefs)
+    sys = (overlay +
+        "You are structuring a research report. Given the subject and the sub-questions "
+        "investigated, propose 4-6 report SECTION TITLES that together cover the material "
+        "in a logical order (overview/architecture first; specifics next; practices, "
+        "risks, and conclusions later). "
+        'Return ONLY JSON: {"sections": ["Title 1", "Title 2", ...]}. No prose.')
+    raw = _complete(provider, model, api_key, base_url, sys,
+                    f"SUBJECT: {subject}\n\nSUB-QUESTIONS:\n{qs}", max_tokens=400) or ""
+    m = re.search(r"\{.*\}", raw, re.S)
+    if m:
+        try:
+            secs = [str(s).strip() for s in json.loads(m.group(0)).get("sections", [])
+                    if str(s).strip()]
+            return secs[:6]
+        except Exception:
+            pass
+    return []
+
+
+def _write_section(subject, title, idx, context, provider, model, api_key, base_url, lang, overlay):
+    """Write ONE report section from the briefings — its own call, so it never truncates."""
+    sys = (overlay +
+        f"You are writing ONE section of a research report on '{subject}', titled "
+        f"'{title}'. Using ONLY the branch briefings provided, write a thorough, "
+        f"well-structured section in {lang} for THAT title: integrate the relevant "
+        "findings, keep inline [n]/URL citations, be specific (numbers, names, mechanisms), "
+        "and flag thin or conflicting evidence. Do NOT write other sections, an "
+        "introduction, or a conclusion. Output Markdown prose only — no tool-call syntax.")
+    body = _strip_control_tokens(_complete(provider, model, api_key, base_url, sys,
+                                           context, max_tokens=2200) or "").strip()
+    if not body:
+        return ""
+    if not body.lstrip().startswith("#"):
+        body = f"## {idx}. {title}\n\n{body}"
+    return body
+
+
+def _exec_summary(subject, section_parts, provider, model, api_key, base_url, lang, overlay):
+    """A tight executive summary written from the finished section drafts."""
+    joined = "\n\n".join(section_parts)[:_CTX_CAP]
+    sys = (overlay +
+        f"Write a tight 1-2 paragraph EXECUTIVE SUMMARY in {lang} for a research report on "
+        f"'{subject}', from the section drafts provided. Lead with the most important, "
+        "concrete findings (key numbers and conclusions). No heading, no citation list, "
+        "no fluff. Markdown prose only.")
+    return _strip_control_tokens(_complete(provider, model, api_key, base_url, sys,
+                                           joined, max_tokens=600) or "").strip()
+
+
+def _assemble_report(summary, parts, language):
+    """Executive summary + the section drafts (title + Sources are added by _save_note)."""
+    head = "## Rezumat Executiv" if language == "ro" else "## Executive Summary"
+    out = f"{head}\n\n{summary}\n\n" if summary else ""
+    out += "\n\n".join(parts)
+    return out.strip() or "(no report generated)"
+
+
 def _synthesize_fanout(subject, branches, provider, model, api_key, base_url, language, overlay):
-    """Merge the branch briefings into one comprehensive, integrated report."""
+    """Fallback single-pass synthesis (used only if outlining fails)."""
     parts = [f"SUBJECT: {subject}", "", "BRANCH BRIEFINGS (each answers one sub-question):"]
     for b in branches:
         if b.get("report"):
