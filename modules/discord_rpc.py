@@ -259,16 +259,27 @@ def leave_voice_as_me() -> str:
     err = _check_config()
     if err:
         return err
+    client = None
     try:
         client = _get_authed_client()
-        client.select_voice_channel(None)
-        client.close()
+        # force=True is required to leave when already in a channel — without it Discord
+        # RPC rejects select_voice_channel(None) with 5003 "User is already joined".
+        try:
+            client.select_voice_channel(None, force=True)
+        except TypeError:
+            client.select_voice_channel(None)   # older pypresence: no `force` kwarg
         return "Te-am deconectat de pe voice, sefu."
     except RuntimeError as e:
         return str(e)
     except Exception as e:
         logger.error(f"leave_voice_as_me error: {e}", exc_info=True)
-        return f"Eroare la deconectare: {e}"
+        return f"N-am putut să te deconectez de pe voice: {e}"
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
 
 
 def set_my_voice(mute: bool = None, deafen: bool = None) -> str:

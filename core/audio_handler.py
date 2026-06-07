@@ -332,6 +332,11 @@ class AudioHandler:
                                 self._handle_transcription(full_in)
                             if full_out and (not _standby or _wake):
                                 print(f"[Miko] {full_out}")
+                            # This turn was woken (wake word or follow-up window): give the
+                            # user a fresh window starting now, so a slow action doesn't
+                            # cause their next command to be dropped as "ambient".
+                            if _wake:
+                                self._mode_manager.refresh_window()
 
                             # Trigger memory extraction every N turns — but NOT for
                             # ambient speech in STANDBY/MUTE (no wake word), so passing

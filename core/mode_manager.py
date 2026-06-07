@@ -23,7 +23,9 @@ from core.wake_word import (
 
 logger = logging.getLogger("miko.mode")
 
-_STANDBY_WINDOW_SECS = 30  # seconds of follow-up commands allowed after a wake word
+_STANDBY_WINDOW_SECS = 45  # seconds of follow-up commands allowed after a wake word
+                           # (refreshed when Miko finishes a reply, so long actions
+                           #  don't cause the next follow-up to be dropped)
 
 
 class Mode(Enum):
@@ -162,6 +164,15 @@ class ModeManager:
             return True
 
         return False
+
+    def refresh_window(self) -> None:
+        """Re-open the STANDBY follow-up window. Called after Miko finishes replying to a
+        woken command so a slow action (tool call + speech) doesn't push the user's NEXT
+        follow-up outside the window and get it silently dropped. No-op outside STANDBY
+        (ACTIVE/AUTO always listen; MUTE intentionally requires the wake word each time)."""
+        if self.mode == Mode.STANDBY:
+            with self._lock:
+                self._standby_window_until = time.time() + _STANDBY_WINDOW_SECS
 
     def is_quiet(self) -> bool:
         """True when output should be gated until a wake word (STANDBY or MUTE)."""
