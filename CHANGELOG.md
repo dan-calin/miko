@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-07
+
 ### Added
+
+- **Skills marketplace — Phase 1 (file-based registry).** The selectable ECC agents/
+  skills are no longer a hardcoded list — they load from a **registry** of
+  `data/skills/*.md` files (frontmatter + prompt body). Builtins seed to files on first
+  run (editable in place), files override builtins by id, and `install_skill()` adds new
+  entries from markdown — **text only, never executable code**. An optional `pairs_with:`
+  field links a skill to an MCP capability (the bridge between prompt-skills and runnable
+  tools, for the upcoming unified catalog).
 
 - **Pair programming — Miko directs Claude Code (CLI) as a coding teammate.** Miko is
   the boss/instructor, Claude Code is the coder. Miko gives an instruction, Claude
@@ -33,8 +43,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recall, file read, browser) that returns its findings for Miko to synthesize.
   Sub-agents can't edit/send/delete and can't spawn their own sub-agents (depth guard).
 
+### Fixed
+
+- **Standby actually stops Miko from acting.** In STANDBY/MUTE the model still hears
+  audio (needed to catch the wake word) but its **tool calls are now gated** on the
+  per-turn wake flag — so ambient speech like "send a message…" no longer gets executed
+  by accident. Ambient turns are also kept out of memory. The standby prompt was softened
+  so Miko answers on the **first** wake word, and more STT spellings of "Miko" are accepted.
+- **Pair mode no longer loops on re-orientation.** Miko (the instructor) gained an
+  **instruction-ledger** (its own prior instructions + files changed), a prompt rule, and
+  a difflib **redundancy guard** — so it stops re-issuing settled instructions ("re-read
+  the checklist") and spends each Claude round advancing the work.
+- **Truthful tool reports.** Notes report the real vault folder (not a guessed working
+  dir); `open_url` uses `os.startfile` on Windows (raises on real failure) and reports the
+  actual outcome instead of a false "opened" or a phantom connection error.
+- **Discord voice cache self-heal + reconnect.** On a stale member/voice cache the bot
+  now chunk-and-retries before giving up, and a new `reconnect_discord` tool re-IDENTIFIES
+  the gateway (fresh voice states) without restarting the app.
+
 ### Changed
 
+- **Voice model default → Gemini 3 Flash Live** (`models/gemini-3.1-flash-live-preview`,
+  replacing the 2.5 native-audio preview).
 - **Deep research is actually deep now.** Replaced the single-pass (~30s, 7Q/8 sources)
   pipeline with **iterative rounds** (quick=1 / standard=2 / deep=3): search → read →
   gap-analysis → follow-up questions, stopping early when coverage is complete.
