@@ -1,43 +1,56 @@
-# Miko — Voice AI Agent
+# Miko — a personal AI agent for Windows
 
-A personal voice assistant for Windows 11, powered by **Google Gemini Live**.
-Speak naturally and Miko responds instantly and executes commands across your
-PC, Discord, your calendars, the web, and your files. Miko is **bilingual** —
-set `MIKO_LANGUAGE=en` or `ro` (default English); the prompts, spoken
-confirmations, and mode announcements all follow your choice, and Miko will still
-switch to the other language on the fly if you speak it.
+Miko is a personal AI agent for Windows that **researches, remembers, and ships code** —
+reachable by **voice or a web chat UI**. It runs multi-round web research and saves cited
+reports, keeps a local second-brain memory, controls your PC/Discord/calendars, and — the
+headline — **directs Claude Code as a pair-programming teammate** to actually change your
+repos, with your approval and per-round git revert.
 
-> A modern take on JARVIS: loyal, direct, fast, with a bit of humor.
+It's a **self-hosted, single-user** tool (your keys live in a local `.env`). You bring API
+keys for the models you use; several integrations below are **optional and require their
+own setup** — those are marked. Miko is **bilingual** (`MIKO_LANGUAGE=en` or `ro`, default
+English) and replies in the language you write/speak.
 
-**Highlights**
+> A personal take on JARVIS: loyal, direct, fast — and now a coding teammate, not just a chatbot.
 
-- 🎙️ Real-time voice in/out via Gemini Live (ACTIVE / STANDBY / AUTO modes)
-- 💻 Full PC control — apps, files, system info, screenshots, reminders, clipboard
-- 🔊 Volume & media control, plus music streaming into a Discord voice channel
-- 📱 Control from your phone via Discord DMs (text *or* voice notes)
-- 📅 Calendar integration — iCloud + Microsoft Teams/Outlook, with Discord reminders
-- 🎧 Control your **personal** Discord account by voice (join channels, mute/deafen)
-- 🌐 Web research, notes, fast file search, journey/route planning
-- 🤖 Optional **MiniMax** backend for phone commands, and an HTTP **tool server**
-  so external agents (e.g. Hermes) can use all of Miko's tools
-- 🧠 **Self-building second brain** — local-embedding semantic memory that learns from
-  you (self-correcting facts with no duplicates), recalls by *meaning*, keeps an
-  episodic log + periodic reflection, and stores knowledge as an **Obsidian-compatible
-  vault** (PARA folders + `[[wikilinks]]`). Works in voice **and** chat.
-- 🔎 **Deep Research pipeline** — plans sub-questions, reads full web pages, writes a
-  **cited** report, and saves it into the vault as linked, recall-able knowledge (live
-  progress in the Chat UI; a spoken summary by voice).
-- 🧩 **ECC agents & skills** — pick a persona + skills, configured **per model**, with an
-  **effort** dial that scales research depth.
-- 🗂️ **Project mapping** — point Miko at your project folders; it profiles each and
-  always knows what you're building.
-- 📅 **Calendar briefs** — morning / midday / night schedule briefs, and Miko always has
-  today's schedule in context.
-- 💬 A **web Chat UI** (`/chat`) — type to Miko with any model (Gemini, OpenAI, Anthropic
-  Claude, MiniMax, DeepSeek, Kimi, xAI Grok, or any OpenAI-compatible endpoint), with
-  **per-model settings** + an **effort** dial (which passes a native reasoning parameter
-  where supported), a built-in **file explorer + code editor** with right-click file ops,
-  resumable conversations, a **resource monitor**, and a selectable **workspace** folder.
+**What it does**
+
+- 🤝 **Pair programming** — Miko directs **Claude Code** (the CLI) as a coder: Miko
+  instructs, Claude implements in a real repo and reports back, they iterate until both
+  agree it's done. **Autonomous** or **Controlled** (approve each round) mode; every round
+  is **git-checkpointed** with a per-round **Revert**. *Requires Claude Code installed and
+  your own Claude plan/API — and is subject to Claude's own rate limits.*
+- 🔎 **Deep research** — distills a clean subject from your request, runs **iterative
+  rounds** (search → read → find gaps → search again) in parallel, writes a **cited**
+  report and saves it to the vault. Report quality depends on which sources are fetchable
+  (many sites block scrapers; those are skipped). Live progress in the Chat UI; spoken
+  summary by voice. Pick the research model (defaults to Gemini Flash).
+- 🧠 **Second-brain memory** — a local-embedding (fastembed) semantic memory in SQLite that
+  learns facts from your conversations (reconciles corrections instead of duplicating),
+  recalls by meaning, keeps an episodic log, and stores notes as an **Obsidian-compatible
+  vault** (PARA folders + `[[wikilinks]]`). Works in voice and chat. *Falls back to a
+  provider embedding API, then keyword search, if fastembed isn't installed.*
+- 🧑‍🤝‍🧑 **Sub-agents** — Miko can spawn up to 5 focused, **read-only** agents in parallel to
+  research several angles or inspect multiple files at once, then synthesize their findings.
+- 💬 **Web Chat UI** (`/chat`) — any model (Gemini, OpenAI, Anthropic Claude, MiniMax,
+  DeepSeek, Kimi, xAI Grok, or any OpenAI-compatible endpoint), a **live activity view**
+  that shows each tool call as it runs, a **Stop** button, an **approval mode** (review
+  file/command changes as diffs before they apply), per-model persona/skill/effort settings,
+  a built-in file explorer + editor, resumable conversations, and a selectable workspace.
+- 🎙️ **Voice** — real-time voice in/out via **Gemini Live** (ACTIVE / STANDBY / MUTE modes).
+  *Needs a Gemini key.* This is one input mode, not the whole product.
+- 💻 **PC control** — open apps, file operations, system info, screenshots, reminders,
+  clipboard, volume & media keys. *Windows-specific.*
+- 🗂️ **Project mapping** — point Miko at a project folder; it scans it, writes a profile to
+  the vault, and keeps it in context so it knows what you're building.
+- 📅 **Calendars** *(optional)* — iCloud (CalDAV) + Microsoft/Outlook (Graph), with
+  morning/midday/night Discord briefs.
+- 📱 **Discord** — control Miko from your phone via DMs (text or voice notes), stream music
+  into a voice channel, and control your **personal** Discord account by voice.
+- 🧰 **Optional integrations** *(each needs setup/deps)* — **email** (IMAP/SMTP),
+  **browser automation** (Playwright), **scheduled tasks** (recurring prompts DM'd to you),
+  an **MCP client** (use tools from external Model Context Protocol servers), and a **MiniMax
+  backend** + HTTP **tool server** so external agents can call Miko's tools.
 
 ---
 
