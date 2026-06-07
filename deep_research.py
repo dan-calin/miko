@@ -261,8 +261,20 @@ def _fan_branches(R, subject, questions, provider, model, api_key, base_url, ove
     def _one(q):
         try:
             results = R.search_results(q, cfg["results"]) or []
+            # Also surface BOOKS / academic papers as PDFs (the `filetype:pdf` trick);
+            # fetch_text now reads PDFs, so a branch can cite a textbook or paper.
+            try:
+                pdfs = R.search_results(f"{q} filetype:pdf", 3) or []
+            except Exception:
+                pdfs = []
+            results = results + pdfs
+
             ranked = _rank_urls([(q, results)], subject, seen_snapshot)[:cfg["fetch"]]
-            reads = _parallel_fetch(R, ranked, cfg["chars"], min(cfg["fetch"], 4)) if ranked else []
+            # Guarantee at least one book/paper PDF gets read when one was found.
+            for pu in [r.get("url") for r in pdfs if r.get("url")][:1]:
+                if pu not in ranked:
+                    ranked.append(pu)
+            reads = _parallel_fetch(R, ranked, cfg["chars"], min(len(ranked), 5)) if ranked else []
             report = _branch_report(subject, q, results, reads,
                                     provider, model, api_key, base_url, overlay)
             return {"q": q, "report": report, "reads": reads, "results": results}

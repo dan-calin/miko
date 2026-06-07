@@ -4,13 +4,43 @@ Primary: DuckDuckGo DDGS. Secondary: opens browser for deep research.
 """
 
 import logging
+import os
 import re
+import threading
+import time
 import urllib.parse
 import urllib.request
 import webbrowser
 from html.parser import HTMLParser
 
 logger = logging.getLogger("miko.research")
+
+# Reader fallback for bot-blocked pages: r.jina.ai renders JS + bypasses most 403s
+# and returns clean text. Free, no key. Sends the URL to a third-party service, so it's
+# toggleable (MIKO_RESEARCH_READER=0 disables). Only used when a direct fetch is blocked.
+_READER_ENABLED = os.getenv("MIKO_RESEARCH_READER", "1").strip() not in ("0", "false", "no")
+
+# The parallel fan-out can produce a burst of blocked links all hitting Jina at once,
+# which itself trips Jina's free-tier rate limit. So GLOBALLY pace the reader: every
+# failed link still goes through it, but as a steady queue — one new request per
+# interval (default ~3s ≈ 20/min). MIKO_JINA_INTERVAL tunes it.
+try:
+    _JINA_MIN_INTERVAL = max(0.0, float(os.getenv("MIKO_JINA_INTERVAL", "3.0")))
+except ValueError:
+    _JINA_MIN_INTERVAL = 3.0
+_JINA_LOCK = threading.Lock()
+_jina_next_at = [0.0]
+
+
+def _jina_throttle() -> None:
+    """Reserve the next evenly-spaced Jina slot (paced across all threads), then wait
+    for it OUTSIDE the lock so reserved requests still run concurrently."""
+    with _JINA_LOCK:
+        now = time.time()
+        wait = max(0.0, _jina_next_at[0] - now)
+        _jina_next_at[0] = now + wait + _JINA_MIN_INTERVAL
+    if wait > 0:
+        time.sleep(wait)
 
 TOOL_DECLARATIONS = [
     {
@@ -329,25 +359,126 @@ def _html_to_text(html: str) -> str:
         return "\n".join(p.parts)
 
 
-def fetch_text(url: str, max_chars: int = 4000, timeout: int = 12) -> str:
-    """Download a page and return readable plain text (best-effort, length-capped)."""
+# A real, current browser fingerprint. The old "MikoResearch/1.0" UA was an obvious
+# bot string that Cloudflare and most CMSs reject with 403 — which starved research of
+# actual page text (it fell back to search snippets). A realistic UA + headers recovers
+# a large share of those reads.
+_BROWSER_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "identity",   # we don't decompress gzip ourselves
+    "Connection": "close",
+}
+
+
+def _pdf_to_text(data: bytes, max_chars: int) -> str:
+    """Extract text from a PDF (books/papers found via filetype:pdf). Capped by pages
+    and chars so a 600-page book doesn't blow up the run. No-op if pypdf is absent."""
     try:
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "Mozilla/5.0 (compatible; MikoResearch/1.0)"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            ctype = resp.headers.get("Content-Type", "").lower()
-            if ctype and "html" not in ctype and "text" not in ctype:
-                return ""   # skip PDFs, images, etc.
-            raw = resp.read(3_000_000)
-        charset = "utf-8"
-        if "charset=" in ctype:
-            charset = ctype.split("charset=")[-1].split(";")[0].strip() or "utf-8"
-        html = raw.decode(charset, errors="replace")
+        import io
+        import pypdf
+        logging.getLogger("pypdf").setLevel(logging.ERROR)   # silence object-pointer noise
+    except Exception:
+        logger.warning("pypdf not installed — skipping PDF")
+        return ""
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        out, total = [], 0
+        for page in reader.pages[:40]:        # cap pages — books can be enormous
+            try:
+                t = page.extract_text() or ""
+            except Exception:
+                t = ""
+            if t:
+                out.append(t)
+                total += len(t)
+                if total >= max_chars * 2:
+                    break
+        text = re.sub(r"[ \t]+", " ", "\n".join(out))
+        text = re.sub(r"\n\s*\n\s*", "\n\n", text).strip()
+        return text[:max_chars]
     except Exception as e:
-        logger.warning(f"fetch_text {url}: {e}")
+        logger.warning(f"pdf parse failed: {e}")
         return ""
 
-    text = _html_to_text(html)
+
+def _direct_fetch(url: str, max_chars: int, timeout: int):
+    """Direct urllib fetch. Returns (text, recoverable): recoverable=True means a reader
+    fallback may still help (403 block / SSL / timeout / JS-rendered empty); False means
+    it's a dead end (404/410/DNS or a successfully-read page)."""
+    import time
+    is_pdf_url = url.lower().split("?")[0].split("#")[0].endswith(".pdf")
+    data, ctype = None, ""
+    for attempt in range(2):
+        try:
+            req = urllib.request.Request(url, headers=_BROWSER_HEADERS)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                ctype = resp.headers.get("Content-Type", "").lower()
+                is_pdf = is_pdf_url or "application/pdf" in ctype
+                if not is_pdf and ctype and "html" not in ctype and "text" not in ctype:
+                    return "", False   # images/video — a reader won't help
+                data = resp.read(12_000_000 if is_pdf else 3_000_000)
+            break
+        except Exception as e:
+            if getattr(e, "code", None) == 429 and attempt == 0:
+                time.sleep(2.0)   # rate-limited — brief backoff, one retry
+                continue
+            code = getattr(e, "code", None)
+            msg = str(e).lower()
+            dead = code in (404, 410) or "getaddrinfo failed" in msg or "name or service" in msg
+            logger.warning(f"fetch_text {url}: {e}")
+            return "", (not dead)
+    if data is None:
+        return "", True
+
+    if is_pdf_url or "application/pdf" in ctype:
+        return _pdf_to_text(data, max_chars), False   # PDFs go through pypdf, not the reader
+
+    charset = "utf-8"
+    if "charset=" in ctype:
+        charset = ctype.split("charset=")[-1].split(";")[0].strip() or "utf-8"
+    text = _html_to_text(data.decode(charset, errors="replace"))
     text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n\s*\n\s*", "\n\n", text).strip()
-    return text[:max_chars]
+    text = re.sub(r"\n\s*\n\s*", "\n\n", text).strip()[:max_chars]
+    return text, (len(text) < 200)        # thin/empty (likely JS-rendered) → reader may help
+
+
+def _jina_fetch(url: str, max_chars: int, timeout: int) -> str:
+    """Fallback reader (r.jina.ai): renders JS + bypasses most bot blocks, returns clean
+    text. Free, no key. Globally paced (see _jina_throttle) so the parallel fan-out's
+    blocked links queue instead of bursting. NOTE: sends the URL to a third party."""
+    for attempt in range(2):
+        _jina_throttle()
+        try:
+            req = urllib.request.Request(
+                "https://r.jina.ai/" + url,
+                headers={"User-Agent": _BROWSER_HEADERS["User-Agent"],
+                         "Accept": "text/plain", "X-Return-Format": "text"})
+            with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
+                raw = resp.read(3_000_000)
+            text = re.sub(r"[ \t]+", " ", raw.decode("utf-8", errors="replace"))
+            text = re.sub(r"\n\s*\n\s*", "\n\n", text).strip()
+            return text[:max_chars]
+        except Exception as e:
+            if getattr(e, "code", None) == 429 and attempt == 0:
+                time.sleep(10.0)   # paced but still overshot — back off harder, retry once
+                continue
+            logger.warning(f"jina reader {url}: {e}")
+            return ""
+    return ""
+
+
+def fetch_text(url: str, max_chars: int = 4000, timeout: int = 12) -> str:
+    """Readable plain text for a URL (best-effort, length-capped). Tries a direct fetch
+    (browser UA, PDF-aware); if that's blocked/thin and a reader fallback is enabled,
+    retries through r.jina.ai. Dead links (404/DNS) skip the fallback."""
+    text, recoverable = _direct_fetch(url, max_chars, timeout)
+    if text and len(text) >= 200:
+        return text
+    if recoverable and _READER_ENABLED:
+        jt = _jina_fetch(url, max_chars, timeout)
+        if jt and len(jt) >= 200:
+            return jt
+    return text

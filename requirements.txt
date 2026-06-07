@@ -31,6 +31,7 @@ yt-dlp>=2024.11.4
 ddgs>=0.1.0
 requests>=2.32.0
 beautifulsoup4>=4.12.0
+pypdf>=4.0.0          # read books/papers found via filetype:pdf (exhaustive research)
 
 # ── Semantic memory / second brain (local embeddings; optional but recommended) ─
 # Without it, Miko falls back to Gemini/OpenAI embedding APIs, then keyword search.
