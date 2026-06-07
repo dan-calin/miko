@@ -443,6 +443,29 @@ def _build_app():
         import modules.claude_code as CC
         return CC.get_active_session() or {}
 
+    @app.get("/chat/code/sessions")
+    def chat_code_sessions(_=Depends(_auth)):
+        """All pair sessions (compact) for the UI's session list."""
+        import modules.claude_code as CC
+        return {"sessions": CC.list_sessions()}
+
+    @app.get("/chat/code/session")
+    def chat_code_session(token: str, _=Depends(_auth)):
+        """Full view of one session, to resume it from the list."""
+        import modules.claude_code as CC
+        return CC.get_session(token) or {}
+
+    @app.post("/chat/code/forget")
+    async def chat_code_forget(request: Request, _=Depends(_auth)):
+        """Remove a pair session from the registry (does not touch the repo)."""
+        import modules.claude_code as CC
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        token = (body.get("token") or "").strip()
+        return {"ok": CC.forget_session(token)}
+
     @app.get("/chat/agent-skills")
     def chat_agent_skills(_=Depends(_auth)):
         import agent_skills

@@ -162,14 +162,30 @@ def _registry_path():
     return CONFIG.data_dir / "code_sessions.json"
 
 
+_DEFAULTS = {"history": list, "checkpoints": list, "round": lambda: 0,
+             "max_rounds": lambda: 6, "provider": lambda: "gemini", "model": lambda: "",
+             "key": lambda: "", "base": lambda: "", "research": lambda: "",
+             "mode": lambda: "autonomous", "status": lambda: "ready"}
+
+
+def _normalize(state: dict, token: str) -> dict:
+    """Fill any keys a session might be missing (e.g. loaded from an older on-disk
+    registry that didn't persist them) so resuming it can never KeyError."""
+    state.setdefault("token", token)
+    for k, factory in _DEFAULTS.items():
+        if k not in state:
+            state[k] = factory()
+    return state
+
+
 def _persist():
-    """Persist lightweight session state (so Revert survives restarts)."""
+    """Persist lightweight session state (so Revert + resume survive restarts)."""
     try:
         from config import CONFIG
         CONFIG.data_dir.mkdir(parents=True, exist_ok=True)
-        slim = {t: {k: s[k] for k in ("repo", "goal", "mode", "round", "status",
-                                      "checkpoints", "claude_session", "history")}
-                for t, s in _SESSIONS.items()}
+        keys = ("repo", "goal", "mode", "round", "max_rounds", "status",
+                "checkpoints", "claude_session", "history")
+        slim = {t: {k: s.get(k) for k in keys} for t, s in _SESSIONS.items()}
         _registry_path().write_text(json.dumps(slim, indent=2), encoding="utf-8")
     except Exception as e:
         logger.warning(f"persist code sessions failed: {e}")
@@ -181,7 +197,8 @@ def _load_registry():
     try:
         p = _registry_path()
         if p.exists():
-            _SESSIONS.update(json.loads(p.read_text(encoding="utf-8")))
+            for tok, s in json.loads(p.read_text(encoding="utf-8")).items():
+                _SESSIONS[tok] = _normalize(s, tok)
     except Exception:
         pass
 
@@ -355,6 +372,14 @@ def revert_round(token, snap="") -> str:
     return ("Reverted the repo to the checkpoint." if ok else "Revert failed.")
 
 
+def _session_view(tok: str, s: dict) -> dict:
+    return {
+        "token": s.get("token", tok), "repo": s["repo"], "goal": s["goal"],
+        "mode": s["mode"], "status": s["status"], "round": s.get("round", 0),
+        "history": s.get("history", []), "checkpoints": s.get("checkpoints", []),
+    }
+
+
 def get_active_session() -> dict:
     """The most recent resumable session (ready/running/awaiting) whose repo still exists,
     so the UI can re-render and continue it after a page refresh. {} if none."""
@@ -363,13 +388,38 @@ def get_active_session() -> dict:
     for tok, s in _SESSIONS.items():   # dict preserves insertion order → last started wins
         if s.get("status") in ("ready", "running", "awaiting") and os.path.isdir(s.get("repo", "")):
             best_tok, best = tok, s
-    if not best:
-        return {}
-    return {
-        "token": best.get("token", best_tok), "repo": best["repo"], "goal": best["goal"],
-        "mode": best["mode"], "status": best["status"], "round": best.get("round", 0),
-        "history": best.get("history", []), "checkpoints": best.get("checkpoints", []),
-    }
+    return _session_view(best_tok, best) if best else {}
+
+
+def get_session(token: str) -> dict:
+    """Full view of one session (for resuming a specific session from the list)."""
+    _load_registry()
+    s = _SESSIONS.get(token)
+    return _session_view(token, s) if s else {}
+
+
+def list_sessions() -> list:
+    """Compact summaries of all pair sessions, newest first, for the UI's session list."""
+    _load_registry()
+    out = []
+    for tok, s in _SESSIONS.items():
+        out.append({
+            "token": s.get("token", tok), "repo": s["repo"],
+            "goal": s.get("goal", ""), "status": s.get("status", "ready"),
+            "round": s.get("round", 0), "exists": os.path.isdir(s.get("repo", "")),
+        })
+    out.reverse()   # most recent first
+    return out
+
+
+def forget_session(token: str) -> bool:
+    """Remove a session from the registry (does not touch the repo)."""
+    _load_registry()
+    if token in _SESSIONS:
+        del _SESSIONS[token]
+        _persist()
+        return True
+    return False
 
 
 # ── Tool (mid-chat / voice): run an autonomous session to completion ────────────
