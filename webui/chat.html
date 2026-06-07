@@ -887,8 +887,9 @@ let curProvider = cfg.provider || 'gemini';
 let AS = { agents: [], skills: [] };
 let asAgent = cfg.agent || '';
 let asSkills = Array.isArray(cfg.skills) ? cfg.skills.slice() : [];
-let asEffort = cfg.effort || 'standard';   // quick | standard | deep (per model)
+let asEffort = cfg.effort || 'standard';   // quick | standard | deep | exhaustive (per model)
 let asResearch = cfg.researchModel || 'gemini-3.5-flash';   // research engine (global)
+let asResearchMore = false;                 // research-engine "More" row expanded (UI-only)
 let approveMode = cfg.approve !== false;   // require approval for edits & commands (default ON)
 let pairMode = false;                       // pair-programming (Miko ↔ Claude Code) active
 let pairKind = cfg.pairKind || 'autonomous';   // autonomous | controlled
@@ -2160,16 +2161,29 @@ function buildASPop() {
              mk.replace(/[<>&]/g, '') + '</span>' +
              '<button class="as-clear" id="as-clear" type="button">clear all</button></div>';
   html += '<div class="as-sec-label">Effort · research depth + tool budget</div><div class="as-effort">';
-  [['quick', 'Quick'], ['standard', 'Standard'], ['deep', 'Deep']].forEach(([v, lab]) => {
+  [['quick', 'Quick'], ['standard', 'Standard'], ['deep', 'Deep'], ['exhaustive', 'Exhaustive']].forEach(([v, lab]) => {
     html += `<button type="button" class="as-eff${asEffort === v ? ' on' : ''}" data-eff="${v}">${lab}</button>`;
   });
   html += '</div>';
+  if (asEffort === 'exhaustive')
+    html += '<div class="as-hint" style="font-size:11px;opacity:.6;margin-top:3px">Multi-agent fan-out — much deeper, runs minutes. Best with the MiniMax engine.</div>';
+  // Research engine — keep the row uncramped: two common picks + a "More" reveal.
   html += '<div class="as-sec-label">Research engine · model for deep research</div><div class="as-effort as-research">';
-  [['gemini-3.5-flash', '3.5 Flash'], ['gemini-3.1-flash-lite', '3.1 Lite · 500/day'],
-   ['gemini-2.5-flash', '2.5 Flash'], ['minimax', 'MiniMax · wider/deep'], ['chat', 'Chat model']].forEach(([v, lab]) => {
+  const moreEng = [['gemini-3.1-flash-lite', '3.1 Lite · 500/day'], ['gemini-2.5-flash', '2.5 Flash'], ['minimax', 'MiniMax · wider/deep']];
+  const moreIds = moreEng.map(m => m[0]);
+  const showMore = asResearchMore || moreIds.includes(asResearch);
+  [['gemini-3.5-flash', '3.5 Flash'], ['chat', 'Chat model']].forEach(([v, lab]) => {
     html += `<button type="button" class="as-eff${asResearch === v ? ' on' : ''}" data-research="${v}">${lab}</button>`;
   });
+  html += `<button type="button" class="as-eff${showMore ? ' on' : ''}" id="as-research-more">More ${showMore ? '▴' : '▾'}</button>`;
   html += '</div>';
+  if (showMore) {
+    html += '<div class="as-effort as-research" style="margin-top:4px">';
+    moreEng.forEach(([v, lab]) => {
+      html += `<button type="button" class="as-eff${asResearch === v ? ' on' : ''}" data-research="${v}">${lab}</button>`;
+    });
+    html += '</div>';
+  }
   html += '<div class="as-sec-label">Persona · pick one</div>';
   html += asOptHTML('agent', '', 'None', 'Plain Miko — no persona overlay.', '', asAgent === '');
   AS.agents.forEach(a => { html += asOptHTML('agent', a.id, a.label, a.desc, a.theme, asAgent === a.id); });
@@ -2206,6 +2220,8 @@ function buildASPop() {
   pop.querySelectorAll('.as-eff[data-research]').forEach(el => el.addEventListener('click', () => {
     asResearch = el.dataset.research; saveCfg(); buildASPop();
   }));
+  const moreBtn = pop.querySelector('#as-research-more');
+  if (moreBtn) moreBtn.addEventListener('click', () => { asResearchMore = !asResearchMore; buildASPop(); });
   pop.querySelectorAll('.as-opt').forEach(el => {
     el.addEventListener('click', () => {
       const { kind, id } = el.dataset;

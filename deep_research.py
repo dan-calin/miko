@@ -54,6 +54,17 @@ _EFFORT_HIGH = {
     "deep":     {"rounds": 4, "subq": 8, "results": 10, "fetch": 20, "chars": 8000, "workers": 10},
 }
 
+# "exhaustive" uses the AGENT FAN-OUT pipeline (_run_fanout), not the linear one:
+#   rounds = max waves, subq = branch-agents per wave, results = search hits per branch,
+#   fetch = sources READ per branch, workers = parallel branch agents. Each branch is its
+#   own search→read→REASON agent (an LLM call), so this is many calls — meant for a
+#   high-throughput provider (MiniMax). The Gemini profile is a smaller, slower fallback.
+_EFFORT["exhaustive"]      = {"rounds": 3, "subq": 4, "results": 6, "fetch": 4, "chars": 4000, "workers": 4}
+_EFFORT_HIGH["exhaustive"] = {"rounds": 6, "subq": 6, "results": 8, "fetch": 5, "chars": 6000, "workers": 8}
+
+# Wall-clock safety net for the fan-out loop (it iterates until coverage converges).
+_FANOUT_TIME_CAP_S = 1500   # ~25 min
+
 _STOP = {
     "ok", "okay", "so", "we", "have", "this", "that", "the", "a", "an", "is", "are",
     "it", "its", "but", "and", "or", "i", "you", "miko", "please", "can", "could",
@@ -84,6 +95,14 @@ def run(topic, provider, model, api_key="", base_url="", language="en",
     try:
         topic = (topic or "").strip()
         yield {"type": "status", "text": "Understanding the request…"}
+
+        # Exhaustive = agent fan-out: each sub-question gets its own search→read→reason
+        # agent, iterating until coverage converges (or the time cap). Much deeper, many
+        # more LLM calls — best on a high-throughput provider.
+        if effort == "exhaustive":
+            yield from _run_fanout(topic, provider, model, api_key, base_url,
+                                   language, overlay, cfg, cancelled)
+            return
 
         # 1) Distil a clean research subject + first-round sub-questions.
         subject, questions = _distill(topic, provider, model, api_key, base_url,
@@ -163,6 +182,162 @@ def run(topic, provider, model, api_key="", base_url="", language="en",
     except Exception as e:
         logger.error(f"deep research failed: {e}", exc_info=True)
         yield {"type": "error", "error": str(e)}
+
+
+# ── Exhaustive: agent fan-out ───────────────────────────────────────────────────
+
+def _run_fanout(topic, provider, model, api_key, base_url, language, overlay, cfg, cancelled):
+    """Multi-agent research: each sub-question becomes its own search→read→reason agent
+    producing a focused branch briefing; waves repeat (gap analysis) until coverage
+    converges or the time cap; a final synthesis merges the briefings. Yields the same
+    event shapes as run() so the UI renders it identically."""
+    import time
+    from modules import research as R
+    t0 = time.time()
+
+    subject, questions = _distill(topic, provider, model, api_key, base_url, cfg["subq"], overlay)
+    yield {"type": "status", "text": f"Researching (exhaustive): {subject}"}
+    yield {"type": "plan", "questions": questions}
+
+    branches, asked, seen_urls = [], set(), set()
+    max_waves = cfg["rounds"]
+
+    for wave in range(1, max_waves + 1):
+        if cancelled():
+            yield {"type": "cancelled"}; return
+        if time.time() - t0 > _FANOUT_TIME_CAP_S:
+            yield {"type": "status", "text": "Time budget reached — synthesizing what we have."}
+            break
+
+        questions = [q for q in questions if q.lower() not in asked][:cfg["subq"]]
+        if not questions:
+            break
+        asked.update(q.lower() for q in questions)
+        yield {"type": "round", "n": wave, "of": max_waves}
+        yield {"type": "step", "id": f"fan{wave}", "label": f"Agents · wave {wave}",
+               "detail": f"{len(questions)} agents", "state": "start"}
+
+        # Snapshot seen_urls so parallel branches rank against the same set; update after.
+        snap = set(seen_urls)
+        wave_branches = _fan_branches(R, subject, questions, provider, model, api_key,
+                                      base_url, overlay, cfg, snap)
+        for br in wave_branches:
+            branches.append(br)
+            for rd in br.get("reads", []):
+                seen_urls.add(rd["url"]); yield {"type": "source", "url": rd["url"]}
+        yield {"type": "step", "id": f"fan{wave}", "label": f"Agents · wave {wave}",
+               "detail": f"{len(wave_branches)} briefings", "state": "done"}
+
+        # Convergence: ask what's still missing from the combined briefings.
+        if wave < max_waves and time.time() - t0 < _FANOUT_TIME_CAP_S:
+            combined = "\n\n".join(b["report"] for b in branches if b.get("report"))
+            gaps = _gaps(subject, [{"url": "briefings", "text": combined[:_CTX_CAP]}],
+                         provider, model, api_key, base_url, cfg["subq"], overlay)
+            if not gaps:
+                yield {"type": "status", "text": "Coverage looks complete."}
+                break
+            questions = gaps
+            yield {"type": "plan", "questions": questions}
+
+    if cancelled():
+        yield {"type": "cancelled"}; return
+
+    yield {"type": "status", "text": f"Synthesizing {len(branches)} briefings…"}
+    report = _synthesize_fanout(subject, branches, provider, model, api_key, base_url, language, overlay)
+    sources = _fanout_sources(branches)
+
+    note_path = ""
+    try:
+        note_path = _save_note(subject, report, sources)
+        if note_path:
+            yield {"type": "saved", "path": note_path}
+    except Exception as e:
+        logger.warning(f"save research note failed: {e}")
+    yield {"type": "report", "reply": report, "sources": sources, "note": note_path}
+
+
+def _fan_branches(R, subject, questions, provider, model, api_key, base_url, overlay, cfg, seen_snapshot):
+    """Run one wave of branch agents in parallel; each returns {q, report, reads, results}."""
+    def _one(q):
+        try:
+            results = R.search_results(q, cfg["results"]) or []
+            ranked = _rank_urls([(q, results)], subject, seen_snapshot)[:cfg["fetch"]]
+            reads = _parallel_fetch(R, ranked, cfg["chars"], min(cfg["fetch"], 4)) if ranked else []
+            report = _branch_report(subject, q, results, reads,
+                                    provider, model, api_key, base_url, overlay)
+            return {"q": q, "report": report, "reads": reads, "results": results}
+        except Exception as e:
+            logger.warning(f"branch '{q[:40]}' failed: {e}")
+            return {"q": q, "report": "", "reads": [], "results": []}
+
+    out = [None] * len(questions)
+    with ThreadPoolExecutor(max_workers=min(cfg["workers"], max(1, len(questions)))) as ex:
+        futs = {ex.submit(_one, q): i for i, q in enumerate(questions)}
+        for fut in futs:
+            i = futs[fut]
+            try:
+                out[i] = fut.result()
+            except Exception:
+                out[i] = {"q": questions[i], "report": "", "reads": [], "results": []}
+    return [o for o in out if o and o.get("report")]
+
+
+def _branch_report(subject, question, results, reads, provider, model, api_key, base_url, overlay):
+    """A single branch agent: reason over its own sources into a focused briefing."""
+    ctx = [f"SUBJECT: {subject}", f"SUB-QUESTION: {question}", "", "SOURCES:"]
+    n = 0
+    for r in results:
+        n += 1
+        ctx.append(f"[{n}] {r.get('title','')} — {r.get('url','')}\n{r.get('body','')[:280]}")
+    for rd in reads:
+        ctx.append(f"URL: {rd['url']}\n{rd['text']}")
+    context = "\n".join(ctx)[:_CTX_CAP]
+    sys = (overlay +
+        "You are a research analyst investigating ONE sub-question of a larger subject. "
+        "Using ONLY the provided sources, write a focused, factual briefing that answers the "
+        "sub-question with inline [n] or URL citations. Be specific — numbers, names, "
+        "mechanisms, caveats. Flag thin or conflicting evidence; never invent facts. No "
+        "intro/outro padding. Output Markdown prose only — no tool-call syntax.")
+    try:
+        return _strip_control_tokens(_complete(provider, model, api_key, base_url, sys,
+                                                context, max_tokens=1400) or "")
+    except Exception as e:
+        logger.warning(f"branch report failed: {e}")
+        return ""
+
+
+def _synthesize_fanout(subject, branches, provider, model, api_key, base_url, language, overlay):
+    """Merge the branch briefings into one comprehensive, integrated report."""
+    parts = [f"SUBJECT: {subject}", "", "BRANCH BRIEFINGS (each answers one sub-question):"]
+    for b in branches:
+        if b.get("report"):
+            parts.append(f"\n## {b['q']}\n{b['report']}")
+    context = "\n".join(parts)[:_CTX_CAP]
+    lang = "Romanian" if language == "ro" else "English"
+    sys = (overlay +
+        "You are the lead research analyst. You are given several branch briefings, each "
+        "answering one sub-question of the subject. Synthesize them into ONE comprehensive, "
+        f"well-structured report in {lang}: an Executive Summary, themed sections that "
+        "INTEGRATE (not merely concatenate) the briefings, Key Takeaways (bullets), and a "
+        "consolidated numbered Sources list. Resolve overlaps, surface contradictions, keep "
+        "every nontrivial claim sourced. Markdown prose only — no tool-call syntax.")
+    try:
+        return _strip_control_tokens(_complete(provider, model, api_key, base_url, sys,
+                                               context, max_tokens=4000) or "(no report generated)")
+    except Exception as e:
+        logger.warning(f"fan-out synthesis failed: {e}")
+        return f"(synthesis failed: {e})"
+
+
+def _fanout_sources(branches):
+    seen, out = set(), []
+    for b in branches:
+        for r in b.get("results", []):
+            u = (r.get("url") or "").strip()
+            if u and u not in seen:
+                seen.add(u)
+                out.append({"title": (r.get("title") or u)[:120], "url": u})
+    return out[:60]
 
 
 # ── Planning / distillation ────────────────────────────────────────────────────

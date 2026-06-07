@@ -507,11 +507,12 @@ def _result_summary(result: str) -> str:
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-_EFFORT_ROUNDS = {"quick": 3, "standard": 6, "deep": 8}
+# "exhaustive" is a research tier; in plain chat it behaves like "deep".
+_EFFORT_ROUNDS = {"quick": 3, "standard": 6, "deep": 8, "exhaustive": 8}
 
 # Native reasoning-effort mapping, per provider (only for models that support it).
-_EFFORT_LEVEL = {"quick": "low", "standard": "medium", "deep": "high"}
-_EFFORT_GEMINI_BUDGET = {"quick": 0, "standard": -1, "deep": 12000}   # -1 = dynamic
+_EFFORT_LEVEL = {"quick": "low", "standard": "medium", "deep": "high", "exhaustive": "high"}
+_EFFORT_GEMINI_BUDGET = {"quick": 0, "standard": -1, "deep": 12000, "exhaustive": 12000}   # -1 = dynamic
 
 
 def _reasoning_kwargs(protocol: str, model: str, effort: str) -> dict:
