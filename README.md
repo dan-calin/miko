@@ -219,7 +219,8 @@ MINIMAX_MODEL=MiniMax-M2.7
 ### Tool server for external agents
 
 Miko exposes all of its tools over HTTP so other agents (e.g. **Hermes** on WSL2) can
-call them. You can run **just the tools**, without the voice assistant:
+call them — and this is also how you run Miko **chat-only**, without the voice loop (it
+still serves the Chat UI at `/chat`):
 
 ```bash
 python start_tools_server.py
@@ -401,12 +402,19 @@ venv\Scripts\activate
 python main.py
 ```
 
+`python main.py` starts everything: the tool server (which serves the **Chat UI**) and,
+if a mic + Gemini key are present, the voice loop.
+
 On first launch:
 
-- A **double beep** plays once the connection to Gemini Live is established.
-- Miko announces that it's **connected and listening**.
+- The **Chat UI** comes up at **http://localhost:7832/chat** — this is the main way to
+  use Miko (any model, deep research, pair programming, etc.).
 - File indexing runs in the background (2–5 minutes depending on your disk).
-- Miko starts in **ACTIVE** mode — every sentence you speak is processed.
+- If voice is enabled: a **double beep** plays once Gemini Live connects, Miko announces
+  it's **connected and listening**, and it starts in **ACTIVE** mode.
+
+> Chat-only (no voice/mic)? Run just the tool server — see [Tool server for external
+> agents](#tool-server-for-external-agents). It serves the same Chat UI and all tools.
 
 ---
 
@@ -562,6 +570,14 @@ learner + reflection), `modules/knowledge.py` (`remember`/`recall`/`forget`), `v
 (Obsidian/PARA + wikilinks), `deep_research.py` (the research pipeline), `modules/projects.py`
 (project mapping), and `modules/schedule_briefs.py` (calendar briefs). Agents/skills live in
 `agent_skills.py` with the original docs vendored under `vendor/ecc/`.
+
+**Agentic surfaces:** `chat_backend.py` streams live tool activity (`/chat/message/stream`)
+and supports a propose→approve flow for edits/commands; `modules/subagents.py` runs parallel
+read-only sub-agents (`spawn_agents`); `modules/claude_code.py` drives the **Claude Code CLI**
+for pair programming (`/chat/code`, every round git-checkpointed with per-round revert).
+Optional integrations each live in their own module: `modules/email_box.py` (IMAP/SMTP),
+`modules/browser.py` (Playwright), `modules/scheduled_tasks.py` (recurring prompts), and
+`modules/mcp_client.py` (external MCP servers).
 
 **Safety:** destructive tools (delete file, send Discord message, shutdown, etc.) require
 an explicit spoken **"da"** confirmation. Writes to `C:\Windows`, `System32`, and the
