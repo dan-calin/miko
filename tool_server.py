@@ -434,6 +434,13 @@ def _build_app():
             return JSONResponse({"error": "Missing token."}, status_code=400)
         return {"message": CC.revert_round(token, snap)}
 
+    @app.get("/chat/code/active")
+    def chat_code_active(_=Depends(_auth)):
+        """The most recent resumable pair session (so the UI can restore it after a
+        refresh and continue it). Returns {} if there's none."""
+        import modules.claude_code as CC
+        return CC.get_active_session() or {}
+
     @app.get("/chat/agent-skills")
     def chat_agent_skills(_=Depends(_auth)):
         import agent_skills

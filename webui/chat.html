@@ -1511,6 +1511,25 @@ function continueCode(c, guidance) {
   streamCode('/chat/code/continue', { token: c.token, guidance: guidance || '' }, c);
 }
 
+// After a page refresh, restore the most recent unfinished pair session so it can be
+// continued (the transcript + checkpoints live server-side in data/code_sessions.json).
+async function restorePairSession() {
+  try {
+    const s = await (await fetch('/chat/code/active')).json();
+    if (!s || !s.token) return;
+    if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
+    const c = addCodeCard();
+    c.token = s.token; curCodeToken = s.token;
+    c.status.textContent = (s.status === 'awaiting' ? 'awaiting your approval' : s.status)
+      + ' · round ' + s.round + ' · ' + s.repo + '  (restored)';
+    (s.checkpoints || []).forEach(cp => pcCheckpoint(c, cp.round, cp.snap));
+    (s.history || []).forEach(h =>
+      pcTurn(c, (h.role || '').toLowerCase() === 'miko' ? 'miko' : 'claude', h.text, h.files));
+    if (s.status === 'awaiting') pcApprove(c);
+    c.card.classList.toggle('done', s.status !== 'awaiting' && s.status !== 'running');
+  } catch (e) { /* none */ }
+}
+
 async function clearChat() {
   await fetch('/chat/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
   emptyState();
@@ -2150,7 +2169,7 @@ fetch('/chat/conversation?id=' + encodeURIComponent(sessionId))
   .then(r => r.ok ? r.json() : null)
   .then(conv => { if (conv && conv.messages && conv.messages.length) openConversation(sessionId); })
   .catch(() => {})
-  .finally(loadConversations);
+  .finally(() => { loadConversations(); restorePairSession(); });
 // Workspace deep link: ?workspace[=<folder-or-file>].
 if (URLP.has('workspace')) {
   const wp = URLP.get('workspace');

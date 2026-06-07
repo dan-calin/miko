@@ -168,7 +168,7 @@ def _persist():
         from config import CONFIG
         CONFIG.data_dir.mkdir(parents=True, exist_ok=True)
         slim = {t: {k: s[k] for k in ("repo", "goal", "mode", "round", "status",
-                                      "checkpoints", "claude_session")}
+                                      "checkpoints", "claude_session", "history")}
                 for t, s in _SESSIONS.items()}
         _registry_path().write_text(json.dumps(slim, indent=2), encoding="utf-8")
     except Exception as e:
@@ -353,6 +353,23 @@ def revert_round(token, snap="") -> str:
     target = snap or cps[-1]["snap"]
     ok = revert_to(state["repo"], target)
     return ("Reverted the repo to the checkpoint." if ok else "Revert failed.")
+
+
+def get_active_session() -> dict:
+    """The most recent resumable session (ready/running/awaiting) whose repo still exists,
+    so the UI can re-render and continue it after a page refresh. {} if none."""
+    _load_registry()
+    best_tok, best = None, None
+    for tok, s in _SESSIONS.items():   # dict preserves insertion order → last started wins
+        if s.get("status") in ("ready", "running", "awaiting") and os.path.isdir(s.get("repo", "")):
+            best_tok, best = tok, s
+    if not best:
+        return {}
+    return {
+        "token": best.get("token", best_tok), "repo": best["repo"], "goal": best["goal"],
+        "mode": best["mode"], "status": best["status"], "round": best.get("round", 0),
+        "history": best.get("history", []), "checkpoints": best.get("checkpoints", []),
+    }
 
 
 # ── Tool (mid-chat / voice): run an autonomous session to completion ────────────

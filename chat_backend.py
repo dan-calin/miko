@@ -635,7 +635,10 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
                 "pending": pending, "error": str(e)}
 
     cancelled = _cancelled(should_cancel) or reply == "(cancelled)"
-    if not cancelled:                          # don't persist a half-finished turn
+    # Sub-agent sessions are internal — don't persist them as conversations (they'd
+    # clutter the sidebar) and don't learn from them.
+    ephemeral = session_id.startswith("subagent-")
+    if not cancelled and not ephemeral:        # don't persist a half-finished turn
         _save_turn(session_id, message, reply, used, files)
         _learn_async(message, reply, session_id)   # learn facts + episode (throttled)
     return {"reply": reply, "tools_used": used, "files": files, "usage": usage,
