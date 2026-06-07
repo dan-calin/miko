@@ -121,6 +121,29 @@ def get_tool_declarations() -> list:
     ]
 
 
+def list_capabilities() -> list:
+    """Catalog view of the configured MCP servers as installable 'capabilities':
+    name, transport, live connection status, and the tools each exposes. Powers the
+    unified skills/capability catalog (the executable half of the marketplace)."""
+    out = []
+    for srv in _load_servers():
+        name = srv.get("name") or "server"
+        tools = [
+            {"name": info["tool"], "full": full, "desc": (info["description"] or "")[:160]}
+            for full, info in _tools.items() if info["server"] == name
+        ]
+        out.append({
+            "id": name,
+            "label": name,
+            "kind": "capability",
+            "transport": "sse" if (srv.get("type") == "sse" or srv.get("url")) else "stdio",
+            "connected": name in _sessions,
+            "tool_count": len(tools),
+            "tools": tools,
+        })
+    return out
+
+
 def call_tool(full_name: str, args: dict) -> str:
     info = _tools.get(full_name)
     if not info or _loop is None:

@@ -249,6 +249,10 @@ class CommandRouter:
                 from modules.discord_bot import reconnect_discord
                 return reconnect_discord()
 
+            if tool_name == "create_skill_from_research":
+                import agent_skills
+                return agent_skills.create_skill_from_research(**args)
+
             if tool_name == "stop_audio":
                 from modules.discord_bot import stop_audio
                 return stop_audio()

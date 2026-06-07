@@ -484,6 +484,25 @@ def _build_app():
         import agent_skills
         return {"agents": agent_skills.list_agents(), "skills": agent_skills.list_skills()}
 
+    @app.get("/chat/catalog")
+    def chat_catalog(_=Depends(_auth)):
+        """Unified marketplace catalog: agents, skills (with pairs_with links) + MCP
+        capabilities. Phase 2 of the skills marketplace."""
+        import agent_skills
+        return agent_skills.catalog()
+
+    @app.post("/chat/skill/install")
+    async def chat_skill_install(request: Request, _=Depends(_auth)):
+        """Install an agent/skill from a markdown definition (text only — never runs
+        code). Body: {md: str, overwrite?: bool}."""
+        import agent_skills
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        ok, msg = agent_skills.install_skill(body.get("md", ""), bool(body.get("overwrite")))
+        return JSONResponse({"ok": ok, "message": msg}, status_code=(200 if ok else 400))
+
     # ── Knowledge / second brain ─────────────────────────────────────────────────
     @app.get("/knowledge/stats")
     def knowledge_stats(_=Depends(_auth)):

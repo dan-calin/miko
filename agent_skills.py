@@ -408,6 +408,121 @@ def install_skill(md_text: str, overwrite: bool = False):
     return True, f"Installed {kind} '{eid}'."
 
 
+_SKILL_FROM_RESEARCH_SYS = (
+    "You convert a research report into a REUSABLE SKILL for an AI assistant named Miko. "
+    "A skill is a compact, imperative instruction block the assistant follows when working "
+    "in this domain — NOT a summary of findings. Output ONLY a markdown file in EXACTLY "
+    "this format, nothing before or after:\n"
+    "---\n"
+    "id: <short-kebab-case-id>\n"
+    "kind: skill\n"
+    "label: <Title Case, 2-4 words>\n"
+    "theme: research\n"
+    "desc: <one line under 90 chars>\n"
+    "---\n"
+    "Skill — <NAME>: <120-180 words of concrete, actionable operational guidance distilled "
+    "from the research: what to do, what to avoid, key parameters/heuristics, in imperative "
+    "voice. Point at Miko's tools where useful (deep_research, web_search, run_command, "
+    "create_note). No citations, no 'the research says', no prose outside the block.>"
+)
+
+
+def skill_from_research(report_text: str, topic: str = "", *, provider: str = "gemini",
+                        model: str = "", key: str = "", base: str = "",
+                        overwrite: bool = False):
+    """Phase 3 — distill a research report into a reusable registry SKILL (a prompt
+    overlay) and install it. Text only; reuses chat_backend.complete_text. Defaults to
+    Gemini + the configured key. Returns (ok: bool, message: str, skill_id: str)."""
+    import re
+    report_text = (report_text or "").strip()
+    if len(report_text) < 80:
+        return False, "Not enough research text to distill into a skill.", ""
+
+    if provider == "gemini" and not key:
+        try:
+            from config import CONFIG
+            key = CONFIG.gemini_api_key
+            model = model or "gemini-2.5-flash"
+        except Exception:
+            pass
+
+    from chat_backend import complete_text
+    try:
+        md = (complete_text(provider, model, key, base, _SKILL_FROM_RESEARCH_SYS,
+              f"TOPIC: {topic}\n\nRESEARCH REPORT:\n{report_text[:8000]}",
+              max_tokens=900) or "").strip()
+    except Exception as e:
+        return False, f"Distillation failed: {e}", ""
+
+    if md.startswith("```"):                       # unwrap a ```markdown fence if present
+        md = re.sub(r"^```[a-zA-Z]*\s*", "", md).rstrip("`").strip()
+
+    kind, eid, _entry = _entry_from_md(md)
+    if not eid:                                    # model skipped frontmatter — synthesize it
+        slug = re.sub(r"[^a-z0-9]+", "-", (topic or "research-skill").lower()).strip("-")[:40] \
+            or "research-skill"
+        md = _to_md(slug, "skill", {
+            "label": (topic or "Research Skill")[:40],
+            "theme": "research",
+            "desc": f"Distilled from research on {topic}"[:90],
+            "prompt": md or report_text[:1200],
+        })
+        eid = slug
+
+    ok, msg = install_skill(md, overwrite=overwrite)
+    return ok, msg, (eid if ok else "")
+
+
+def create_skill_from_research(topic: str) -> str:
+    """Tool entry: find the best-matching research note in the vault for `topic`,
+    distill it into a reusable skill, and install it. Returns a spoken-friendly status."""
+    topic = (topic or "").strip()
+    if not topic:
+        return "Spune-mi despre ce research să fac un skill, sefu."
+    text = ""
+    try:
+        from pathlib import Path
+        from memory import knowledge_store as KS
+        for h in KS.search(topic, k=4, kinds=["note"]):
+            ref = (h.get("ref") or "").split("#")[0]
+            if ref and Path(ref).exists():
+                text = Path(ref).read_text(encoding="utf-8")
+                break
+    except Exception as e:
+        _log.warning(f"find research note failed: {e}")
+    if len(text) < 80:
+        return (f"N-am găsit o notiță de research pentru '{topic}'. "
+                "Rulează întâi un deep research pe tema asta, sefu.")
+    ok, _msg, sid = skill_from_research(text, topic=topic, overwrite=True)
+    if ok:
+        return (f"Am distilat research-ul despre {topic} într-un skill nou ('{sid}'). "
+                "Îl poți activa din meniul de Skills, sefu.")
+    return f"N-am putut crea skill-ul din research: {_msg}"
+
+
+TOOL_DECLARATIONS = [
+    {
+        "name": "create_skill_from_research",
+        "description": (
+            "Distilează o notiță de research existentă din vault într-un SKILL reutilizabil "
+            "și îl instalează (apare în meniul de Skills). Folosește când userul zice "
+            "'fă un skill din research-ul despre X', 'transformă cercetarea în skill', "
+            "'salvează asta ca skill'. Necesită ca un deep research pe acel subiect să fi rulat deja."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "topic": {
+                    "type": "STRING",
+                    "description": "Subiectul research-ului de transformat în skill.",
+                }
+            },
+            "required": ["topic"],
+        },
+    },
+]
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def list_agents() -> list:
@@ -420,6 +535,37 @@ def list_skills() -> list:
     _, skills = _registry()
     return [{"id": k, "label": v["label"], "theme": v["theme"], "desc": v.get("desc", "")}
             for k, v in skills.items()]
+
+
+def catalog() -> dict:
+    """Unified marketplace view (Phase 2): agents, skills, and MCP capabilities in one
+    structure. Each skill carries its `pairs_with` capability links with an `installed`
+    flag, so the picker can show 'this skill pairs with the metatrader5 capability —
+    [installed ✓ / add it]'. Capabilities come from the MCP layer (the executable half)."""
+    agents, skills = _registry()
+
+    caps = []
+    try:
+        import modules.mcp_client as _mcp
+        caps = _mcp.list_capabilities()
+    except Exception as e:
+        _log.warning(f"capabilities unavailable: {e}")
+    cap_ids = {c.get("id") for c in caps}
+
+    skill_list = []
+    for k, v in skills.items():
+        pw = v.get("pairs_with", [])
+        skill_list.append({
+            "id": k, "label": v["label"], "theme": v["theme"], "desc": v.get("desc", ""),
+            "pairs_with": [{"id": c, "installed": c in cap_ids} for c in pw],
+        })
+
+    return {
+        "agents": [{"id": k, "label": v["label"], "theme": v["theme"], "desc": v.get("desc", "")}
+                   for k, v in agents.items()],
+        "skills": skill_list,
+        "capabilities": caps,
+    }
 
 
 def build_overlay(agent_id: str = "", skill_ids=None) -> str:

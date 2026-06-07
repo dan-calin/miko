@@ -68,6 +68,7 @@ ALL_TOOL_DECLARATIONS: list = (
     + _safe_import("modules.journey")
     + _safe_import("modules.calendar")
     + _safe_import("modules.discord_rpc")
+    + _safe_import("agent_skills")
 )
 
 def _to_anthropic_tool(decl: dict) -> dict:
