@@ -21,6 +21,8 @@ data/queue_state.json
 data/conversations/
 data/fastembed/
 data/browser_*.png
+# skill registry: builtins re-seed from code; installed skills are machine-local
+data/skills/
 memory/long_term.json
 **/*.log
 

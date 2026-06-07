@@ -279,23 +279,155 @@ _SKILLS = {
 }
 
 
+# ── File-based registry (the installable "marketplace" layer) ─────────────────
+# The dicts above are the always-available BUILTIN defaults. On top of them we
+# load agent/skill definitions from data/skills/*.md (frontmatter + prompt body),
+# so new entries can be dropped in (or pulled from a marketplace) without code
+# changes. Files override builtins by id; a deleted file falls back to the builtin.
+#
+# Marketplace skills are TEXT ONLY — a prompt overlay, never executable code.
+# Runnable capabilities live in the MCP layer (modules/mcp_client.py), which an
+# entry can point at via the optional `pairs_with:` field (Phase 2 link).
+
+import logging as _logging
+
+_log = _logging.getLogger("miko.skills")
+
+_BUILTIN_AGENTS = dict(_AGENTS)   # snapshot the code defaults as the recovery layer
+_BUILTIN_SKILLS = dict(_SKILLS)
+_seeded = False
+
+
+def _skills_dir():
+    from config import CONFIG
+    d = CONFIG.data_dir / "skills"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _parse_md(text: str):
+    """Split a registry .md into (frontmatter dict, body). Frontmatter is the
+    simple 'key: value' block between the leading '---' fences."""
+    fm, body = {}, text.strip()
+    if body.startswith("---"):
+        parts = body.split("---", 2)
+        if len(parts) >= 3:
+            for line in parts[1].strip().splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    fm[k.strip().lower()] = v.strip()
+            body = parts[2].strip()
+    return fm, body
+
+
+def _entry_from_md(text: str):
+    """Parse a registry file into (kind, id, entry) or (None, None, None)."""
+    fm, body = _parse_md(text)
+    eid = (fm.get("id") or "").strip()
+    if not eid or not body:
+        return None, None, None
+    kind = (fm.get("kind") or "skill").strip().lower()
+    kind = "agent" if kind == "agent" else "skill"
+    entry = {
+        "label": fm.get("label", eid),
+        "theme": fm.get("theme", "productivity"),
+        "desc":  fm.get("desc", ""),
+        "prompt": body,
+    }
+    pairs = (fm.get("pairs_with") or "").strip()
+    if pairs:
+        entry["pairs_with"] = [x.strip() for x in pairs.split(",") if x.strip()]
+    return kind, eid, entry
+
+
+def _to_md(eid: str, kind: str, entry: dict) -> str:
+    """Serialize a builtin/loaded entry back to the .md registry format."""
+    lines = ["---", f"id: {eid}", f"kind: {kind}",
+             f"label: {entry.get('label', eid)}",
+             f"theme: {entry.get('theme', 'productivity')}",
+             f"desc: {entry.get('desc', '')}"]
+    if entry.get("pairs_with"):
+        lines.append("pairs_with: " + ", ".join(entry["pairs_with"]))
+    lines += ["---", "", entry.get("prompt", "").strip(), ""]
+    return "\n".join(lines)
+
+
+def _seed_builtins() -> None:
+    """First-run migration: write each builtin out as an editable .md so it shows
+    up in the registry/marketplace. Non-destructive — never overwrites an existing
+    file (so user edits stick). A deleted builtin file is re-seeded next start."""
+    try:
+        d = _skills_dir()
+        for eid, e in _BUILTIN_AGENTS.items():
+            p = d / f"{eid}.md"
+            if not p.exists():
+                p.write_text(_to_md(eid, "agent", e), encoding="utf-8")
+        for eid, e in _BUILTIN_SKILLS.items():
+            p = d / f"{eid}.md"
+            if not p.exists():
+                p.write_text(_to_md(eid, "skill", e), encoding="utf-8")
+    except Exception as e:
+        _log.warning(f"seed builtins failed: {e}")
+
+
+def _registry():
+    """Merged registry: builtin defaults overlaid by data/skills/*.md (by id)."""
+    global _seeded
+    agents = dict(_BUILTIN_AGENTS)
+    skills = dict(_BUILTIN_SKILLS)
+    try:
+        if not _seeded:
+            _seed_builtins()
+            _seeded = True
+        for p in sorted(_skills_dir().glob("*.md")):
+            try:
+                kind, eid, entry = _entry_from_md(p.read_text(encoding="utf-8"))
+                if eid:
+                    (agents if kind == "agent" else skills)[eid] = entry
+            except Exception as e:
+                _log.warning(f"registry file {p.name} failed: {e}")
+    except Exception as e:
+        _log.warning(f"load registry failed: {e}")
+    return agents, skills
+
+
+def install_skill(md_text: str, overwrite: bool = False):
+    """Install an agent/skill from a markdown definition into the registry.
+    TEXT ONLY — validates and writes a .md file; never executes anything.
+    Returns (ok: bool, message: str)."""
+    kind, eid, _entry = _entry_from_md(md_text or "")
+    if not eid:
+        return False, "Invalid: needs frontmatter with an 'id' and a prompt body below the '---'."
+    p = _skills_dir() / f"{eid}.md"
+    if p.exists() and not overwrite:
+        return False, f"'{eid}' already exists — pass overwrite=True to replace it."
+    try:
+        p.write_text(md_text.strip() + "\n", encoding="utf-8")
+    except Exception as e:
+        return False, f"Could not write skill: {e}"
+    return True, f"Installed {kind} '{eid}'."
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def list_agents() -> list:
-    return [{"id": k, "label": v["label"], "theme": v["theme"], "desc": v["desc"]}
-            for k, v in _AGENTS.items()]
+    agents, _ = _registry()
+    return [{"id": k, "label": v["label"], "theme": v["theme"], "desc": v.get("desc", "")}
+            for k, v in agents.items()]
 
 
 def list_skills() -> list:
-    return [{"id": k, "label": v["label"], "theme": v["theme"], "desc": v["desc"]}
-            for k, v in _SKILLS.items()]
+    _, skills = _registry()
+    return [{"id": k, "label": v["label"], "theme": v["theme"], "desc": v.get("desc", "")}
+            for k, v in skills.items()]
 
 
 def build_overlay(agent_id: str = "", skill_ids=None) -> str:
     """Return the system-prompt addendum for the chosen persona + skills ('' if none)."""
+    agents, skills = _registry()
     parts = []
 
-    agent = _AGENTS.get((agent_id or "").strip())
+    agent = agents.get((agent_id or "").strip())
     if agent:
         parts.append(
             "— Active persona (overrides default behaviour for this turn) —\n"
@@ -306,9 +438,9 @@ def build_overlay(agent_id: str = "", skill_ids=None) -> str:
     seen = set()
     for sid in (skill_ids or []):
         sid = (sid or "").strip()
-        if sid in _SKILLS and sid not in seen:
+        if sid in skills and sid not in seen:
             seen.add(sid)
-            chosen.append(_SKILLS[sid]["prompt"])
+            chosen.append(skills[sid]["prompt"])
     if chosen:
         parts.append("— Active skills —\n" + "\n\n".join(chosen))
 
