@@ -466,6 +466,19 @@ def _build_app():
         token = (body.get("token") or "").strip()
         return {"ok": CC.forget_session(token)}
 
+    @app.post("/chat/code/recap")
+    async def chat_code_recap(request: Request, _=Depends(_auth)):
+        """Ask Claude to summarize what a session has done so far (where it left off)."""
+        import modules.claude_code as CC
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        token = (body.get("token") or "").strip()
+        if not token:
+            return JSONResponse({"error": "Missing token."}, status_code=400)
+        return {"recap": CC.recap(token)}
+
     @app.get("/chat/agent-skills")
     def chat_agent_skills(_=Depends(_auth)):
         import agent_skills

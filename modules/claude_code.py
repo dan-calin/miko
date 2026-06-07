@@ -335,6 +335,14 @@ def run(token, should_cancel=None, guidance=""):
         return
     if guidance:
         state["guidance"] = guidance
+        # Reopen a finished/maxed-out session when the user gives a fresh instruction —
+        # the Claude session still remembers the repo, so we just extend the round budget.
+        if state.get("round", 0) >= state.get("max_rounds", 6):
+            state["max_rounds"] = state.get("round", 0) + 6
+    elif state.get("status") == "done":
+        # No new instruction and already finished → nothing to do.
+        yield {"type": "done", "rounds": state.get("round", 0), "summary": "already complete"}
+        return
     state["status"] = "running"
     yield {"type": "status", "text": f"Pairing on: {state['goal'][:80]}"}
 
@@ -420,6 +428,26 @@ def forget_session(token: str) -> bool:
         _persist()
         return True
     return False
+
+
+def recap(token: str) -> str:
+    """Ask Claude (via its remembered session) to summarize what's been done so far —
+    so a resumed session shows where it left off even if the transcript wasn't saved."""
+    _load_registry()
+    s = _SESSIONS.get(token)
+    if not s:
+        return "Unknown session."
+    if not s.get("claude_session") or not os.path.isdir(s.get("repo", "")):
+        return "Nothing to recap (no Claude session / repo missing)."
+    res = _run_claude(
+        s["repo"],
+        "Concisely recap what we have accomplished in THIS coding session so far, and the "
+        "current state of the work — so we know where to continue. Do not change anything.",
+        s["claude_session"], resume=True, timeout=300)
+    txt = res.get("result", "").strip() or "(no recap returned)"
+    s.setdefault("history", []).append({"role": "Claude", "text": txt})
+    _persist()
+    return txt
 
 
 # ── Tool (mid-chat / voice): run an autonomous session to completion ────────────

@@ -1536,10 +1536,44 @@ function renderPairCard(s) {
   (s.checkpoints || []).forEach(cp => pcCheckpoint(c, cp.round, cp.snap));
   (s.history || []).forEach(h =>
     pcTurn(c, (h.role || '').toLowerCase() === 'miko' ? 'miko' : 'claude', h.text, h.files));
+  if (!(s.history || []).length) {
+    const note = document.createElement('div'); note.className = 'ps-empty';
+    note.textContent = '(transcript not saved for this older session — “Recap from Claude” shows where it left off)';
+    c.log.appendChild(note);
+  }
+  pcRecap(c);
   if (s.status === 'awaiting') pcApprove(c);
+  else pcContinue(c);                 // done/running/ready → let the user give a new instruction
   c.card.classList.toggle('done', s.status !== 'awaiting' && s.status !== 'running');
   chatEl.scrollTop = chatEl.scrollHeight;
   return c;
+}
+
+// Ask Claude (via its remembered session) to summarize what's been done so far.
+function pcRecap(c) {
+  const el = document.createElement('div'); el.className = 'pc-next';
+  const b = document.createElement('button'); b.className = 'pc-revert'; b.textContent = '↻ Recap from Claude';
+  b.addEventListener('click', async () => {
+    b.disabled = true; b.textContent = 'asking Claude…';
+    try {
+      const r = await (await fetch('/chat/code/recap', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: c.token }) })).json();
+      el.remove();
+      pcTurn(c, 'claude', r.recap || '(no recap)');
+    } catch (e) { b.disabled = false; b.textContent = '↻ Recap from Claude'; }
+  });
+  el.appendChild(b); c.log.appendChild(el);
+}
+
+// Continue a finished/paused session with a NEW instruction (Claude still remembers it).
+function pcContinue(c) {
+  const el = document.createElement('div'); el.className = 'pc-next';
+  const gi = document.createElement('input'); gi.className = 'pair-dir pc-guide'; gi.type = 'text';
+  gi.placeholder = 'continue: give the next instruction (e.g. "now implement P0-2: diagnose the 33× signal-count variance")';
+  const b = document.createElement('button'); b.className = 'pc-approve'; b.textContent = '▶ Continue';
+  b.addEventListener('click', () => { const g = gi.value.trim(); if (!g) { gi.focus(); return; } el.remove(); continueCode(c, g); });
+  gi.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); b.click(); } });
+  el.append(gi, b); c.log.appendChild(el);
 }
 
 // After a page refresh, restore the most recent unfinished pair session.
