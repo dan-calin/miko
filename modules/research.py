@@ -42,6 +42,28 @@ def _jina_throttle() -> None:
     if wait > 0:
         time.sleep(wait)
 
+
+# DuckDuckGo search pacing — the exhaustive fan-out fires many searches at once and DDG
+# rate-limits a burst (returning "No results found"), starving branches of sources. One
+# search per interval keeps us under the limit. MIKO_SEARCH_INTERVAL tunes it.
+try:
+    _SEARCH_MIN_INTERVAL = max(0.0, float(os.getenv("MIKO_SEARCH_INTERVAL", "1.5")))
+except ValueError:
+    _SEARCH_MIN_INTERVAL = 1.5
+_SEARCH_LOCK = threading.Lock()
+_search_next_at = [0.0]
+
+
+def _search_throttle() -> None:
+    """Same evenly-spaced pacer as the reader, for web searches."""
+    with _SEARCH_LOCK:
+        now = time.time()
+        wait = max(0.0, _search_next_at[0] - now)
+        _search_next_at[0] = now + wait + _SEARCH_MIN_INTERVAL
+    if wait > 0:
+        time.sleep(wait)
+
+
 TOOL_DECLARATIONS = [
     {
         "name": "web_search",
@@ -298,23 +320,38 @@ def get_network_info() -> str:
 # ── Structured search + page fetching (used by the deep-research pipeline) ─────
 
 def search_results(query: str, max_results: int = 6) -> list[dict]:
-    """Return structured DuckDuckGo results: [{title, body, url}] (empty on error)."""
+    """Return structured DuckDuckGo results: [{title, body, url}] (empty on error).
+    Globally paced (see _search_throttle) so the fan-out's burst of searches doesn't
+    trip DDG's rate limit, with one backoff-retry when a result comes back empty
+    (almost always a transient rate-limit, not a genuinely empty query)."""
     try:
         from ddgs import DDGS
     except ImportError:
         from duckduckgo_search import DDGS
-    out = []
-    try:
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
-                out.append({
-                    "title": (r.get("title") or "").strip(),
-                    "body": (r.get("body") or "").strip(),
-                    "url": (r.get("href") or r.get("url") or "").strip(),
-                })
-    except Exception as e:
-        logger.warning(f"search_results error: {e}")
-    return out
+
+    last_err = None
+    for attempt in range(2):
+        _search_throttle()
+        try:
+            out = []
+            with DDGS() as ddgs:
+                for r in ddgs.text(query, max_results=max_results):
+                    out.append({
+                        "title": (r.get("title") or "").strip(),
+                        "body": (r.get("body") or "").strip(),
+                        "url": (r.get("href") or r.get("url") or "").strip(),
+                    })
+            if out:
+                return out
+            last_err = "no results"
+        except Exception as e:
+            last_err = e
+        if attempt == 0:
+            time.sleep(4.0)   # DDG throttled the burst — back off, then retry once
+
+    if last_err and str(last_err) != "no results":
+        logger.warning(f"search_results error: {last_err}")
+    return []
 
 
 class _TextExtractor(HTMLParser):

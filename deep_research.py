@@ -258,22 +258,23 @@ def _run_fanout(topic, provider, model, api_key, base_url, language, overlay, cf
 
 def _fan_branches(R, subject, questions, provider, model, api_key, base_url, overlay, cfg, seen_snapshot):
     """Run one wave of branch agents in parallel; each returns {q, report, reads, results}."""
-    def _one(q):
+    # ONE book/paper search for the whole wave (not one per branch) — halves the search
+    # load so DDG doesn't rate-limit the burst. The found PDFs are then handed out, one
+    # per branch, so each branch still gets a chance to cite a textbook/paper.
+    try:
+        pdf_pool = [r for r in (R.search_results(f"{subject} filetype:pdf", 6) or []) if r.get("url")]
+    except Exception:
+        pdf_pool = []
+
+    def _one(q, book):
         try:
             results = R.search_results(q, cfg["results"]) or []
-            # Also surface BOOKS / academic papers as PDFs (the `filetype:pdf` trick);
-            # fetch_text now reads PDFs, so a branch can cite a textbook or paper.
-            try:
-                pdfs = R.search_results(f"{q} filetype:pdf", 3) or []
-            except Exception:
-                pdfs = []
-            results = results + pdfs
-
+            if book:
+                results = results + [book]
             ranked = _rank_urls([(q, results)], subject, seen_snapshot)[:cfg["fetch"]]
-            # Guarantee at least one book/paper PDF gets read when one was found.
-            for pu in [r.get("url") for r in pdfs if r.get("url")][:1]:
-                if pu not in ranked:
-                    ranked.append(pu)
+            # Guarantee this branch's assigned book/paper PDF gets read.
+            if book and book.get("url") and book["url"] not in ranked:
+                ranked.append(book["url"])
             reads = _parallel_fetch(R, ranked, cfg["chars"], min(len(ranked), 5)) if ranked else []
             report = _branch_report(subject, q, results, reads,
                                     provider, model, api_key, base_url, overlay)
@@ -284,7 +285,8 @@ def _fan_branches(R, subject, questions, provider, model, api_key, base_url, ove
 
     out = [None] * len(questions)
     with ThreadPoolExecutor(max_workers=min(cfg["workers"], max(1, len(questions)))) as ex:
-        futs = {ex.submit(_one, q): i for i, q in enumerate(questions)}
+        futs = {ex.submit(_one, q, pdf_pool[i % len(pdf_pool)] if pdf_pool else None): i
+                for i, q in enumerate(questions)}
         for fut in futs:
             i = futs[fut]
             try:
