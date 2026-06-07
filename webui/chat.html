@@ -1310,7 +1310,7 @@ async function send() {
 }
 
 // ── Deep Research (streamed pipeline with live progress) ───
-function addResearchCard() {
+function addResearchCard(topic) {
   const row = document.createElement('div'); row.className = 'row bot';
   const g = document.createElement('div'); g.className = 'glyph'; g.textContent = 'M';
   const c = document.createElement('div'); c.className = 'content';
@@ -1326,7 +1326,7 @@ function addResearchCard() {
   c.append(card, tx, fl, tl, st); row.append(g, c);
   messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
   return {
-    card, tx, fl, tl, st, steps: {}, srcCount: 0,
+    card, tx, fl, tl, st, steps: {}, srcCount: 0, topic: topic || '', report: '',
     status: card.querySelector('.rs-status'),
     plan: card.querySelector('.rs-plan'),
     log: card.querySelector('.rs-log'),
@@ -1361,6 +1361,8 @@ function handleResearchEvent(c, ev) {
     renderBotText(c.tx, ev.reply || '(no report)');
     c.tl.innerHTML = '<span class="chip"><span class="di">◈</span>deep_research</span>';
     if (ev.note) renderFileChips(c.fl, [{ path: ev.note, name: ev.note.split(/[\\\/]/).pop() }]);
+    c.report = ev.reply || '';
+    if (c.report) addSkillPrompt(c);
     c.st.textContent = fmtTime(new Date());
   } else if (ev.type === 'error') {
     c.status.textContent = 'failed'; c.tx.className = 'bot-text err';
@@ -1369,8 +1371,51 @@ function handleResearchEvent(c, ev) {
   chatEl.scrollTop = chatEl.scrollHeight;
 }
 
+// After a research report lands, offer to distill it into a reusable skill.
+function addSkillPrompt(c) {
+  const box = document.createElement('div');
+  box.className = 'rs-skill-prompt';
+  box.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;' +
+    'padding:8px 10px;border:1px solid var(--line,#333);border-radius:8px;font-size:13px';
+  const q = document.createElement('span');
+  q.textContent = 'Turn this research into a reusable skill?';
+  q.style.opacity = '.85';
+  const yes = document.createElement('button');
+  yes.type = 'button'; yes.textContent = '✦ Save as skill';
+  yes.style.cssText = 'padding:5px 12px;border-radius:6px;cursor:pointer;border:1px solid var(--accent,#d8a657);' +
+    'background:transparent;color:var(--accent,#d8a657);font:inherit';
+  const no = document.createElement('button');
+  no.type = 'button'; no.textContent = 'No thanks';
+  no.style.cssText = 'padding:5px 10px;border-radius:6px;cursor:pointer;border:none;background:transparent;color:inherit;opacity:.5;font:inherit';
+  no.addEventListener('click', () => box.remove());
+  yes.addEventListener('click', () => saveResearchAsSkill(c, box));
+  box.append(q, yes, no);
+  c.tx.after(box);
+}
+
+async function saveResearchAsSkill(c, box) {
+  box.innerHTML = '<span style="opacity:.7">Distilling into a skill…</span>';
+  try {
+    const r = await fetch('/chat/skill/from-research', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: c.topic || '', report: c.report || '' }),
+    });
+    const d = await r.json();
+    const esc = s => (s || '').replace(/[<>&]/g, '');
+    if (d.ok) {
+      box.innerHTML = '<span style="color:var(--accent,#d8a657)">✦ Saved as skill' +
+        (d.skill_id ? " '" + esc(d.skill_id) + "'" : '') + ' — find it in the Skills menu.</span>';
+      loadAgentSkills();   // refresh the picker so the new skill appears
+    } else {
+      box.innerHTML = '<span style="color:#e06c75">Couldn’t create skill: ' + esc(d.message || 'error') + '</span>';
+    }
+  } catch (e) {
+    box.innerHTML = '<span style="color:#e06c75">Error: ' + (e.message || '').replace(/[<>&]/g, '') + '</span>';
+  }
+}
+
 async function sendResearch(text) {
-  const c = addResearchCard();
+  const c = addResearchCard(text);
   setBusy(true);
   curAbort = new AbortController();
   try {

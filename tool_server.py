@@ -516,6 +516,26 @@ def _build_app():
         ok, msg = agent_skills.install_skill(body.get("md", ""), bool(body.get("overwrite")))
         return JSONResponse({"ok": ok, "message": msg}, status_code=(200 if ok else 400))
 
+    @app.post("/chat/skill/from-research")
+    async def chat_skill_from_research(request: Request, _=Depends(_auth)):
+        """Distill a deep-research result into a reusable skill (text only). Body:
+        {topic?: str, report?: str}. Uses the supplied report if present (the UI already
+        has it), else finds the matching vault research note by topic."""
+        import agent_skills
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        topic = (body.get("topic") or "").strip()
+        report = (body.get("report") or "").strip()
+        if report:
+            ok, msg, sid = agent_skills.skill_from_research(report, topic=topic, overwrite=True)
+            return JSONResponse({"ok": ok, "message": msg, "skill_id": sid},
+                                status_code=(200 if ok else 400))
+        msg = agent_skills.create_skill_from_research(topic)
+        ok = not msg.lower().startswith(("n-am", "spune-mi"))
+        return JSONResponse({"ok": ok, "message": msg}, status_code=200)
+
     # ── Knowledge / second brain ─────────────────────────────────────────────────
     @app.get("/knowledge/stats")
     def knowledge_stats(_=Depends(_auth)):
