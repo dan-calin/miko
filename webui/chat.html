@@ -812,22 +812,11 @@
             <button type="button" class="as-eff on" data-coder="claude" title="Claude Code CLI (Anthropic)">Claude</button>
             <button type="button" class="as-eff" data-coder="aider" title="Aider — multi-provider coder (pip install aider-chat)">Aider</button>
           </div>
-          <select id="pair-claude-model" class="pair-sel" title="Claude model — Haiku is cheapest">
-            <option value="">model · default</option>
-            <option value="haiku">Haiku · cheapest</option>
-            <option value="sonnet">Sonnet · balanced</option>
-            <option value="opus">Opus · strongest</option>
-          </select>
-          <input id="pair-coder-model" class="pair-dir" type="text" spellcheck="false" style="display:none"
-                 placeholder="model — e.g. gemini/gemini-2.5-flash, deepseek/deepseek-chat, openai/gpt-…">
-          <select id="pair-effort-sel" class="pair-sel" title="Coder thinking / effort level">
-            <option value="">effort · default</option>
-            <option value="low">effort · low</option>
-            <option value="medium">effort · medium</option>
-            <option value="high">effort · high</option>
-            <option value="xhigh">effort · xhigh</option>
-            <option value="max">effort · max</option>
-          </select>
+          <select id="pair-provider-sel" class="pair-sel" style="display:none" title="Provider (Aider)"></select>
+          <select id="pair-model-sel" class="pair-sel" title="Model"></select>
+          <input id="pair-model-custom" class="pair-dir" type="text" spellcheck="false" style="display:none"
+                 placeholder="model id — e.g. anthropic/claude-opus-4-8, ollama/llama3.1">
+          <select id="pair-effort-sel" class="pair-sel" title="Effort / reasoning level (provider-specific)"></select>
         </div>
         <div class="pair-sessions" id="pair-sessions"></div>
         <div class="inputbar">
@@ -918,10 +907,10 @@ let asResearchMore = false;                 // research-engine "More" row expand
 let approveMode = cfg.approve !== false;   // require approval for edits & commands (default ON)
 let pairMode = false;                       // pair-programming (Miko ↔ Claude Code) active
 let pairKind = cfg.pairKind || 'autonomous';   // autonomous | controlled
-let pairCoder = cfg.pairCoder || 'claude';     // claude | aider  (the coder CLI)
-let pairClaudeModel = cfg.pairClaudeModel || '';  // '' | haiku | sonnet | opus
-let pairAiderModel = cfg.pairAiderModel || '';    // aider model string (provider/model)
-let pairCoderEffort = cfg.pairCoderEffort || '';  // '' | low | medium | high | xhigh | max
+let pairCoder = cfg.pairCoder || 'claude';                 // claude | aider
+let pairAiderProvider = cfg.pairAiderProvider || 'gemini'; // active provider when coder=aider
+let pairCoderModel = cfg.pairCoderModel || '';             // resolved model id (alias / provider-model / custom)
+let pairCoderEffort = cfg.pairCoderEffort || '';           // provider-specific effort level
 let curCodeToken = null;                    // active pair session token
 
 function envKeyName(id) { return (MODELS[id] && MODELS[id].env_key) || ''; }
@@ -950,8 +939,8 @@ function saveCfg() {
   cfg.effort   = asEffort;
   cfg.researchModel = asResearch;
   cfg.pairKind = pairKind;
-  cfg.pairCoder = pairCoder; cfg.pairClaudeModel = pairClaudeModel;
-  cfg.pairAiderModel = pairAiderModel; cfg.pairCoderEffort = pairCoderEffort;
+  cfg.pairCoder = pairCoder; cfg.pairAiderProvider = pairAiderProvider;
+  cfg.pairCoderModel = pairCoderModel; cfg.pairCoderEffort = pairCoderEffort;
   cfg.byModel  = cfg.byModel || {};
   cfg.byModel[modelKey()] = { agent: asAgent, skills: asSkills, effort: asEffort };
   localStorage.setItem('miko_cfg', JSON.stringify(cfg));
@@ -1596,8 +1585,7 @@ function sendCode(goal) {
     provider: curProvider, model: $('#model').value, api_key: $('#api-key').value,
     base_url: $('#base-url').value, research_model: asResearch,
     agent: asAgent, skills: asSkills,   // active persona/skills → Miko's build context
-    coder: pairCoder, coder_effort: pairCoderEffort,
-    coder_model: (pairCoder === 'claude' ? pairClaudeModel : pairAiderModel),
+    coder: pairCoder, coder_effort: pairCoderEffort, coder_model: _resolvedCoderModel(),
   }, c);
 }
 
@@ -2318,36 +2306,96 @@ $('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(el => el.addEventL
 $('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(b => b.classList.toggle('on', b.dataset.mode === pairKind));
 $('#pair-sessions-btn').addEventListener('click', togglePairSessions);
 
-// Coder CLI (Claude / Aider) + model + effort
-// Effort vocabularies differ per coder/provider, so the options are coder-specific.
-// Claude's --effort: low/medium/high/xhigh/max. Aider's --reasoning-effort is generic
-// (low/medium/high) and only applies if the chosen model actually supports it.
-const EFFORT_OPTS = {
-  claude: ['', 'low', 'medium', 'high', 'xhigh', 'max'],
-  aider:  ['', 'low', 'medium', 'high'],
+// Coder catalog — provider → models → effort levels (researched June 2026; "Custom" is the
+// escape hatch for new models). Claude Code is Anthropic-only; Aider is multi-provider.
+const CODER_CATALOG = {
+  claude: {
+    models: [
+      { id: '',                  label: 'model · default' },
+      { id: 'opus',              label: 'Opus · strongest' },
+      { id: 'sonnet',            label: 'Sonnet · balanced' },
+      { id: 'haiku',             label: 'Haiku · cheapest' },
+      { id: 'claude-opus-4-8',   label: 'Opus 4.8' },
+      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+      { id: 'claude-haiku-4-5',  label: 'Haiku 4.5' },
+    ],
+    efforts: ['', 'low', 'medium', 'high', 'xhigh', 'max'],
+  },
+  aider: { providers: {
+    gemini:    { label: 'Google Gemini', efforts: ['', 'minimal', 'low', 'medium', 'high'], models: [
+      { id: 'gemini/gemini-3.5-flash',      label: '3.5 Flash · cheap+strong' },
+      { id: 'gemini/gemini-3-flash',        label: '3 Flash' },
+      { id: 'gemini/gemini-3.1-pro',        label: '3.1 Pro' },
+      { id: 'gemini/gemini-3.1-flash-lite', label: '3.1 Flash-Lite · cheapest' } ] },
+    deepseek:  { label: 'DeepSeek', efforts: ['', 'low', 'medium', 'high'], models: [
+      { id: 'deepseek/deepseek-v4-flash', label: 'V4 Flash · cheap' },
+      { id: 'deepseek/deepseek-v4-pro',   label: 'V4 Pro' } ] },
+    openai:    { label: 'OpenAI (GPT-5)', efforts: ['', 'none', 'low', 'medium', 'high', 'xhigh'], models: [
+      { id: 'openai/gpt-5.5',     label: 'GPT-5.5' },
+      { id: 'openai/gpt-5.5-pro', label: 'GPT-5.5 Pro' },
+      { id: 'openai/gpt-5.4',     label: 'GPT-5.4' },
+      { id: 'openai/gpt-5.2',     label: 'GPT-5.2' } ] },
+    anthropic: { label: 'Anthropic (via Aider)', efforts: ['', 'low', 'medium', 'high'], models: [
+      { id: 'anthropic/claude-opus-4-8',   label: 'Opus 4.8' },
+      { id: 'anthropic/claude-sonnet-4-6', label: 'Sonnet 4.6' },
+      { id: 'anthropic/claude-haiku-4-5',  label: 'Haiku 4.5' } ] },
+    xai:       { label: 'xAI Grok', efforts: ['', 'low', 'high'], models: [
+      { id: 'xai/grok-4.20',        label: 'Grok 4.20 · reasoning' },
+      { id: 'xai/grok-4-1-fast',    label: 'Grok 4.1 Fast' },
+      { id: 'xai/grok-code-fast-1', label: 'Grok Code Fast' } ] },
+    minimax:   { label: 'MiniMax', efforts: [''], models: [
+      { id: 'minimax/MiniMax-M2',      label: 'MiniMax-M2' },
+      { id: 'minimax/MiniMax-Text-01', label: 'MiniMax-Text-01' } ] },
+    ollama:    { label: 'Local (Ollama)', efforts: [''], models: [
+      { id: '__custom__', label: 'Custom — type model id' } ] },
+    custom:    { label: 'Custom provider', efforts: ['', 'low', 'medium', 'high'], models: [
+      { id: '__custom__', label: 'Custom — type model id' } ] },
+  } },
 };
+function _opt(v, label) { return '<option value="' + (v + '').replace(/"/g, '&quot;') + '">' + label + '</option>'; }
+function _coderLists() {
+  if (pairCoder === 'claude') return CODER_CATALOG.claude;
+  const provs = CODER_CATALOG.aider.providers;
+  if (!provs[pairAiderProvider]) pairAiderProvider = 'gemini';
+  return provs[pairAiderProvider];
+}
+function _resolvedCoderModel() { return pairCoderModel === '__custom__' ? '' : pairCoderModel; }
 function syncCoderUI() {
   const isClaude = pairCoder === 'claude';
   $('#pair-coder-bar').querySelectorAll('.pair-coder .as-eff')
     .forEach(b => b.classList.toggle('on', (b.dataset.coder === 'claude') === isClaude));
-  $('#pair-claude-model').style.display = isClaude ? '' : 'none';  // dropdown for Claude
-  $('#pair-coder-model').style.display = isClaude ? 'none' : '';   // free text for Aider
-  $('#pair-claude-model').value = pairClaudeModel;
-  $('#pair-coder-model').value = pairAiderModel;
-  // Rebuild effort options for this coder; clamp the value if it's not valid here.
-  const opts = EFFORT_OPTS[isClaude ? 'claude' : 'aider'];
-  if (!opts.includes(pairCoderEffort)) { pairCoderEffort = ''; saveCfg(); }
-  const sel = $('#pair-effort-sel');
-  sel.innerHTML = opts.map(v => `<option value="${v}">${v ? 'effort · ' + v : 'effort · default'}</option>`).join('');
-  sel.value = pairCoderEffort;
-  sel.title = isClaude ? 'Claude thinking / effort level'
-    : 'Reasoning effort — only applies if the chosen model supports it (ignored otherwise)';
+
+  const provSel = $('#pair-provider-sel');               // provider dropdown — Aider only
+  provSel.style.display = isClaude ? 'none' : '';
+  if (!isClaude) {
+    const provs = CODER_CATALOG.aider.providers;
+    provSel.innerHTML = Object.keys(provs).map(k => _opt(k, provs[k].label)).join('');
+    provSel.value = pairAiderProvider;
+  }
+
+  const list = _coderLists(), ids = list.models.map(m => m.id);
+  const modelSel = $('#pair-model-sel');                  // model dropdown (+ Custom)
+  modelSel.innerHTML = list.models.map(m => _opt(m.id, m.label)).join('') +
+    (ids.includes('__custom__') ? '' : _opt('__custom__', 'Custom — type model id'));
+  const isCustom = !ids.includes(pairCoderModel) || pairCoderModel === '__custom__';
+  modelSel.value = isCustom ? '__custom__' : pairCoderModel;
+  const custom = $('#pair-model-custom');
+  custom.style.display = isCustom ? '' : 'none';
+  if (isCustom) custom.value = (pairCoderModel === '__custom__' ? '' : pairCoderModel);
+
+  if (!list.efforts.includes(pairCoderEffort)) pairCoderEffort = '';   // effort dropdown (provider-specific)
+  const effSel = $('#pair-effort-sel');
+  effSel.innerHTML = list.efforts.map(e => _opt(e, e ? 'effort · ' + e : 'effort · default')).join('');
+  effSel.value = pairCoderEffort;
 }
 $('#pair-coder-bar').querySelectorAll('.pair-coder .as-eff').forEach(el => el.addEventListener('click', () => {
-  pairCoder = el.dataset.coder; saveCfg(); syncCoderUI();
+  pairCoder = el.dataset.coder; pairCoderModel = _coderLists().models[0].id; saveCfg(); syncCoderUI();
 }));
-$('#pair-claude-model').addEventListener('change', () => { pairClaudeModel = $('#pair-claude-model').value; saveCfg(); });
-$('#pair-coder-model').addEventListener('change', () => { pairAiderModel = $('#pair-coder-model').value.trim(); saveCfg(); });
+$('#pair-provider-sel').addEventListener('change', () => {
+  pairAiderProvider = $('#pair-provider-sel').value; pairCoderModel = _coderLists().models[0].id; saveCfg(); syncCoderUI();
+});
+$('#pair-model-sel').addEventListener('change', () => { pairCoderModel = $('#pair-model-sel').value; saveCfg(); syncCoderUI(); });
+$('#pair-model-custom').addEventListener('change', () => { pairCoderModel = $('#pair-model-custom').value.trim(); saveCfg(); });
 $('#pair-effort-sel').addEventListener('change', () => { pairCoderEffort = $('#pair-effort-sel').value; saveCfg(); });
 syncCoderUI();
 
