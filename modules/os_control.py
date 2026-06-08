@@ -73,8 +73,11 @@ TOOL_DECLARATIONS = [
     {
         "name": "run_command",
         "description": (
-            "Execută o comandă în terminal sau descrie o sarcină în limbaj natural "
-            "și Miko o transformă în comandă CMD. Exemple: 'golește Recycle Bin', 'listează fișierele'."
+            "Execută o comandă reală în CMD pe calculatorul utilizatorului. Poți da "
+            "comanda exactă (ex: 'dir', 'type app.py', 'ipconfig') SAU o descrie în "
+            "limbaj natural, iar Miko o transformă într-o comandă CMD înainte de a o "
+            "rula. Comanda chiar se execută — nu te preface că ai rulat-o. Pentru a "
+            "arăta conținutul unui fișier folosește 'type <cale>'."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -599,11 +602,85 @@ def file_op(action: str, path: str, destination: str = "", content: str = "") ->
 
 # ── CMD execution ─────────────────────────────────────────────────────────────
 
+def _looks_like_command(task: str) -> bool:
+    """True if `task` already reads as a shell command, not a natural-language request.
+
+    We accept it as a direct command when the first token is a known Windows
+    executable/builtin, or the string carries shell syntax (pipes, redirects,
+    flags, path separators). Otherwise it's prose to be translated first."""
+    t = task.strip()
+    if not t:
+        return False
+    if any(c in t for c in ("|", "&", ">", "<", "\\", "/")):
+        return True
+    first = re.split(r"\s+", t, 1)[0].lower().strip('"')
+    first = first.rsplit(".", 1)[0] if first.endswith((".exe", ".bat", ".cmd")) else first
+    return first in _KNOWN_COMMANDS
+
+
+_KNOWN_COMMANDS = {
+    "dir", "cd", "type", "echo", "cls", "copy", "move", "ren", "mkdir", "md",
+    "rmdir", "rd", "del", "more", "find", "findstr", "where", "tree", "attrib",
+    "tasklist", "taskkill", "ipconfig", "ping", "tracert", "nslookup", "netstat",
+    "systeminfo", "hostname", "whoami", "ver", "date", "time", "set", "path",
+    "git", "python", "py", "pip", "node", "npm", "npx", "yarn", "pnpm", "dotnet",
+    "java", "javac", "go", "cargo", "rustc", "code", "powershell", "pwsh", "wmic",
+    "curl", "wget", "ssh", "scp", "tar", "zip", "unzip", "docker", "kubectl",
+    "gh", "make", "cmake", "gcc", "g++", "clang", "ls", "cat", "pwd", "rg",
+}
+
+
+def _nl_to_command(task: str) -> str:
+    """Translate a natural-language request into a single Windows CMD command.
+
+    Returns '' if translation is unavailable or the model declines."""
+    try:
+        from chat_backend import complete_text
+        from config import CONFIG
+    except Exception:
+        return ""
+    sys_prompt = (
+        "You convert a natural-language request into ONE single-line Windows CMD "
+        "command. Output ONLY the command — no explanation, no markdown, no code "
+        "fences, no prefix. If the request cannot be a safe shell command, output "
+        "exactly NONE. Prefer read-only commands. Examples: 'list the files' -> "
+        "'dir', 'show me the contents of app.py' -> 'type app.py', 'what's my IP' "
+        "-> 'ipconfig'."
+    )
+    try:
+        out = complete_text(
+            "gemini", "gemini-2.5-flash",
+            api_key=getattr(CONFIG, "gemini_api_key", ""),
+            system=sys_prompt, user=task, max_tokens=120,
+        )
+    except Exception as e:
+        logger.warning(f"NL→command translation failed: {e}")
+        return ""
+    cmd = (out or "").strip().strip("`").strip()
+    # Strip a leading "cmd>" / "$ " style prompt and a ```...``` fence if present.
+    cmd = re.sub(r"^(cmd|sh|bash|powershell|ps)?\s*[>$#]\s*", "", cmd, flags=re.IGNORECASE)
+    cmd = cmd.splitlines()[0].strip() if cmd else ""
+    if not cmd or cmd.upper() == "NONE":
+        return ""
+    return cmd
+
+
 def run_command(task: str, visible: bool = False) -> str:
-    if not task.strip():
+    task = (task or "").strip()
+    if not task:
         return "Spune-mi ce comandă să execut, sefu."
 
-    # Safety check
+    # If the model handed us prose instead of a real command, translate it first
+    # (the tool promises this) so a Romanian/English sentence never hits the shell raw.
+    translated = ""
+    if not _looks_like_command(task):
+        translated = _nl_to_command(task)
+        if not translated:
+            return (f"Nu am putut transforma „{task}” într-o comandă executabilă, sefu. "
+                    "Spune-mi comanda exactă sau reformulează.")
+        task = translated
+
+    # Safety check (after translation, so we vet what actually runs)
     if _BLOCKED_CMD_PATTERNS.search(task):
         return "Comanda pare periculoasă și a fost blocată din motive de securitate, sefu."
 
@@ -611,7 +688,8 @@ def run_command(task: str, visible: bool = False) -> str:
     _ws = os.getenv("MIKO_WORKSPACE", "").strip()
     _cwd = _ws if (_ws and os.path.isdir(_ws)) else None
 
-    # If it looks like a direct command, run it. Otherwise treat as NL.
+    # When we translated prose → command, tell the user what actually ran.
+    _ran = f"`{task}`" if translated else "comanda"
     try:
         if visible:
             subprocess.Popen(["cmd", "/k", task], cwd=_cwd, creationflags=subprocess.CREATE_NEW_CONSOLE)
@@ -630,8 +708,10 @@ def run_command(task: str, visible: bool = False) -> str:
             out = (result.stdout or "").strip()
             err = (result.stderr or "").strip()
             if result.returncode == 0:
-                return out or f"Comandă executată cu succes (exit 0)."
-            return f"Eroare (exit {result.returncode}): {err or out}"
+                if out:
+                    return f"({_ran})\n{out}" if translated else out
+                return f"Am rulat {_ran} cu succes (exit 0)."
+            return f"Eroare la {_ran} (exit {result.returncode}): {err or out}"
     except subprocess.TimeoutExpired:
         return "Comanda a depășit limita de timp (15s), sefu."
     except Exception as e:
