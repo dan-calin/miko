@@ -477,6 +477,10 @@ class CommandRouter:
                 from modules.os_control import calculate
                 return calculate(**args)
 
+            if tool_name == "world_time":
+                from modules.os_control import world_time
+                return world_time(**args)
+
             if tool_name == "type_text":
                 from modules.os_control import type_text
                 return type_text(**args)

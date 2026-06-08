@@ -218,6 +218,24 @@ TOOL_DECLARATIONS = [
         },
     },
     {
+        "name": "world_time",
+        "description": (
+            "Spune ora curentă într-un alt oraș sau țară (fus orar). Folosește pentru "
+            "'cât e ceasul în Tokyo', 'what time is it in New York', 'ora în Japonia', "
+            "'how late is it in London', 'ce oră e acum în California'."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "location": {
+                    "type": "STRING",
+                    "description": "Orașul sau țara (ex: 'Tokyo', 'New York', 'Japonia', 'UK', 'Dubai').",
+                }
+            },
+            "required": ["location"],
+        },
+    },
+    {
         "name": "type_text",
         "description": (
             "Tastează text în fereastra activă curentă. "
@@ -923,6 +941,73 @@ def calculate(expression: str) -> str:
         return "Împărțire la zero nu e posibilă nici pentru mine, sefu."
     except Exception as e:
         return f"N-am putut calcula '{expression}': {e}"
+
+
+# ── World clock (time in another city/country) ───────────────────────────────
+
+# Common countries / aliases → a representative IANA timezone (cities resolve
+# automatically from the IANA database, so only ambiguous/country names need this).
+_COUNTRY_TZ = {
+    "uk": "Europe/London", "united kingdom": "Europe/London", "england": "Europe/London",
+    "britain": "Europe/London", "scotland": "Europe/London", "wales": "Europe/London",
+    "usa": "America/New_York", "us": "America/New_York", "united states": "America/New_York",
+    "america": "America/New_York", "romania": "Europe/Bucharest", "românia": "Europe/Bucharest",
+    "france": "Europe/Paris", "germany": "Europe/Berlin", "spain": "Europe/Madrid",
+    "italy": "Europe/Rome", "japan": "Asia/Tokyo", "japonia": "Asia/Tokyo",
+    "china": "Asia/Shanghai", "india": "Asia/Kolkata", "russia": "Europe/Moscow",
+    "australia": "Australia/Sydney", "canada": "America/Toronto", "brazil": "America/Sao_Paulo",
+    "mexico": "America/Mexico_City", "netherlands": "Europe/Amsterdam", "poland": "Europe/Warsaw",
+    "greece": "Europe/Athens", "turkey": "Europe/Istanbul", "uae": "Asia/Dubai",
+    "egypt": "Africa/Cairo", "south korea": "Asia/Seoul", "korea": "Asia/Seoul",
+    "singapore": "Asia/Singapore", "thailand": "Asia/Bangkok", "portugal": "Europe/Lisbon",
+    "ireland": "Europe/Dublin", "sweden": "Europe/Stockholm", "norway": "Europe/Oslo",
+    "switzerland": "Europe/Zurich", "austria": "Europe/Vienna", "belgium": "Europe/Brussels",
+    "new zealand": "Pacific/Auckland", "argentina": "America/Argentina/Buenos_Aires",
+    "california": "America/Los_Angeles", "texas": "America/Chicago", "florida": "America/New_York",
+    "hawaii": "Pacific/Honolulu", "alaska": "America/Anchorage",
+}
+
+
+def _resolve_tz(location: str):
+    """Resolve a city/country/IANA name to an IANA timezone, or None."""
+    from zoneinfo import available_timezones
+    loc = (location or "").strip().lower().replace(",", " ").strip()
+    if not loc:
+        return None
+    zones = available_timezones()
+    lower = {z.lower(): z for z in zones}
+    if loc in lower:                         # already an IANA name
+        return lower[loc]
+    if loc in _COUNTRY_TZ:                    # country / region alias
+        return _COUNTRY_TZ[loc]
+    target = loc.replace(" ", "_")
+    exact = [z for z in zones if z.rsplit("/", 1)[-1].lower() == target]
+    if exact:                                # city exactly matches a tz leaf
+        return sorted(exact, key=len)[0]
+    partial = [z for z in zones if target in z.rsplit("/", 1)[-1].lower()]
+    if partial:
+        return sorted(partial, key=len)[0]
+    return None
+
+
+def world_time(location: str) -> str:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    if not (location or "").strip():
+        return "Spune-mi pentru ce oraș sau țară vrei ora, sefu."
+    tz_name = _resolve_tz(location)
+    if not tz_name:
+        return (f"Nu am găsit fusul orar pentru '{location}', sefu. "
+                "Încearcă un oraș sau o țară (ex: Tokyo, New York, Japonia, UK).")
+    try:
+        now = datetime.now(ZoneInfo(tz_name))
+    except Exception as e:
+        return f"N-am putut obține ora pentru '{location}': {e}"
+    off = now.strftime("%z")                  # e.g. +0900 → UTC+09:00
+    off = f"UTC{off[:3]}:{off[3:]}" if off else "UTC"
+    place = tz_name.rsplit("/", 1)[-1].replace("_", " ")
+    return (f"În {place} ({tz_name}) este acum {now:%H:%M} "
+            f"({now:%A, %d %B %Y} · {now:%Z} {off}).")
 
 
 # ── Type text / keyboard ──────────────────────────────────────────────────────
