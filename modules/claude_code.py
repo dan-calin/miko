@@ -412,9 +412,13 @@ def _step(state, should_cancel=None) -> dict:
         events.append({"type": "cancelled"})
         return {"events": events, "done": True}
 
-    # 2) Claude implements. On round 1, prepend the collaboration frame (Claude keeps it via
-    # --resume): Claude is the senior implementer and should critique Miko's proposals.
-    prompt = (_CLAUDE_FRAME + instr) if rnd == 1 else instr
+    # 2) Claude implements. Prepend the collaboration frame ONCE per session (Claude keeps it
+    # via --resume) — keyed off a flag, not round 1, so a resumed/old session still gets it.
+    if not state.get("framed"):
+        prompt = _CLAUDE_FRAME + instr
+        state["framed"] = True
+    else:
+        prompt = instr
     res = _run_claude(repo, prompt, state["claude_session"], resume=(rnd > 1), model="")
     state["history"].append({"role": "Claude", "text": res["result"]})
     files = changed_since(repo, snap)
