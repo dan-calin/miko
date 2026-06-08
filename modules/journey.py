@@ -83,7 +83,11 @@ TOOL_DECLARATIONS = [
             "'cluburi deschise acum', 'benzinărie apropiată', 'supermarket lângă mine', "
             "'unde pot mânca', 'un loc mișto în zona asta'. "
             "Dacă user-ul cere locuri 'bune', 'cu rating' sau 'recomandate' → want_ratings=true. "
-            "Dacă user-ul cere locuri 'deschise acum' sau întreabă de program → want_hours=true."
+            "Dacă user-ul cere locuri 'deschise acum' sau întreabă de program → want_hours=true. "
+            "IMPLICIT returnează DOAR lista (cu link), fără a deschide harta. Setează "
+            "show_on_map=true DOAR dacă user-ul cere explicit să vadă harta / rezultatele pe "
+            "ecran (ex: 'arată-mi pe hartă', 'deschide harta', 'show me on the map', 'bring them "
+            "on my screen'). Altfel lasă-l false."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -119,6 +123,11 @@ TOOL_DECLARATIONS = [
                 "max_results": {
                     "type": "INTEGER",
                     "description": "Numărul maxim de rezultate de returnat (implicit: 5, max: 20).",
+                },
+                "show_on_map": {
+                    "type": "BOOLEAN",
+                    "description": "True DOAR dacă user-ul cere explicit să vadă harta pe ecran. "
+                                   "Implicit false — returnează doar lista + link.",
                 },
             },
             "required": ["query"],
@@ -293,6 +302,7 @@ def search_nearby_places(
     want_ratings: bool = False,
     want_hours: bool = False,
     max_results: int = 5,
+    show_on_map: bool = False,
     # Legacy compat — ignored if query is provided
     place_types: list = None,
 ) -> str:
@@ -319,7 +329,7 @@ def search_nearby_places(
     key = _api_key()
     if not key:
         logger.info("No GOOGLE_MAPS_API_KEY — using browser fallback")
-        return _places_browser_fallback(query, lat, lng)
+        return _places_browser_fallback(query, lat, lng, show_on_map=show_on_map)
 
     # ── Dynamic field mask (SKU tier selection) ────────────────────────────────
     field_mask = _MASK_ESSENTIALS
@@ -358,11 +368,11 @@ def search_nearby_places(
         )
         if not resp.ok:
             logger.error(f"Places API {resp.status_code}: {resp.text[:500]}")
-            return _places_browser_fallback(query, lat, lng)
+            return _places_browser_fallback(query, lat, lng, show_on_map=show_on_map)
         data = resp.json()
     except Exception as e:
         logger.error(f"Places API error: {e}")
-        return _places_browser_fallback(query, lat, lng)
+        return _places_browser_fallback(query, lat, lng, show_on_map=show_on_map)
 
     places = data.get("places", [])
 
@@ -390,10 +400,11 @@ def search_nearby_places(
 
     lines.append(f"\n📍 {_mobile_maps_link(query)}")
 
-    # Open Maps for visual context
-    home = _get_home_address()
-    q = urllib.parse.quote_plus(f"{query} near {home}" if home else query)
-    webbrowser.open(f"https://www.google.com/maps/search/{q}")
+    # Only pop the map open when the user explicitly asked to see it on screen.
+    if show_on_map:
+        home = _get_home_address()
+        q = urllib.parse.quote_plus(f"{query} near {home}" if home else query)
+        webbrowser.open(f"https://www.google.com/maps/search/{q}")
 
     return "\n".join(lines)
 
@@ -402,6 +413,7 @@ def _places_browser_fallback(
     query: str,
     lat: float = None,
     lng: float = None,
+    show_on_map: bool = False,
 ) -> str:
     home = _get_home_address()
     if lat and lng:
@@ -413,9 +425,12 @@ def _places_browser_fallback(
     else:
         q   = urllib.parse.quote_plus(query)
         url = f"https://www.google.com/maps/search/{q}"
-    webbrowser.open(url)
-    hint = " (adaugă GOOGLE_MAPS_API_KEY în .env pentru rezultate mai precise)" if not _api_key() else ""
-    return f"Am deschis Google Maps pentru '{query}', sefu.{hint}"
+    hint = " (adaugă GOOGLE_MAPS_API_KEY în .env pentru o listă precisă)" if not _api_key() else ""
+    if show_on_map:
+        webbrowser.open(url)
+        return f"Am deschis Google Maps pentru '{query}', sefu.{hint}"
+    # No API key → no structured list available; hand back the link, don't pop a window.
+    return f"Nu am cheia Google Maps ca să listez locurile, dar uite linkul cu rezultatele pentru '{query}':\n{url}{hint}"
 
 
 # ── calculate_route ───────────────────────────────────────────────────────────

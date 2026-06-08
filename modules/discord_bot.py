@@ -67,7 +67,10 @@ TOOL_DECLARATIONS = [
     {
         "name": "send_discord_dm",
         "description": (
-            "Trimite un mesaj direct (DM) unui utilizator Discord după nume. "
+            "ACESTA este tool-ul de folosit ca să TRIMIȚI conținut/text/rezultate cuiva pe "
+            "Discord, ca DM. Inclusiv ție însuți (owner-ul) când user-ul spune 'trimite-mi "
+            "X pe discord', 'send me the results on discord', 'dă-mi pe discord lista' — "
+            "recipient_name = numele owner-ului. Pune rezultatul efectiv în 'message'. "
             "NECESITĂ confirmare vocală înainte de trimitere."
         ),
         "parameters": {
@@ -179,10 +182,12 @@ TOOL_DECLARATIONS = [
     {
         "name": "send_interactive_hub",
         "description": (
-            "Trimite pe Discord un meniu interactiv (dropdown) cu care poți vedea mesajele primite de la contacte. "
-            "Folosește când user-ul întreabă: 'ce mesaje am primit', 'cine mi-a scris', 'arată-mi mesajele', "
-            "'ce mi-au trimis alții', 'vreau să văd conversațiile', 'trimite-mi meniul de mesaje', "
-            "'show me messages', 'who wrote to me', orice variantă legată de citirea mesajelor Discord primite."
+            "Deschide un meniu (dropdown) pentru a CITI mesajele Discord PRIMITE de la "
+            "contacte — alegi de la cine vrei să vezi conversația. NU trimite niciun "
+            "conținut și NU se folosește pentru a-i trimite user-ului rezultate/text (pentru "
+            "asta folosește send_discord_dm). Folosește DOAR pentru citirea mesajelor primite: "
+            "'ce mesaje am primit', 'cine mi-a scris', 'arată-mi mesajele primite', "
+            "'show me my messages', 'who wrote to me'."
         ),
         "parameters": {
             "type": "OBJECT",
