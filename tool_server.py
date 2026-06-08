@@ -473,6 +473,24 @@ def _build_app():
             return JSONResponse(res, status_code=400)
         return res
 
+    # ── Dictation (speech-to-text for the chat composer) ───────────────────────
+    @app.post("/chat/transcribe")
+    async def chat_transcribe(request: Request, _=Depends(_auth)):
+        """Transcribe a raw audio body (browser MediaRecorder blob) to text.
+        Multilingual + auto-detecting via Gemini; optional ?language= hint."""
+        from modules.speech import transcribe
+        data = await request.body()
+        if not data:
+            return JSONResponse({"error": "Empty audio."}, status_code=400)
+        mime = (request.headers.get("content-type") or "audio/webm")
+        lang = request.query_params.get("language", "")
+        text = transcribe(data, mime, language=lang)
+        if not text:
+            return JSONResponse(
+                {"error": "Could not transcribe (check the Gemini key, mic, and ffmpeg)."},
+                status_code=502)
+        return {"text": text}
+
     # ── Sub-agents (user-launchable + observable) ──────────────────────────────
     @app.post("/chat/agents/launch")
     async def chat_agents_launch(request: Request, _=Depends(_auth)):

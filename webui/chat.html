@@ -454,6 +454,20 @@
   .send.stop:hover { border-color: var(--amber); color: var(--amber); }
   .send.stop svg { display: none; }
   .send.stop::after { content: ''; width: 9px; height: 9px; background: currentColor; border-radius: 1px; }
+  .mic {
+    flex-shrink: 0; width: 30px; height: 30px; background: var(--surface3);
+    border: 1px solid var(--border); border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: var(--text3);
+    transition: background 130ms, border-color 130ms, color 130ms;
+  }
+  .mic:hover { border-color: var(--amber); color: var(--amber); }
+  .mic.recording { background: var(--red, #e06c75); border-color: var(--red, #e06c75); color: #fff;
+    animation: micpulse 1.2s ease-in-out infinite; }
+  .mic.busy { color: var(--amber); cursor: default; }
+  .mic.busy svg { animation: micspin 0.9s linear infinite; }
+  @keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(224,108,117,.5); } 50% { box-shadow: 0 0 0 5px rgba(224,108,117,0); } }
+  @keyframes micspin { to { transform: rotate(360deg); } }
 
   .hints {
     display: flex; align-items: center; gap: 8px; margin-top: 8px;
@@ -889,6 +903,12 @@
         </div>
         <div class="inputbar">
           <textarea id="input" rows="1" placeholder="Message Miko…"></textarea>
+          <button class="mic" id="mic-btn" type="button" aria-label="Dictate" title="Dictate (speak instead of type)">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M7 1.2a1.8 1.8 0 0 0-1.8 1.8v3.4a1.8 1.8 0 1 0 3.6 0V3A1.8 1.8 0 0 0 7 1.2Z" fill="currentColor"/>
+              <path d="M3.2 6.2v.4a3.8 3.8 0 0 0 7.6 0v-.4M7 10.4v2.4M5 12.8h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" fill="none"/>
+            </svg>
+          </button>
           <button class="send" id="send-btn" type="button" aria-label="Send message">
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
               <path d="M1.5 1.5L11.5 6.5L1.5 11.5V7.8L8.8 6.5L1.5 5.2V1.5Z" fill="currentColor" />
@@ -2650,7 +2670,68 @@ $('#base-url').addEventListener('change', saveCfg);
 $('#save-env').addEventListener('click', saveToEnv);
 $('#allow-actions').addEventListener('click', () => { setAllow(!$('#allow-actions').classList.contains('on')); saveCfg(); });
 $('#approve-mode').addEventListener('click', () => { approveMode = !approveMode; setApprove(approveMode); saveCfg(); });
+// ── Voice dictation (speak instead of type) — #6 ─────────────────────────────
+let _rec = null, _recChunks = [], _recStream = null;
+function _micBtn() { return $('#mic-btn'); }
+
+async function toggleDictation() {
+  if (_rec && _rec.state === 'recording') { _rec.stop(); return; }   // second click = stop
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    setPlaceholderHint('Dictation needs a modern browser with mic support.'); return;
+  }
+  try {
+    _recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    setPlaceholderHint('Mic access denied — allow the microphone to dictate.'); return;
+  }
+  // Pick a mime the browser supports; the server transcodes via ffmpeg anyway.
+  let mime = '';
+  for (const m of ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4']) {
+    if (MediaRecorder.isTypeSupported(m)) { mime = m; break; }
+  }
+  _recChunks = [];
+  _rec = new MediaRecorder(_recStream, mime ? { mimeType: mime } : undefined);
+  _rec.addEventListener('dataavailable', e => { if (e.data && e.data.size) _recChunks.push(e.data); });
+  _rec.addEventListener('stop', onDictationStop);
+  _rec.start();
+  _micBtn().classList.add('recording');
+  _micBtn().title = 'Stop dictation';
+}
+
+async function onDictationStop() {
+  _micBtn().classList.remove('recording');
+  if (_recStream) { _recStream.getTracks().forEach(t => t.stop()); _recStream = null; }
+  const blob = new Blob(_recChunks, { type: (_rec && _rec.mimeType) || 'audio/webm' });
+  _recChunks = []; _rec = null;
+  if (!blob.size) return;
+  const btn = _micBtn(); btn.classList.add('busy'); btn.title = 'Transcribing…';
+  try {
+    const r = await fetch('/chat/transcribe', {
+      method: 'POST', headers: { 'Content-Type': blob.type }, body: blob,
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.text) {
+      const cur = input.value;
+      input.value = cur ? (cur.replace(/\s*$/, '') + ' ' + d.text) : d.text;
+      input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 180) + 'px';
+      refreshSend(); input.focus();
+    } else {
+      setPlaceholderHint((d && d.error) || 'Could not transcribe that — try again.');
+    }
+  } catch (e) {
+    setPlaceholderHint('Transcription failed: ' + (e.message || ''));
+  } finally {
+    btn.classList.remove('busy'); btn.title = 'Dictate (speak instead of type)';
+  }
+}
+
+function setPlaceholderHint(msg) {
+  const ph = input.placeholder; input.placeholder = msg;
+  setTimeout(() => { if (input.placeholder === msg) input.placeholder = ph; }, 4000);
+}
+
 $('#send-btn').addEventListener('click', onSendClick);
+$('#mic-btn').addEventListener('click', toggleDictation);
 $('#clear-btn').addEventListener('click', clearChat);
 $('#conv-new').addEventListener('click', newConversation);
 $('#ws-pick').addEventListener('click', () => openWorkspace());
