@@ -2319,6 +2319,13 @@ $('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(b => b.classList.t
 $('#pair-sessions-btn').addEventListener('click', togglePairSessions);
 
 // Coder CLI (Claude / Aider) + model + effort
+// Effort vocabularies differ per coder/provider, so the options are coder-specific.
+// Claude's --effort: low/medium/high/xhigh/max. Aider's --reasoning-effort is generic
+// (low/medium/high) and only applies if the chosen model actually supports it.
+const EFFORT_OPTS = {
+  claude: ['', 'low', 'medium', 'high', 'xhigh', 'max'],
+  aider:  ['', 'low', 'medium', 'high'],
+};
 function syncCoderUI() {
   const isClaude = pairCoder === 'claude';
   $('#pair-coder-bar').querySelectorAll('.pair-coder .as-eff')
@@ -2327,7 +2334,14 @@ function syncCoderUI() {
   $('#pair-coder-model').style.display = isClaude ? 'none' : '';   // free text for Aider
   $('#pair-claude-model').value = pairClaudeModel;
   $('#pair-coder-model').value = pairAiderModel;
-  $('#pair-effort-sel').value = pairCoderEffort;
+  // Rebuild effort options for this coder; clamp the value if it's not valid here.
+  const opts = EFFORT_OPTS[isClaude ? 'claude' : 'aider'];
+  if (!opts.includes(pairCoderEffort)) { pairCoderEffort = ''; saveCfg(); }
+  const sel = $('#pair-effort-sel');
+  sel.innerHTML = opts.map(v => `<option value="${v}">${v ? 'effort · ' + v : 'effort · default'}</option>`).join('');
+  sel.value = pairCoderEffort;
+  sel.title = isClaude ? 'Claude thinking / effort level'
+    : 'Reasoning effort — only applies if the chosen model supports it (ignored otherwise)';
 }
 $('#pair-coder-bar').querySelectorAll('.pair-coder .as-eff').forEach(el => el.addEventListener('click', () => {
   pairCoder = el.dataset.coder; saveCfg(); syncCoderUI();
