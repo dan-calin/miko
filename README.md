@@ -15,42 +15,43 @@ English) and replies in the language you write/speak.
 
 **What it does**
 
-- 🤝 **Pair programming** — Miko directs **Claude Code** (the CLI) as a coder: Miko
+- **Pair programming** — Miko directs **Claude Code** (the CLI) as a coder: Miko
   instructs, Claude implements in a real repo and reports back, they iterate until both
   agree it's done. **Autonomous** or **Controlled** (approve each round) mode; every round
   is **git-checkpointed** with a per-round **Revert**. *Requires Claude Code installed and
   your own Claude plan/API — and is subject to Claude's own rate limits.*
-- 🔎 **Deep research** — distills a clean subject from your request, runs **iterative
+- **Deep research** — distills a clean subject from your request, runs **iterative
   rounds** (search → read → find gaps → search again) in parallel, writes a **cited**
   report and saves it to the vault. Report quality depends on which sources are fetchable
   (many sites block scrapers; those are skipped). Live progress in the Chat UI; spoken
   summary by voice. Pick the research model (defaults to Gemini Flash).
-- 🧠 **Second-brain memory** — a local-embedding (fastembed) semantic memory in SQLite that
+- **Second-brain memory** — a local-embedding (fastembed) semantic memory in SQLite that
   learns facts from your conversations (reconciles corrections instead of duplicating),
   recalls by meaning, keeps an episodic log, and stores notes as an **Obsidian-compatible
   vault** (PARA folders + `[[wikilinks]]`). Works in voice and chat. *Falls back to a
   provider embedding API, then keyword search, if fastembed isn't installed.*
-- 🧑‍🤝‍🧑 **Sub-agents** — Miko can spawn up to 5 focused, **read-only** agents in parallel to
+- **Sub-agents** — Miko can spawn up to 5 focused, **read-only** agents in parallel to
   research several angles or inspect multiple files at once, then synthesize their findings.
-- 💬 **Web Chat UI** (`/chat`) — any model (Gemini, OpenAI, Anthropic Claude, MiniMax,
+- **Web Chat UI** (`/chat`) — any model (Gemini, OpenAI, Anthropic Claude, MiniMax,
   DeepSeek, Kimi, xAI Grok, or any OpenAI-compatible endpoint), a **live activity view**
   that shows each tool call as it runs, a **Stop** button, an **approval mode** (review
   file/command changes as diffs before they apply), per-model persona/skill/effort settings,
   a built-in file explorer + editor, resumable conversations, and a selectable workspace.
-- 🎙️ **Voice** — real-time voice in/out via **Gemini Live** (ACTIVE / STANDBY / MUTE modes).
+- **Voice** — real-time voice in/out via **Gemini Live** (ACTIVE / STANDBY / MUTE modes).
   *Needs a Gemini key.* This is one input mode, not the whole product.
-- 💻 **PC control** — open apps, file operations, system info, screenshots, reminders,
+- **PC control** — open apps, file operations, system info, screenshots, reminders,
   clipboard, volume & media keys. *Windows-specific.*
-- 🗂️ **Project mapping** — point Miko at a project folder; it scans it, writes a profile to
+- **Project mapping** — point Miko at a project folder; it scans it, writes a profile to
   the vault, and keeps it in context so it knows what you're building.
-- 📅 **Calendars** *(optional)* — iCloud (CalDAV) + Microsoft/Outlook (Graph), with
+- **Calendars** *(optional)* — iCloud (CalDAV) + Microsoft/Outlook (Graph), with
   morning/midday/night Discord briefs.
-- 📱 **Discord** — control Miko from your phone via DMs (text or voice notes), stream music
+- **Discord** — control Miko from your phone via DMs (text or voice notes), stream music
   into a voice channel, and control your **personal** Discord account by voice.
-- 🧰 **Optional integrations** *(each needs setup/deps)* — **email** (IMAP/SMTP),
-  **browser automation** (Playwright), **scheduled tasks** (recurring prompts DM'd to you),
-  an **MCP client** (use tools from external Model Context Protocol servers), and a **MiniMax
-  backend** + HTTP **tool server** so external agents can call Miko's tools.
+- **Optional integrations** *(each needs setup/deps)* — **email** (IMAP/SMTP read, triage,
+  and inbox watch-and-notify), **browser automation** (Playwright), **scheduled tasks**
+  (recurring prompts DM'd to you), an **MCP client** (use tools from external Model Context
+  Protocol servers), and a **MiniMax backend** + HTTP **tool server** so external agents can
+  call Miko's tools.
 
 ---
 
@@ -128,9 +129,9 @@ notifications):
 3. Open **Bot → Add Bot** and confirm.
 4. Under **Token**, click **Reset Token** and copy it into `.env` as `DISCORD_TOKEN`.
 5. Under **Privileged Gateway Intents**, enable:
-   - ✅ Server Members Intent
-   - ✅ Message Content Intent
-   - ✅ Presence Intent
+   - Server Members Intent
+   - Message Content Intent
+   - Presence Intent
 6. Under **OAuth2 → URL Generator**:
    - Scopes: `bot`
    - Bot permissions: `Send Messages`, `Read Message History`, `Connect`, `Speak`, `Use Voice Activity`
@@ -325,7 +326,7 @@ live progress and you can **Stop** mid-run; by voice you get a spoken summary.
 ### Pair programming — Miko ↔ Claude Code
 
 Miko can direct **Claude Code** (the CLI) as a coding teammate: **Miko = boss/instructor,
-Claude Code = coder.** Toggle **⚒ Pair** in the composer, point it at a project folder,
+Claude Code = coder.** Toggle **Pair** in the composer, point it at a project folder,
 pick **Autonomous** (run to completion) or **Controlled** (approve each round), and type a
 goal. Miko instructs → Claude implements in the repo and reports → Miko reviews and pushes
 back → they iterate until a **two-way handshake** (both agree it's done). It drives the
@@ -345,7 +346,7 @@ inspect many files) finish faster. Sub-agents can't make changes or spawn their 
 
 ### Agents, skills & per-model settings
 
-A **⚙ Agent / Skills** picker by the composer lets you choose an ECC **persona** (Chief of Staff,
+An **Agent / Skills** picker by the composer lets you choose an ECC **persona** (Chief of Staff,
 Planner, Code Explorer/Reviewer, Security Reviewer) and toggle **skills** (Deep Research, Article
 Writing, Brand Voice, Git/GitHub, Email/Knowledge Ops, Codebase Onboarding). These layer
 trimmed, Miko-adapted instructions into the prompt and work on **every provider**. The selection —
@@ -375,8 +376,12 @@ follow-up window), there's a stricter **MUTE** mode ("mute yourself" / "complete
 Four optional capability systems Miko can use when configured:
 
 - **Email** — read, search, and send mail over IMAP/SMTP (`list_emails`, `read_email`,
-  `search_emails`, `send_email`). Set `EMAIL_USER`/`EMAIL_PASS`/`IMAP_HOST`/`SMTP_HOST` in
-  `.env`. Sending is gated by approval mode; reading never marks mail unread.
+  `search_emails`, `send_email`), ask plain-language questions about recent mail
+  (`triage_inbox` — "any job-related emails in the past 2 days?"), and **watch the inbox**
+  for a specific sender/subject and get pinged on Discord when it arrives (`watch_email`,
+  `list_email_watches`, `cancel_email_watch`). Set `EMAIL_USER`/`EMAIL_PASS`/`EMAIL_IMAP_HOST`/
+  `EMAIL_SMTP_HOST` in `.env` (Gmail: use an App Password). Sending is gated by approval
+  mode; reading never marks mail unread.
 - **Browser automation** — Miko *drives* a real headless browser (open, click, type, extract,
   screenshot) for logins and multi-step flows, not just HTML fetches. Needs
   `pip install playwright && python -m playwright install chromium`.
