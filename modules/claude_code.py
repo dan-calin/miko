@@ -342,17 +342,17 @@ _CLAUDE_FRAME = (
 )
 
 
-def _step(state, should_cancel=None) -> dict:
-    """Run exactly one round: checkpoint → Miko instructs → Claude implements →
-    record changes → Miko evaluates. Returns an outcome dict (may set handshake)."""
+def _step(state, should_cancel=None):
+    """Run one round as a GENERATOR, yielding each event the moment it happens — so the
+    checkpoint and Miko's instruction stream LIVE, before the slow Claude call, instead of
+    all flushing together at the end of the round. Sets state['status'] on a terminal round."""
     repo = state["repo"]
     rnd = state["round"] + 1
     state["round"] = rnd
-    events = []
 
     snap = checkpoint(repo)
     state["checkpoints"].append({"round": rnd, "snap": snap, "files": []})
-    events.append({"type": "checkpoint", "round": rnd, "snap": snap})
+    yield {"type": "checkpoint", "round": rnd, "snap": snap}
 
     # The user (Miko's boss) may inject direction for this round.
     guide = (state.pop("guidance", "") or "").strip()
@@ -383,7 +383,7 @@ def _step(state, should_cancel=None) -> dict:
                           "already covered. Give a DIFFERENT concrete action that moves the "
                           "work FORWARD, or 'DONE: ...'.")
     state["history"].append({"role": "Miko", "text": instr})
-    events.append({"type": "miko", "round": rnd, "text": instr})
+    yield {"type": "miko", "round": rnd, "text": instr}
 
     # Two-way handshake: Miko proposes completion → Claude must AGREE. Both agreeing
     # ends the session; if Claude objects, Miko addresses it and the loop continues.
@@ -395,22 +395,22 @@ def _step(state, should_cancel=None) -> dict:
             "yes, or 'NOT DONE:' followed by exactly what is still missing. Do not change code "
             "unless truly needed.", state["claude_session"], resume=(rnd > 1), model="")
         state["history"].append({"role": "Claude", "text": confirm["result"]})
-        events.append({"type": "claude", "round": rnd, "text": confirm["result"], "files": []})
+        yield {"type": "claude", "round": rnd, "text": confirm["result"], "files": []}
         if confirm["result"].strip().upper().startswith("AGREED"):
             state["status"] = "done"
-            events.append({"type": "done", "rounds": rnd, "summary": summary})
-            return {"events": events, "done": True}
+            yield {"type": "done", "rounds": rnd, "summary": summary}
+            return
         # Claude objects — Miko turns the objection into the next instruction.
         instr = _miko(state,
             f"Claude does NOT agree it's done:\n{confirm['result'][:2000]}\n\n"
             "Give the next concrete instruction to address what's missing.")
         state["history"].append({"role": "Miko", "text": instr})
-        events.append({"type": "miko", "round": rnd, "text": instr})
+        yield {"type": "miko", "round": rnd, "text": instr}
 
     if should_cancel and should_cancel():
         state["status"] = "cancelled"
-        events.append({"type": "cancelled"})
-        return {"events": events, "done": True}
+        yield {"type": "cancelled"}
+        return
 
     # 2) Claude implements. Prepend the collaboration frame ONCE per session (Claude keeps it
     # via --resume) — keyed off a flag, not round 1, so a resumed/old session still gets it.
@@ -423,8 +423,7 @@ def _step(state, should_cancel=None) -> dict:
     state["history"].append({"role": "Claude", "text": res["result"]})
     files = changed_since(repo, snap)
     state["checkpoints"][-1]["files"] = files
-    events.append({"type": "claude", "round": rnd, "text": res["result"], "files": files})
-    return {"events": events, "done": False}
+    yield {"type": "claude", "round": rnd, "text": res["result"], "files": files}
 
 
 def run(token, should_cancel=None, guidance=""):
@@ -453,11 +452,10 @@ def run(token, should_cancel=None, guidance=""):
         if should_cancel and should_cancel():
             state["status"] = "cancelled"; _persist()
             yield {"type": "cancelled"}; return
-        outcome = _step(state, should_cancel)
-        for ev in outcome["events"]:
+        for ev in _step(state, should_cancel):
             yield ev
-        _persist()
-        if outcome["done"]:
+            _persist()   # persist after each event so a mid-round reload sees Miko's message
+        if state["status"] in ("done", "cancelled"):
             return
         if state["round"] >= state["max_rounds"]:
             state["status"] = "done"; _persist()
