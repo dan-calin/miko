@@ -449,6 +449,24 @@ def _build_app():
 
         return _ndjson_stream(request, factory)
 
+    @app.post("/chat/code/queue")
+    async def chat_code_queue(request: Request, _=Depends(_auth)):
+        """Queue a message for Miko mid-run — picked up at the next round without
+        interrupting the round in flight (lets the user steer an autonomous session)."""
+        import modules.claude_code as CC
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        token = (body.get("token") or "").strip()
+        message = (body.get("message") or "").strip()
+        if not token:
+            return JSONResponse({"error": "Missing token."}, status_code=400)
+        res = CC.queue_message(token, message)
+        if res.get("error"):
+            return JSONResponse(res, status_code=400)
+        return res
+
     @app.post("/chat/code/revert")
     async def chat_code_revert(request: Request, _=Depends(_auth)):
         """Revert the repo to a checkpoint (UI Revert button)."""

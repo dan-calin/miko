@@ -296,6 +296,11 @@
   .pc-next { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
   .pc-next .pc-guide { width: 100%; }
   .pc-next .pc-approve { margin-top: 0; align-self: flex-start; }
+  .pc-queued { margin: 6px 0; padding: 5px 9px; border-left: 2px solid var(--amber);
+    background: color-mix(in srgb, var(--amber) 8%, transparent); border-radius: 0 4px 4px 0; }
+  .pc-q-tag { font-family: var(--mono); font-size: 10px; color: var(--amber); }
+  .pc-q-text { font-size: 12px; color: var(--text2); margin-top: 2px; white-space: pre-wrap; }
+  .pc-picked { font-family: var(--mono); font-size: 10px; color: var(--green); margin: 2px 0 6px; }
   .pair-sessions { display: none; flex-direction: column; gap: 4px; margin: 0 0 8px;
     border: 1px solid var(--border); border-radius: 5px; background: var(--surface); padding: 6px; }
   .pair-sessions.show { display: flex; }
@@ -912,6 +917,8 @@ let pairAiderProvider = cfg.pairAiderProvider || 'gemini'; // active provider wh
 let pairCoderModel = cfg.pairCoderModel || '';             // resolved model id (alias / provider-model / custom)
 let pairCoderEffort = cfg.pairCoderEffort || '';           // provider-specific effort level
 let curCodeToken = null;                    // active pair session token
+let pairStreaming = false;                  // a pair session is actively streaming rounds
+let pairActiveCard = null;                  // the card receiving the live stream (for queued msgs)
 
 function envKeyName(id) { return (MODELS[id] && MODELS[id].env_key) || ''; }
 
@@ -1278,7 +1285,14 @@ function handleChatEvent(c, ev) {
 
 async function send() {
   const input = $('#input'), text = input.value.trim();
-  if (!text || $('#send-btn').dataset.busy === '1') return;
+  if (!text) return;
+  // Mid-run pair session: queue the message for Miko instead of being blocked by busy.
+  if (pairMode && pairStreaming && curCodeToken) {
+    input.value = ''; input.style.height = 'auto'; refreshSend();
+    queueCode(text);
+    return;
+  }
+  if ($('#send-btn').dataset.busy === '1') return;
   saveCfg();
   if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
   input.value = ''; input.style.height = 'auto'; refreshSend();
@@ -1502,6 +1516,14 @@ function pcTurn(c, who, text, files) {
   c.log.appendChild(el); chatEl.scrollTop = chatEl.scrollHeight;
 }
 
+// A queued user message (shown the moment it's sent; Miko picks it up next round).
+function pcQueued(c, text) {
+  const el = document.createElement('div'); el.className = 'pc-queued';
+  el.innerHTML = '<span class="pc-q-tag">📨 queued for Miko</span>';
+  const t = document.createElement('div'); t.className = 'pc-q-text'; t.textContent = text;
+  el.appendChild(t); c.log.appendChild(el); chatEl.scrollTop = chatEl.scrollHeight;
+}
+
 function pcCheckpoint(c, round, snap) {
   const el = document.createElement('div'); el.className = 'pc-ckpt';
   el.innerHTML = '<span>◴ checkpoint · round ' + round + '</span>';
@@ -1535,6 +1557,7 @@ function handleCodeEvent(c, ev) {
   if (ev.type === 'session') { c.token = ev.token; curCodeToken = ev.token; c.status.textContent = ev.mode + ' · ' + ev.repo; }
   else if (ev.type === 'status') c.status.textContent = ev.text;
   else if (ev.type === 'checkpoint') pcCheckpoint(c, ev.round, ev.snap);
+  else if (ev.type === 'queued') { const el = document.createElement('div'); el.className = 'pc-picked'; el.textContent = '↳ Miko picked up your message' + (ev.count > 1 ? ' (' + ev.count + ')' : ''); c.log.appendChild(el); }
   else if (ev.type === 'miko') pcTurn(c, 'miko', ev.text);
   else if (ev.type === 'claude') pcTurn(c, 'claude', ev.text, ev.files);
   else if (ev.type === 'awaiting') { c.status.textContent = 'awaiting your approval'; pcApprove(c); }
@@ -1546,6 +1569,8 @@ function handleCodeEvent(c, ev) {
 
 async function streamCode(url, payload, c) {
   setBusy(true); curAbort = new AbortController();
+  pairStreaming = true; pairActiveCard = c;
+  $('#input').placeholder = 'Type to queue a message for Miko — picked up next round…';
   try {
     const resp = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1572,8 +1597,23 @@ async function streamCode(url, payload, c) {
     if (e.name === 'AbortError') handleCodeEvent(c, { type: 'cancelled' });
     else handleCodeEvent(c, { type: 'error', error: e.message });
   } finally {
-    curAbort = null; setBusy(false); chatEl.scrollTop = chatEl.scrollHeight; input.focus();
+    curAbort = null; pairStreaming = false; setBusy(false);
+    $('#input').placeholder = pairMode ? 'Describe what to build — Miko will direct the coder…' : 'Message Miko…';
+    chatEl.scrollTop = chatEl.scrollHeight; input.focus();
   }
+}
+
+// Queue a message for Miko mid-run (autonomous) — she picks it up next round.
+async function queueCode(text) {
+  const c = pairActiveCard;
+  if (c) pcQueued(c, text);
+  try {
+    const r = await (await fetch('/chat/code/queue', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: curCodeToken, message: text }),
+    })).json();
+    if (r.error && c) pcTurn(c, 'miko', '⚠ could not queue: ' + r.error);
+  } catch (e) { if (c) pcTurn(c, 'miko', '⚠ queue failed: ' + e.message); }
 }
 
 function sendCode(goal) {

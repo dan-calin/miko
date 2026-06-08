@@ -243,7 +243,7 @@ _DEFAULTS = {"history": list, "checkpoints": list, "round": lambda: 0,
              "key": lambda: "", "base": lambda: "", "research": lambda: "",
              "mode": lambda: "autonomous", "status": lambda: "ready",
              "coder": lambda: "claude", "coder_model": lambda: "", "coder_effort": lambda: "",
-             "framed": lambda: False, "notified": lambda: False}
+             "framed": lambda: False, "notified": lambda: False, "inbox": list}
 
 
 def _normalize(state: dict, token: str) -> dict:
@@ -263,7 +263,7 @@ def _persist():
         CONFIG.data_dir.mkdir(parents=True, exist_ok=True)
         keys = ("repo", "goal", "mode", "round", "max_rounds", "status",
                 "checkpoints", "claude_session", "history",
-                "coder", "coder_model", "coder_effort", "framed", "notified")
+                "coder", "coder_model", "coder_effort", "framed", "notified", "inbox")
         slim = {t: {k: s.get(k) for k in keys} for t, s in _SESSIONS.items()}
         _registry_path().write_text(json.dumps(slim, indent=2), encoding="utf-8")
     except Exception as e:
@@ -439,10 +439,22 @@ def _step(state, should_cancel=None):
     state["checkpoints"].append({"round": rnd, "snap": snap, "files": []})
     yield {"type": "checkpoint", "round": rnd, "snap": snap}
 
-    # The user (Miko's boss) may inject direction for this round.
-    guide = (state.pop("guidance", "") or "").strip()
-    guide_block = (f"\n\nThe user (your boss) gives this direction for THIS step — follow "
-                   f"it: {guide}") if guide else ""
+    # The user (Miko's boss) may inject direction for this round — either one-shot
+    # `guidance`, or messages queued mid-run via the inbox (autonomous mode lets the
+    # user keep typing while rounds run; we drain whatever arrived before this round).
+    directions = []
+    g = (state.pop("guidance", "") or "").strip()
+    if g:
+        directions.append(g)
+    queued = state.get("inbox") or []
+    if queued:
+        state["inbox"] = []          # drain atomically-enough under the GIL
+        directions += [m for m in (q.strip() for q in queued) if m]
+        yield {"type": "queued", "round": rnd, "count": len(directions),
+               "text": " · ".join(directions)[:300]}
+    guide = "\n".join(f"- {d}" for d in directions)
+    guide_block = (f"\n\nThe user (your boss) sent direction for THIS step — weigh it and "
+                   f"follow what's right:\n{guide}") if guide else ""
 
     # 1) Miko's instruction for this round.
     if rnd == 1:
@@ -588,6 +600,22 @@ def run(token, should_cancel=None, guidance=""):
             state["status"] = "awaiting"; _persist()
             yield {"type": "awaiting", "round": state["round"]}
             return   # wait for the user to approve (a /continue call resumes)
+
+
+def queue_message(token, message) -> dict:
+    """Queue a message for Miko to pick up at the START of the next round, WITHOUT
+    interrupting the round in flight. Lets the user keep steering an autonomous run.
+    Returns {queued, depth} or {error}."""
+    _load_registry()
+    state = _SESSIONS.get(token)
+    if not state:
+        return {"error": "Unknown session."}
+    msg = (message or "").strip()
+    if not msg:
+        return {"error": "Empty message."}
+    state.setdefault("inbox", []).append(msg)
+    _persist()
+    return {"queued": msg, "depth": len(state["inbox"])}
 
 
 def revert_round(token, snap="") -> str:
