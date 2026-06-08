@@ -701,6 +701,12 @@ def _build_app():
         from chat_backend import read_env_keys
         return read_env_keys()
 
+    @app.get("/chat/settings/schema")
+    def chat_settings_schema(_=Depends(_auth)):
+        """Categorised settings + current state for the Settings panel (secrets masked)."""
+        from chat_backend import settings_schema
+        return settings_schema()
+
     @app.post("/chat/env")
     async def chat_env_set(request: Request, _=Depends(_auth)):
         from chat_backend import write_env_keys

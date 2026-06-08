@@ -165,16 +165,94 @@ from pathlib import Path
 
 _ENV_PATH = Path(__file__).resolve().parent / ".env"
 
-# Only these keys are exposed to the UI editor — the chat provider API keys.
-EDITABLE_ENV_KEYS = [
+# Categorised settings the UI exposes, so users configure keys/credentials in a
+# Settings panel instead of hand-editing .env. Each field maps to one env var.
+SETTINGS_GROUPS = [
+    {"category": "AI Models", "fields": [
+        {"key": "LLM_API_KEY", "label": "Google Gemini API key", "secret": True,
+         "help": "Core model + dictation fallback. aistudio.google.com/apikey"},
+        {"key": "OPENAI_API_KEY", "label": "OpenAI API key", "secret": True},
+        {"key": "ANTHROPIC_API_KEY", "label": "Anthropic (Claude) API key", "secret": True},
+        {"key": "MINIMAX_API_KEY", "label": "MiniMax API key", "secret": True},
+        {"key": "MINIMAX_BASE_URL", "label": "MiniMax base URL", "placeholder": "https://api.minimax.io/anthropic"},
+        {"key": "MINIMAX_MODEL", "label": "MiniMax model", "placeholder": "MiniMax-M2.7"},
+        {"key": "DEEPSEEK_API_KEY", "label": "DeepSeek API key", "secret": True},
+        {"key": "MOONSHOT_API_KEY", "label": "Kimi / Moonshot API key", "secret": True},
+        {"key": "XAI_API_KEY", "label": "xAI (Grok) API key", "secret": True},
+    ]},
+    {"category": "Discord", "fields": [
+        {"key": "DISCORD_TOKEN", "label": "Bot token", "secret": True},
+        {"key": "DISCORD_GUILD_ID", "label": "Server (guild) ID"},
+        {"key": "DISCORD_RPC_CLIENT_ID", "label": "Personal-account RPC client ID"},
+        {"key": "DISCORD_RPC_CLIENT_SECRET", "label": "RPC client secret", "secret": True},
+        {"key": "DISCORD_RPC_REDIRECT", "label": "RPC redirect", "placeholder": "http://localhost"},
+    ]},
+    {"category": "Email", "fields": [
+        {"key": "EMAIL_USER", "label": "Email address"},
+        {"key": "EMAIL_PASS", "label": "Password / App Password", "secret": True,
+         "help": "Gmail: enable 2FA and use an App Password."},
+        {"key": "EMAIL_IMAP_HOST", "label": "IMAP host", "placeholder": "imap.gmail.com"},
+        {"key": "EMAIL_IMAP_PORT", "label": "IMAP port", "placeholder": "993"},
+        {"key": "EMAIL_SMTP_HOST", "label": "SMTP host", "placeholder": "smtp.gmail.com"},
+        {"key": "EMAIL_SMTP_PORT", "label": "SMTP port", "placeholder": "587"},
+        {"key": "EMAIL_FROM", "label": "From (optional)"},
+    ]},
+    {"category": "Calendar", "fields": [
+        {"key": "ICLOUD_EMAIL", "label": "iCloud email"},
+        {"key": "ICLOUD_APP_PASSWORD", "label": "iCloud app password", "secret": True},
+        {"key": "AZURE_CLIENT_ID", "label": "Azure client ID (Outlook/Teams)"},
+        {"key": "AZURE_TENANT_ID", "label": "Azure tenant ID", "placeholder": "common"},
+    ]},
+    {"category": "Voice & Language", "fields": [
+        {"key": "MIKO_LANGUAGE", "label": "Language (en / ro)", "placeholder": "en"},
+        {"key": "MIKO_DICTATION_LANG", "label": "Dictation language (BCP-47)", "placeholder": "ro-RO"},
+        {"key": "MIKO_DICTATION_MODEL", "label": "Dictation fallback model", "placeholder": "gemini-2.5-flash"},
+        {"key": "MIKO_VOICE", "label": "Live voice name", "placeholder": "Aoede"},
+    ]},
+    {"category": "General", "fields": [
+        {"key": "OWNER_NAME", "label": "Your name"},
+        {"key": "MIKO_NOTES_DIR", "label": "Notes vault folder"},
+        {"key": "HOME_POSTCODE", "label": "Home postcode (weather/journey)"},
+        {"key": "MIKO_EMAIL_WATCH_INTERVAL", "label": "Inbox-watch poll (seconds)", "placeholder": "120"},
+        {"key": "TOOL_SERVER_KEY", "label": "Tool-server bearer key (optional)", "secret": True},
+    ]},
+]
+
+EDITABLE_ENV_KEYS = [f["key"] for g in SETTINGS_GROUPS for f in g["fields"]]
+_SECRET_KEYS = {f["key"] for g in SETTINGS_GROUPS for f in g["fields"] if f.get("secret")}
+
+# The chat sidebar key editor reads these back in full (to show "saved in .env").
+# read_env_keys is deliberately limited to them so GET /chat/env never returns the
+# other secrets (Discord token, email password, …) in plaintext — those go through
+# settings_schema(), which masks secret values.
+CHAT_ENV_KEYS = [
     "LLM_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MINIMAX_API_KEY",
     "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "XAI_API_KEY",
 ]
 
 
+def settings_schema() -> dict:
+    """The grouped settings schema + current state. Secret values are never sent back
+    (only a `set` flag); non-secret values are returned so the UI can show/edit them."""
+    groups = []
+    for g in SETTINGS_GROUPS:
+        fields = []
+        for f in g["fields"]:
+            v = os.getenv(f["key"], "")
+            fields.append({
+                "key": f["key"], "label": f["label"], "secret": bool(f.get("secret")),
+                "placeholder": f.get("placeholder", ""), "help": f.get("help", ""),
+                "set": bool(v), "value": ("" if f.get("secret") else v),
+            })
+        groups.append({"category": g["category"], "fields": fields})
+    return {"groups": groups}
+
+
 def read_env_keys() -> dict:
-    """Return current values for the editable env keys (from the live process env)."""
-    return {k: os.getenv(k, "") for k in EDITABLE_ENV_KEYS}
+    """Return current values for the CHAT provider keys only (the sidebar key editor
+    compares against these). Other secrets are never returned in full — see
+    settings_schema()."""
+    return {k: os.getenv(k, "") for k in CHAT_ENV_KEYS}
 
 
 def write_env_keys(updates: dict) -> dict:
@@ -183,7 +261,10 @@ def write_env_keys(updates: dict) -> dict:
     the live process env so the change takes effect immediately. Only keys in
     EDITABLE_ENV_KEYS are honoured. Returns the updated values.
     """
-    clean = {k: str(v) for k, v in (updates or {}).items() if k in EDITABLE_ENV_KEYS}
+    # Blank secret fields mean "leave unchanged" (the UI never echoes secrets back),
+    # so a masked empty field can't wipe an existing key. Non-secrets may be cleared.
+    clean = {k: str(v) for k, v in (updates or {}).items()
+             if k in EDITABLE_ENV_KEYS and not (k in _SECRET_KEYS and not str(v).strip())}
     if not clean:
         return read_env_keys()
 

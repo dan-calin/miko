@@ -722,6 +722,39 @@
     font-family: var(--font); font-size: 13px; color: #e3b876;
   }
   .offline-banner.show { display: flex; }
+  /* ── Settings ── */
+  .settings-cog { margin-left: auto; background: none; border: none; color: var(--text3);
+    font-size: 14px; cursor: pointer; padding: 2px 4px; line-height: 1; }
+  .settings-cog:hover { color: var(--amber); }
+  .modal-overlay { display: none; position: fixed; inset: 0; z-index: 50;
+    background: rgba(0,0,0,.55); align-items: center; justify-content: center; }
+  .modal-overlay.show { display: flex; }
+  .modal { width: 560px; max-width: 92vw; max-height: 88vh; display: flex; flex-direction: column;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .modal-head { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .modal-title { font-size: 14px; font-weight: 600; color: var(--text); }
+  .modal-close { margin-left: auto; background: none; border: none; color: var(--text3); font-size: 14px; cursor: pointer; }
+  .modal-close:hover { color: var(--text); }
+  .modal-note { padding: 10px 16px; font-size: 11px; color: var(--text3); line-height: 1.5;
+    border-bottom: 1px solid var(--border); background: var(--bg); }
+  .modal-note code { font-family: var(--mono); color: var(--text2); }
+  .modal-body { padding: 8px 16px; overflow-y: auto; flex: 1; }
+  .set-group { margin: 12px 0 4px; }
+  .set-group-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--amber); margin-bottom: 6px; }
+  .set-field { margin-bottom: 9px; }
+  .set-field label { display: block; font-size: 11px; color: var(--text2); margin-bottom: 3px; }
+  .set-field .set-help { color: var(--text3); font-size: 10px; }
+  .set-field input { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 6px 9px; font: inherit; font-size: 12px; }
+  .set-field input:focus { outline: none; border-color: var(--amber); }
+  .set-badge { font-family: var(--mono); font-size: 9px; color: var(--green); margin-left: 6px; }
+  .modal-foot { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); }
+  .settings-status { font-size: 11px; color: var(--text3); flex: 1; }
+  .settings-save { background: var(--amber); border: none; color: #0b0b0b; font-weight: 600;
+    border-radius: 4px; padding: 7px 18px; cursor: pointer; font: inherit; font-size: 12px; }
+  .settings-save:hover { background: #d4b063; }
+  .settings-save:disabled { opacity: .6; cursor: default; }
   .offline-banner .ob-mark { color: var(--amber); font-size: 14px; flex-shrink: 0; }
   .offline-banner .ob-text { flex: 1; line-height: 1.5; }
   .offline-banner code {
@@ -755,6 +788,7 @@
         <rect x="6.6" y="6.6" width="2.8" height="2.8" fill="#c4a257" />
       </svg>
       <span>MIKO</span>
+      <button class="settings-cog" id="settings-cog" type="button" title="Settings — API keys & credentials">⚙</button>
     </div>
     <div class="rule"></div>
 
@@ -936,6 +970,22 @@
       </div>
     </div>
   </main>
+
+  <!-- ── Settings modal (API keys & credentials) ──────────── -->
+  <div id="settings-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-title">Settings</span>
+        <button class="modal-close" id="settings-close" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-note">Keys and credentials are saved to your local <code>.env</code>. Most changes take effect after restarting Miko. Secrets are write-only — a filled field shows as <b>set</b>.</div>
+      <div class="modal-body" id="settings-body"></div>
+      <div class="modal-foot">
+        <span class="settings-status" id="settings-status"></span>
+        <button class="settings-save" id="settings-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ── Workspace overlay ───────────────────────────────── -->
   <div id="workspace">
@@ -2687,6 +2737,60 @@ $('#base-url').addEventListener('change', saveCfg);
 $('#save-env').addEventListener('click', saveToEnv);
 $('#allow-actions').addEventListener('click', () => { setAllow(!$('#allow-actions').classList.contains('on')); saveCfg(); });
 $('#approve-mode').addEventListener('click', () => { approveMode = !approveMode; setApprove(approveMode); saveCfg(); });
+// ── Settings modal (API keys & credentials per category) ─────────────────────
+async function openSettings() {
+  const body = $('#settings-body'); $('#settings-status').textContent = 'Loading…';
+  $('#settings-modal').classList.add('show');
+  let data;
+  try { data = await (await fetch('/chat/settings/schema')).json(); }
+  catch (e) { $('#settings-status').textContent = 'Could not load settings.'; return; }
+  body.innerHTML = '';
+  (data.groups || []).forEach(g => {
+    const grp = document.createElement('div'); grp.className = 'set-group';
+    const t = document.createElement('div'); t.className = 'set-group-title'; t.textContent = g.category;
+    grp.appendChild(t);
+    g.fields.forEach(f => {
+      const wrap = document.createElement('div'); wrap.className = 'set-field';
+      const lab = document.createElement('label'); lab.textContent = f.label;
+      if (f.secret && f.set) { const b = document.createElement('span'); b.className = 'set-badge'; b.textContent = '● set'; lab.appendChild(b); }
+      if (f.help) { const h = document.createElement('span'); h.className = 'set-help'; h.textContent = ' — ' + f.help; lab.appendChild(h); }
+      const inp = document.createElement('input');
+      inp.type = f.secret ? 'password' : 'text';
+      inp.dataset.key = f.key; inp.dataset.secret = f.secret ? '1' : '';
+      inp.value = f.value || '';
+      inp.placeholder = f.secret ? (f.set ? '•••••••• (blank = keep)' : (f.placeholder || '')) : (f.placeholder || '');
+      inp.autocomplete = 'off'; inp.spellcheck = false;
+      wrap.append(lab, inp); grp.appendChild(wrap);
+    });
+    body.appendChild(grp);
+  });
+  $('#settings-status').textContent = '';
+}
+function closeSettings() { $('#settings-modal').classList.remove('show'); }
+async function saveSettings() {
+  const btn = $('#settings-save'), status = $('#settings-status');
+  btn.disabled = true; status.textContent = 'Saving…';
+  const updates = {};
+  $('#settings-body').querySelectorAll('input[data-key]').forEach(inp => {
+    const v = inp.value.trim();
+    if (inp.dataset.secret) { if (v) updates[inp.dataset.key] = v; }   // only send changed secrets
+    else updates[inp.dataset.key] = v;                                 // non-secrets (blank clears)
+  });
+  try {
+    const r = await fetch('/chat/env', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    status.textContent = '✓ Saved to .env — restart Miko for changes to take full effect.';
+    try { ENV = await (await fetch('/chat/env')).json(); updateKeyStatus(); } catch (e) {}
+    try { await loadDictationLang(); } catch (e) {}
+  } catch (e) { status.textContent = 'Save failed: ' + (e.message || ''); }
+  finally { btn.disabled = false; }
+}
+$('#settings-cog').addEventListener('click', openSettings);
+$('#settings-close').addEventListener('click', closeSettings);
+$('#settings-save').addEventListener('click', saveSettings);
+$('#settings-modal').addEventListener('click', e => { if (e.target === $('#settings-modal')) closeSettings(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#settings-modal').classList.contains('show')) closeSettings(); });
+
 // ── Voice dictation — push-to-talk or click (#6) ─────────────────────────────
 // Two engines: Web Speech (Chrome/Edge) streams text live as you speak; the
 // fallback (Firefox) records the whole utterance and transcribes it once via
