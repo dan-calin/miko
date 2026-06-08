@@ -215,6 +215,12 @@ def _miko(state: dict, user_msg: str) -> str:
         "and push back when something is wrong, incomplete, or low-quality. You do NOT "
         "write code yourself — you instruct and evaluate.\n"
         f"GOAL: {state['goal']}\n"
+        f"PROJECT REPO (the coder already runs commands INSIDE this directory): {state['repo']}\n"
+        "Use this real path in any command. NEVER invent a path like /home/user/..., and do NOT "
+        "prefix instructions with 'cd' — the coder is already in the repo. The coder CAN run "
+        "terminal commands itself (tests, backtests, scripts) and report their output: tell it to "
+        "RUN the thing and paste the real result, then react to the ACTUAL output — not to a "
+        "hypothetical one.\n"
         + (f"RESEARCH/CONTEXT:\n{state['research'][:4000]}\n" if state.get("research") else "")
         + "Give EXACTLY ONE focused instruction per turn — never bundle multiple numbered "
         "steps (the user approves each round, so there is always a next turn for the next "
@@ -228,7 +234,13 @@ def _miko(state: dict, user_msg: str) -> str:
         "are SETTLED and remain in context — never ask to read, print, list, or re-state "
         "them again. Every turn must be a NEW concrete action (locate something not yet "
         "found, or write/modify code), not a re-confirmation of what is already known. "
-        "When (and only when) you are convinced the goal is fully and correctly met, reply "
+        + ("AUTONOMOUS mode: YOU are the decision-maker — the user is NOT in the loop and will "
+           "NOT answer questions. If the coder asks you to choose between options or for a "
+           "go-ahead (e.g. real vs synthetic data, default a flag), DECIDE it yourself and give "
+           "a concrete instruction to proceed; never defer the choice to the user or stall "
+           "waiting for approval. "
+           if state.get("mode") == "autonomous" else "")
+        + "When (and only when) you are convinced the goal is fully and correctly met, reply "
         "with exactly 'DONE: <one-line summary>'."
     )
     try:
