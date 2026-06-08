@@ -487,7 +487,7 @@ def _build_app():
         text = transcribe(data, mime, language=lang)
         if not text:
             return JSONResponse(
-                {"error": "Could not transcribe (check the Gemini key, mic, and ffmpeg)."},
+                {"error": "Could not transcribe (check that the Gemini key is set and you spoke clearly)."},
                 status_code=502)
         return {"text": text}
 

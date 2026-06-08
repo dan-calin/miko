@@ -21,10 +21,27 @@ _GEMINI_OK = {
 }
 
 
+def _ffmpeg_exe() -> str:
+    """Resolve an ffmpeg executable. Prefers the bundled imageio-ffmpeg binary
+    (same as the Discord audio path) so it works even when ffmpeg isn't on PATH;
+    honours MIKO_FFMPEG/FFMPEG_PATH overrides; falls back to PATH."""
+    import os
+    override = os.getenv("MIKO_FFMPEG") or os.getenv("FFMPEG_PATH")
+    if override:
+        return override
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        pass
+    import shutil
+    return shutil.which("ffmpeg") or "ffmpeg"
+
+
 def _ffmpeg_to_wav(audio_bytes: bytes) -> bytes:
-    """Transcode arbitrary audio to 16 kHz mono WAV via ffmpeg (must be on PATH)."""
+    """Transcode arbitrary audio to 16 kHz mono WAV via ffmpeg."""
     proc = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+        [_ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
          "-ac", "1", "-ar", "16000", "-f", "wav", "pipe:1"],
         input=audio_bytes, capture_output=True, timeout=60,
     )
