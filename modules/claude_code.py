@@ -325,13 +325,18 @@ def _miko(state: dict, user_msg: str) -> str:
            "a concrete instruction to proceed; never defer the choice to the user or stall "
            "waiting for approval. "
            if state.get("mode") == "autonomous" else "")
+        + "BE TERSE — this conversation costs tokens on every turn. Output ONLY the "
+        "instruction or proposal itself: no greetings, no praise ('great work', 'nice'), "
+        "no thanking, no restating what Claude just did, no meta-commentary about the "
+        "process, no sign-off. Lead with the action verb. A few sentences at most; use a "
+        "short rationale only when the WHY isn't obvious. "
         + "When (and only when) you are convinced the goal is fully and correctly met, reply "
         "with exactly 'DONE: <one-line summary>'."
     )
     try:
         return (complete_text(state.get("provider", "gemini"), state.get("model", ""),
                               state.get("key", ""), state.get("base", ""),
-                              sys, user_msg, max_tokens=2000) or "").strip()
+                              sys, user_msg, max_tokens=1000) or "").strip()
     except Exception as e:
         logger.warning(f"miko turn failed: {e}")
         return f"(Miko could not respond: {e})"
@@ -423,7 +428,11 @@ _CLAUDE_FRAME = (
     "implementation rather than pasting Miko's snippets, and when a proposal is wrong, "
     "suboptimal, or risky, push back — decline or improve it and explain WHY. It's a debate "
     "between peers; the goal is the best code, not obedience. When you run tests or commands, "
-    "report the REAL output so Miko reasons over actual results.\n\n"
+    "report the REAL output so Miko reasons over actual results.\n"
+    "Keep your REPLIES to Miko terse — this loop costs tokens each turn. Report only what "
+    "matters: what you changed, the real command/test output, and any decision or pushback "
+    "with a one-line why. Skip the preamble, pleasantries, and restating the request; don't "
+    "re-explain code Miko can see in the diff. Brevity in the chat, not in the code.\n\n"
 )
 
 
