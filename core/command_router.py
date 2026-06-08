@@ -304,6 +304,10 @@ class CommandRouter:
                 from modules.email_box import search_emails
                 return search_emails(**args)
 
+            if tool_name == "triage_inbox":
+                from modules.email_box import triage_inbox
+                return triage_inbox(**args)
+
             if tool_name == "send_email":
                 from modules.email_box import send_email
                 return send_email(**args)

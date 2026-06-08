@@ -55,6 +55,24 @@ TOOL_DECLARATIONS = [
         },
     },
     {
+        "name": "triage_inbox",
+        "description": (
+            "Answer a natural-language question about recent emails by reading the last "
+            "few days of inbox and filtering by meaning (not just keywords). Use for "
+            "'have I received any job-related emails in the past 2 days?', 'any "
+            "invoices this week?', 'did anyone reply about the apartment?'. Returns the "
+            "matching emails with a one-line reason each."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "criteria": {"type": "STRING", "description": "What to look for, in plain language (e.g. 'job related', 'invoices')."},
+                "days": {"type": "INTEGER", "description": "How many days back to scan (default 2)."},
+            },
+            "required": ["criteria"],
+        },
+    },
+    {
         "name": "send_email",
         "description": (
             "Send an email. SENSITIVE — read the message back to the user and get "
@@ -214,6 +232,82 @@ def search_emails(query: str) -> str:
     except Exception as e:
         logger.error(f"search_emails error: {e}")
         return f"Search failed: {e}"
+
+
+def _recent_messages(days: int, cap: int = 30) -> list:
+    """Fetch (from, subject, date, snippet) for inbox mail from the last `days` days."""
+    from datetime import datetime, timedelta
+    import email as _email
+    from email.utils import parseaddr
+    since = (datetime.now() - timedelta(days=max(1, days))).strftime("%d-%b-%Y")
+    out = []
+    M = None
+    try:
+        M = _imap()
+        M.select("INBOX", readonly=True)
+        typ, data = M.uid("SEARCH", None, f"(SINCE {since})")
+        uids = (data[0].split() if data and data[0] else [])[-cap:][::-1]
+        for uid in uids:
+            typ, md = M.uid("FETCH", uid, "(RFC822)")
+            if not md or not md[0]:
+                continue
+            msg = _email.message_from_bytes(md[0][1])
+            frm = _dec(msg.get("From", ""))
+            subj = _dec(msg.get("Subject", "(no subject)"))
+            date = _dec(msg.get("Date", ""))[:25]
+            snippet = " ".join(_body_text(msg).split())[:280]
+            out.append({"from": frm, "subject": subj, "date": date, "snippet": snippet})
+    finally:
+        if M is not None:
+            try:
+                M.logout()
+            except Exception:
+                pass
+    return out
+
+
+def triage_inbox(criteria: str, days: int = 2) -> str:
+    cfg = _Cfg()
+    if not cfg.imap_ready():
+        return "Email isn't configured. Set EMAIL_USER / EMAIL_PASS / EMAIL_IMAP_HOST in .env."
+    criteria = (criteria or "").strip()
+    if not criteria:
+        return "What should I look for? (e.g. 'job related', 'invoices')"
+    try:
+        days = int(days or 2)
+    except (TypeError, ValueError):
+        days = 2
+    try:
+        msgs = _recent_messages(days)
+    except Exception as e:
+        logger.error(f"triage_inbox fetch error: {e}")
+        return f"Couldn't reach the mailbox: {e}"
+    if not msgs:
+        return f"No emails in the last {days} day(s)."
+
+    catalog = "\n".join(
+        f"[{i}] From: {m['from']} | Subject: {m['subject']} | {m['date']}\n    {m['snippet']}"
+        for i, m in enumerate(msgs, 1)
+    )
+    sys_prompt = (
+        "You triage a user's inbox. Given a list of recent emails and a plain-language "
+        "criterion, return ONLY the emails that genuinely match the criterion's meaning. "
+        "For each match, one line: 'From — Subject — short reason'. If none match, reply "
+        "exactly 'No matching emails.'. Be precise; do not invent emails."
+    )
+    user = f"Criterion: {criteria}\n\nRecent emails (last {days} day(s)):\n{catalog}"
+    try:
+        from chat_backend import complete_text
+        from config import CONFIG
+        ans = complete_text("gemini", "gemini-2.5-flash",
+                            api_key=getattr(CONFIG, "gemini_api_key", ""),
+                            system=sys_prompt, user=user, max_tokens=600).strip()
+    except Exception as e:
+        logger.warning(f"triage_inbox LLM failed: {e}")
+        return (f"I pulled {len(msgs)} email(s) from the last {days} day(s) but couldn't "
+                f"analyze them: {e}")
+    header = f"Scanned {len(msgs)} email(s) from the last {days} day(s) for “{criteria}”:\n"
+    return header + (ans or "No matching emails.")
 
 
 def send_email(to: str, subject: str, body: str) -> str:
