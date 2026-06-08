@@ -96,6 +96,12 @@ def start(command_router) -> None:
     except Exception as e:
         logger.warning(f"scheduled tasks not started: {e}")
     try:
+        from modules.email_watch import start as _start_email_watch, _load as _ew_load
+        if any(r.get("active") for r in _ew_load().values()):
+            _start_email_watch()   # only spin the IMAP poller if there are live watches
+    except Exception as e:
+        logger.warning(f"email watch not started: {e}")
+    try:
         from modules.mcp_client import start as _start_mcp
         _start_mcp()
     except Exception as e:

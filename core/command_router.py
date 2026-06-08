@@ -321,6 +321,19 @@ class CommandRouter:
                 from modules.scheduled_tasks import cancel_scheduled_task
                 return cancel_scheduled_task(**args)
 
+            # ── Email watch (ping me when a specific email arrives) ──────────
+            if tool_name == "watch_email":
+                from modules.email_watch import watch_email
+                return watch_email(**args)
+
+            if tool_name == "list_email_watches":
+                from modules.email_watch import list_email_watches
+                return list_email_watches()
+
+            if tool_name == "cancel_email_watch":
+                from modules.email_watch import cancel_email_watch
+                return cancel_email_watch(**args)
+
             # ── Browser automation ───────────────────────────────────────────
             if tool_name == "browser_open":
                 from modules.browser import browser_open
