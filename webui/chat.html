@@ -2802,7 +2802,9 @@ async function _onRecStop() {
   const blob = new Blob(_recChunks, { type: (_rec && _rec.mimeType) || 'audio/webm' }); _recChunks = [];
   const el = _dictEl;
   if (_recStream) { _recStream.getTracks().forEach(t => t.stop()); _recStream = null; }
-  if (!blob.size) { _finishDictation(); return; }
+  // A clip under ~2KB is essentially silence/headers (a spurious or empty press) —
+  // skip it silently so it never flashes a "could not transcribe" over a good turn.
+  if (blob.size < 2000) { _finishDictation(); return; }
   if (_dictBtn) _dictBtn.classList.add('busy');
   try {
     const r = await fetch('/chat/transcribe', { method: 'POST', headers: { 'Content-Type': blob.type }, body: blob });
