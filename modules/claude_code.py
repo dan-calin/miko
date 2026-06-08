@@ -209,11 +209,17 @@ def _miko(state: dict, user_msg: str) -> str:
     """One reasoning turn for Miko, the lead engineer directing Claude Code."""
     from chat_backend import complete_text
     sys = (
-        "You are Miko, the lead engineer and instructor directing a capable coder "
-        "(Claude Code) working in a real git repository. You set direction, give one "
-        "concrete actionable instruction at a time, review the coder's work critically, "
-        "and push back when something is wrong, incomplete, or low-quality. You do NOT "
-        "write code yourself — you instruct and evaluate.\n"
+        "You are Miko, the ARCHITECT pairing with Claude Code — a coder that is STRONGER "
+        "than you at implementation. You are NOT a superior handing down orders; you are an "
+        "ideas-and-direction partner, and this is a DEBATE between peers. You propose "
+        "direction, approaches and trade-offs and raise concerns; Claude writes the actual "
+        "code and is the final authority on implementation quality. When Claude pushes back "
+        "or improves your idea, engage its reasoning honestly and defer to the better call — "
+        "don't insist just because you proposed it.\n"
+        "You MAY sketch an idea or a little pseudocode to convey INTENT, but present it as a "
+        "PROPOSAL, never as finished code to copy-paste verbatim. Pasting code from you (a "
+        "smaller model) would lower quality — let the stronger coder write the real thing and "
+        "critique your proposal. You do NOT do the implementation yourself.\n"
         f"GOAL: {state['goal']}\n"
         f"PROJECT REPO (the coder already runs commands INSIDE this directory): {state['repo']}\n"
         "Use this real path in any command. NEVER invent a path like /home/user/..., and do NOT "
@@ -222,9 +228,9 @@ def _miko(state: dict, user_msg: str) -> str:
         "RUN the thing and paste the real result, then react to the ACTUAL output — not to a "
         "hypothetical one.\n"
         + (f"RESEARCH/CONTEXT:\n{state['research'][:4000]}\n" if state.get("research") else "")
-        + "Give EXACTLY ONE focused instruction per turn — never bundle multiple numbered "
-        "steps (the user approves each round, so there is always a next turn for the next "
-        "step). Keep each instruction specific, bounded, and COMPLETE (never trail off). "
+        + "Give EXACTLY ONE focused next step or proposal per turn — never bundle multiple "
+        "numbered steps (there is always a next turn for the next step). Keep each one "
+        "specific, bounded, and COMPLETE (never trail off). "
         "You will be shown a ledger of the instructions you have ALREADY given and the "
         "files already changed. NEVER repeat an instruction that is in that ledger — do "
         "not ask Claude to re-read a file it has already read, or re-locate files it has "
@@ -325,6 +331,17 @@ def start_session(repo, goal, mode="autonomous", research="", provider="gemini",
     return {"token": token, "repo": repo, "mode": _SESSIONS[token]["mode"]}
 
 
+_CLAUDE_FRAME = (
+    "[Pairing context] You are the SENIOR IMPLEMENTER, paired with Miko — an architect on a "
+    "smaller model who sets direction and proposes ideas. You are the stronger coder. Treat "
+    "Miko's instructions and any code sketches as PROPOSALS, not gospel: write your own clean "
+    "implementation rather than pasting Miko's snippets, and when a proposal is wrong, "
+    "suboptimal, or risky, push back — decline or improve it and explain WHY. It's a debate "
+    "between peers; the goal is the best code, not obedience. When you run tests or commands, "
+    "report the REAL output so Miko reasons over actual results.\n\n"
+)
+
+
 def _step(state, should_cancel=None) -> dict:
     """Run exactly one round: checkpoint → Miko instructs → Claude implements →
     record changes → Miko evaluates. Returns an outcome dict (may set handshake)."""
@@ -395,8 +412,10 @@ def _step(state, should_cancel=None) -> dict:
         events.append({"type": "cancelled"})
         return {"events": events, "done": True}
 
-    # 2) Claude implements the instruction.
-    res = _run_claude(repo, instr, state["claude_session"], resume=(rnd > 1), model="")
+    # 2) Claude implements. On round 1, prepend the collaboration frame (Claude keeps it via
+    # --resume): Claude is the senior implementer and should critique Miko's proposals.
+    prompt = (_CLAUDE_FRAME + instr) if rnd == 1 else instr
+    res = _run_claude(repo, prompt, state["claude_session"], resume=(rnd > 1), model="")
     state["history"].append({"role": "Claude", "text": res["result"]})
     files = changed_since(repo, snap)
     state["checkpoints"][-1]["files"] = files
