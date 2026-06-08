@@ -467,6 +467,11 @@
   .mic.busy { color: var(--amber); cursor: default; }
   .mic.busy svg { animation: micspin 0.9s linear infinite; }
   .mic-mini { width: 26px; height: 26px; flex: none; }
+  .ptt-toggle, .ptt-key { background: none; border: 1px solid var(--border); color: var(--text3);
+    border-radius: 3px; font: inherit; font-size: 11px; padding: 1px 7px; cursor: pointer; }
+  .ptt-toggle:hover, .ptt-key:hover { border-color: var(--amber); color: var(--amber); }
+  .ptt-toggle.on { background: var(--amber); border-color: var(--amber); color: #0b0b0b; }
+  .ptt-key { margin-left: -2px; font-family: var(--mono); }
   /* full-width input on top; mic + approve flow inline on the next line */
   .pc-next { flex-direction: row; flex-wrap: wrap; align-items: center; }
   @keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(224,108,117,.5); } 50% { box-shadow: 0 0 0 5px rgba(224,108,117,0); } }
@@ -922,6 +927,9 @@
           <span>↵ Send</span>
           <span class="sep">·</span>
           <span>⇧ ↵ New line</span>
+          <span class="sep">·</span>
+          <button type="button" class="ptt-toggle" id="ptt-toggle" title="Push-to-talk: hold the key to dictate, release to send">Push-to-talk</button>
+          <button type="button" class="ptt-key" id="ptt-key" title="Click, then press a key to bind push-to-talk">Space</button>
           <span class="sep live-sep">·</span>
           <span class="live" id="hint-live">● Actions live</span>
         </div>
@@ -1635,7 +1643,7 @@ function pcApprove(c) {
   const b = document.createElement('button'); b.className = 'pc-approve'; b.textContent = '▶ Approve · next round';
   b.addEventListener('click', () => { const g = gi.value.trim(); el.remove(); continueCode(c, g); });
   gi.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); b.click(); } });
-  el.append(gi, makeMic(gi, () => b.click()), b); c.log.appendChild(el); chatEl.scrollTop = chatEl.scrollHeight;
+  el.append(gi, makeMic(gi), b); c.log.appendChild(el); chatEl.scrollTop = chatEl.scrollHeight;
   gi.focus();
 }
 
@@ -1901,7 +1909,7 @@ function pcContinue(c) {
   const b = document.createElement('button'); b.className = 'pc-approve'; b.textContent = '▶ Continue';
   b.addEventListener('click', () => { const g = gi.value.trim(); if (!g) { gi.focus(); return; } el.remove(); continueCode(c, g); });
   gi.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); b.click(); } });
-  el.append(gi, makeMic(gi, () => b.click()), b); c.log.appendChild(el);
+  el.append(gi, makeMic(gi), b); c.log.appendChild(el);
 }
 
 // After a page refresh, restore the most recent unfinished pair session.
@@ -2679,197 +2687,144 @@ $('#base-url').addEventListener('change', saveCfg);
 $('#save-env').addEventListener('click', saveToEnv);
 $('#allow-actions').addEventListener('click', () => { setAllow(!$('#allow-actions').classList.contains('on')); saveCfg(); });
 $('#approve-mode').addEventListener('click', () => { approveMode = !approveMode; setApprove(approveMode); saveCfg(); });
-// ── Voice dictation — hands-free, targets ANY input (#6) ─────────────────────
-// Primary engine: the browser's Web Speech API (Chrome/Edge) — streaming + free,
-// so text appears live as you speak and the end phrase is caught instantly (no
-// server round-trip). Fallback for browsers without it (e.g. Firefox): record →
-// /chat/transcribe (Gemini), which auto-detects language but is slower.
-// Say an end phrase ("end dictation" / "stop the dictation" / RO "încheie/gata
-// dictarea") anywhere to finish AND trigger that field's action (send / approve).
-// A manual click stops without sending. One engine drives every mic on the page.
-let _dictating = false, _rec = null, _recStream = null, _audioCtx = null, _analyser = null, _vadRAF = null;
-let _segActive = false, _segStart = 0, _silenceStart = 0, _hadSpeech = false, _txBusy = 0;
-let _dictEl = null, _dictEnd = null, _dictBtn = null, _sr = null, _srBase = '', _dictLang = '';
-const _END_RE = /(?:^|\s)(?:end|stop)(?:\s+the)?\s+dictation\b|(?:^|\s)[iî]?ncheie\s+dictarea\b|(?:^|\s)gata\s+dictarea\b/i;
-const _VAD_SILENCE_MS = 700, _VAD_RMS = 0.014, _SEG_MAX_MS = 5000;
+// ── Voice dictation — push-to-talk or click (#6) ─────────────────────────────
+// Two engines: Web Speech (Chrome/Edge) streams text live as you speak; the
+// fallback (Firefox) records the whole utterance and transcribes it once via
+// /chat/transcribe (Gemini). Two ways to drive it:
+//   • Push-to-talk: hold the bound key (default Space) → talk → release → SEND.
+//   • Click a mic: start, click again to stop (text stays in the field; no send).
+// No keyword and no VAD chunking — one clean utterance per turn.
+let _dictating = false, _dictStopping = false, _dictSend = false;
+let _dictEl = null, _dictBtn = null, _dictLang = '';
+let _sr = null, _srBase = '', _rec = null, _recChunks = [], _recStream = null;
+let _stopRequested = false, _pendingSend = false;   // PTT released before async start finished
 function _micBtn() { return $('#mic-btn'); }
 function _hasWebSpeech() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
-
-// One handler for every mic. `el` = target field, `onEnd` = action when the end
-// phrase is heard, `btn` = the mic element to animate. Clicking again stops.
-function micClick(el, onEnd, btn) {
-  if (_dictating) { stopDictation(); return; }
-  startDictation(el, onEnd, btn);
-}
-
-async function startDictation(el, onEnd, btn) {
-  _dictEl = el || input; _dictEnd = onEnd || null; _dictBtn = btn || _micBtn();
-  if (_hasWebSpeech()) { _startWebSpeech(); return; }   // fast streaming path
-
-  // Fallback: MediaRecorder → server transcription (slower) for browsers w/o Web Speech.
-  if (!navigator.mediaDevices || !window.MediaRecorder || !(window.AudioContext || window.webkitAudioContext)) {
-    flashHint(_dictEl, 'Dictation needs Chrome/Edge (or a browser with mic support).'); return;
-  }
-  try {
-    _recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch (e) {
-    flashHint(_dictEl, 'Mic access denied — allow the microphone to dictate.'); return;
-  }
-  _dictating = true;
-  _dictBtn.classList.add('recording'); _dictBtn.title = 'Stop dictation';
-  flashHint(_dictEl, 'Listening… say "end dictation" to send.');
-  _startVAD();
-  _startSegment(performance.now());   // always recording from the start
-}
-
-// Streaming dictation via Web Speech (Google's free in-browser STT on Chrome/Edge).
-function _startWebSpeech() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  _sr = new SR();
-  _sr.lang = (_dictLang || navigator.language || 'en-US');   // from server config (MIKO_DICTATION_LANG / MIKO_LANGUAGE)
-  _sr.continuous = true;
-  _sr.interimResults = true;
-  _dictating = true;
-  _dictBtn.classList.add('recording'); _dictBtn.title = 'Stop dictation';
-  flashHint(_dictEl, 'Listening… say "end dictation" to send.');
-  _srBase = (_dictEl.value || '').replace(/\s*$/, '');
-  _sr.onresult = (ev) => {
-    if (!_dictating) return;
-    let finalT = '', interim = '';
-    for (let i = 0; i < ev.results.length; i++) {
-      const r = ev.results[i];
-      if (r.isFinal) finalT += r[0].transcript + ' '; else interim += r[0].transcript;
-    }
-    const combined = (finalT + interim).replace(/\s+/g, ' ').trim();
-    const m = combined.match(_END_RE);
-    if (m) {
-      _setFieldFromDictation(combined.slice(0, m.index).trim());
-      const endFn = _dictEnd; stopDictation(); if (endFn) endFn();
-      return;
-    }
-    _setFieldFromDictation(combined);
-  };
-  _sr.onerror = (e) => {
-    if (e.error === 'no-speech' || e.error === 'aborted') return;
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-      flashHint(_dictEl, 'Mic access denied for dictation.'); stopDictation(); return;
-    }
-    flashHint(_dictEl, 'Dictation error: ' + e.error);
-  };
-  _sr.onend = () => { if (_dictating) { try { _sr.start(); } catch (e) {} } };  // keep alive on auto-stop
-  try { _sr.start(); } catch (e) { flashHint(_dictEl, 'Could not start dictation.'); stopDictation(); }
-}
-
-function _setFieldFromDictation(text) {
-  const el = _dictEl; if (!el) return;
-  el.value = _srBase ? (_srBase + (text ? ' ' + text : '')) : text;
-  if (el.tagName === 'TEXTAREA') { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }
-  if (el === input) refreshSend();
-}
-
 function _pickMime() {
   for (const m of ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'])
     if (MediaRecorder.isTypeSupported(m)) return m;
   return '';
 }
 
-function _startVAD() {
-  _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (_audioCtx.state === 'suspended') _audioCtx.resume();
-  const src = _audioCtx.createMediaStreamSource(_recStream);
-  _analyser = _audioCtx.createAnalyser(); _analyser.fftSize = 1024;
-  src.connect(_analyser);
-  const buf = new Float32Array(_analyser.fftSize);
-  const tick = () => {
-    if (!_dictating) return;
-    _analyser.getFloatTimeDomainData(buf);
-    let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-    const rms = Math.sqrt(sum / buf.length), now = performance.now();
-    if (rms > _VAD_RMS) { _hadSpeech = true; _silenceStart = 0; }
-    else if (_hadSpeech && _silenceStart === 0) { _silenceStart = now; }
-    // Cut on a natural pause after speech, OR every ~6s so continuous talking
-    // (no pauses) still gets transcribed and the end phrase is caught quickly.
-    const silenceCut = _hadSpeech && _silenceStart && (now - _silenceStart > _VAD_SILENCE_MS);
-    const maxCut = (now - _segStart) > _SEG_MAX_MS;
-    if (_segActive && (silenceCut || maxCut)) { _cutSegment(!_hadSpeech); _startSegment(now); }
-    _vadRAF = requestAnimationFrame(tick);
+// Click a mic = toggle dictation (insert only, no send). PTT uses start/end directly.
+function micClick(el, btn) {
+  if (_dictating) { endDictation(false); return; }
+  startDictation(el, btn, false);
+}
+
+async function startDictation(el, btn, sendOnStop) {
+  if (_dictating) return;
+  _dictEl = el || input; _dictBtn = btn || _micBtn(); _dictSend = !!sendOnStop; _dictStopping = false;
+  _stopRequested = false;
+  if (_hasWebSpeech()) { _startWebSpeech(); }
+  else { await _startRecord(); }   // fallback (async)
+  // Released the key before the async start finished? End immediately.
+  if (_stopRequested && _dictating) { _stopRequested = false; endDictation(_pendingSend); }
+}
+
+// End the current dictation. doSend=true → send the field after it finalizes.
+function endDictation(doSend) {
+  if (_dictStopping) return;
+  if (!_dictating) { _stopRequested = true; _pendingSend = !!doSend; return; }  // start still pending
+  _dictSend = !!doSend; _dictStopping = true;
+  if (_sr) { try { _sr.stop(); } catch (e) { _finishDictation(); } return; }     // stop() flushes final → onend
+  if (_rec && _rec.state === 'recording') { try { _rec.stop(); } catch (e) { _finishDictation(); } return; }  // → _onRecStop
+  _finishDictation();
+}
+
+function _finishDictation() {
+  const el = _dictEl, doSend = _dictSend;
+  _teardownDict();
+  if (doSend && el === input && (el.value || '').trim()) send();
+}
+
+function _teardownDict() {
+  _dictating = false; _dictStopping = false; _dictSend = false;
+  if (_sr) { try { _sr.onend = _sr.onresult = _sr.onerror = null; _sr.abort(); } catch (e) {} _sr = null; }
+  try { if (_rec && _rec.state === 'recording') _rec.stop(); } catch (e) {}
+  _rec = null; _recChunks = [];
+  if (_recStream) { _recStream.getTracks().forEach(t => t.stop()); _recStream = null; }
+  if (_dictBtn) { _dictBtn.classList.remove('recording', 'busy'); _dictBtn.title = 'Dictate (push-to-talk or click)'; }
+  _dictEl = null; _dictBtn = null;
+}
+
+// Streaming dictation via Web Speech (Google's free in-browser STT on Chrome/Edge).
+function _startWebSpeech() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  _sr = new SR();
+  _sr.lang = (_dictLang || navigator.language || 'en-US');   // server config (MIKO_DICTATION_LANG / MIKO_LANGUAGE)
+  _sr.continuous = true; _sr.interimResults = true;
+  _dictating = true; _dictBtn.classList.add('recording'); _dictBtn.title = 'Stop dictation';
+  flashHint(_dictEl, _dictSend ? 'Listening… release to send.' : 'Listening… click to stop.');
+  _srBase = (_dictEl.value || '').replace(/\s*$/, '');
+  _sr.onresult = (ev) => {
+    let finalT = '', interim = '';
+    for (let i = 0; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (r.isFinal) finalT += r[0].transcript + ' '; else interim += r[0].transcript;
+    }
+    _setField((finalT + interim).replace(/\s+/g, ' ').trim());
   };
-  _vadRAF = requestAnimationFrame(tick);
+  _sr.onerror = (e) => {
+    if (e.error === 'no-speech' || e.error === 'aborted') return;
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { flashHint(_dictEl, 'Mic access denied for dictation.'); _teardownDict(); return; }
+    flashHint(_dictEl, 'Dictation error: ' + e.error);
+  };
+  _sr.onend = () => {
+    if (_dictating && !_dictStopping) { try { _sr.start(); } catch (e) {} return; }  // keep-alive on auto-stop
+    _finishDictation();
+  };
+  try { _sr.start(); } catch (e) { flashHint(_dictEl, 'Could not start dictation.'); _teardownDict(); }
 }
 
-function _startSegment(now) {
-  _segActive = true; _segStart = now; _hadSpeech = false; _silenceStart = 0;
-  const chunks = [], mime = _pickMime();
-  const rec = new MediaRecorder(_recStream, mime ? { mimeType: mime } : undefined);
-  rec.addEventListener('dataavailable', e => { if (e.data && e.data.size) chunks.push(e.data); });
-  rec.addEventListener('stop', () => _onSegmentStop(rec, chunks));   // closure → no chunk race
-  rec.start(); _rec = rec;
-}
-
-function _cutSegment(skip) {
-  const rec = _rec; _segActive = false;
-  if (rec && rec.state === 'recording') { rec._skip = skip; rec.stop(); }
-}
-
-async function _onSegmentStop(rec, chunks) {
-  if (rec._skip || !chunks.length) return;            // pure-silence segment → don't waste a call
-  const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
-  if (!blob.size) return;
-  _txBusy++; if (_dictBtn) _dictBtn.classList.add('busy');
-  try {
-    const r = await fetch('/chat/transcribe', { method: 'POST', headers: { 'Content-Type': blob.type }, body: blob });
-    const d = await r.json().catch(() => ({}));
-    if (r.ok && d.text) _handleDictatedText(d.text);
-    else if (d && d.error) flashHint(_dictEl || input, d.error);
-  } catch (e) { /* drop this segment, keep listening */ }
-  finally {
-    _txBusy = Math.max(0, _txBusy - 1);
-    if (!_txBusy && _dictBtn) { _dictBtn.classList.remove('busy'); if (_dictating) _dictBtn.classList.add('recording'); }
-  }
-}
-
-function _setVal(el, text) {
-  const cur = el.value;
-  el.value = cur ? (cur.replace(/\s*$/, '') + ' ' + text) : text;
+function _setField(text) {
+  const el = _dictEl; if (!el) return;
+  el.value = _srBase ? (_srBase + (text ? ' ' + text : '')) : text;
   if (el.tagName === 'TEXTAREA') { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }
   if (el === input) refreshSend();
 }
 
-function _handleDictatedText(text) {
-  if (!_dictating) return;                  // a late segment after we already stopped
-  const el = _dictEl, endFn = _dictEnd;
-  const m = text.match(_END_RE);
-  if (m) {
-    const before = text.slice(0, m.index).trim();
-    if (before) _setVal(el, before);
-    stopDictation();
-    if (endFn) endFn();   // send / approve / etc. (each guards its own empty case)
-    return;
-  }
-  _setVal(el, text);
-  try { el.focus(); } catch (e) {}
+// Fallback: record the whole utterance, transcribe once on stop (Gemini).
+async function _startRecord() {
+  if (!navigator.mediaDevices || !window.MediaRecorder) { flashHint(_dictEl, 'Dictation needs Chrome/Edge (or mic support).'); _teardownDict(); return; }
+  try { _recStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) { flashHint(_dictEl, 'Mic access denied — allow the microphone.'); _teardownDict(); return; }
+  _dictating = true; _dictBtn.classList.add('recording'); _dictBtn.title = 'Stop dictation';
+  flashHint(_dictEl, _dictSend ? 'Recording… release to send.' : 'Recording… click to stop.');
+  _recChunks = []; const mime = _pickMime();
+  _rec = new MediaRecorder(_recStream, mime ? { mimeType: mime } : undefined);
+  _rec.addEventListener('dataavailable', e => { if (e.data && e.data.size) _recChunks.push(e.data); });
+  _rec.addEventListener('stop', _onRecStop);
+  _rec.start();
 }
 
-function stopDictation() {
-  _dictating = false; _segActive = false;
-  if (_sr) { try { _sr.onend = null; _sr.onresult = null; _sr.abort(); } catch (e) {} _sr = null; }
-  if (_vadRAF) { cancelAnimationFrame(_vadRAF); _vadRAF = null; }
-  try { if (_rec && _rec.state === 'recording') { _rec._skip = true; _rec.stop(); } } catch (e) {}
-  _rec = null;
-  if (_audioCtx) { try { _audioCtx.close(); } catch (e) {} _audioCtx = null; }
+async function _onRecStop() {
+  const blob = new Blob(_recChunks, { type: (_rec && _rec.mimeType) || 'audio/webm' }); _recChunks = [];
+  const el = _dictEl;
   if (_recStream) { _recStream.getTracks().forEach(t => t.stop()); _recStream = null; }
-  if (_dictBtn) { _dictBtn.classList.remove('recording', 'busy'); _dictBtn.title = 'Dictate (speak instead of type)'; }
-  _dictEl = null; _dictEnd = null; _dictBtn = null;
+  if (!blob.size) { _finishDictation(); return; }
+  if (_dictBtn) _dictBtn.classList.add('busy');
+  try {
+    const r = await fetch('/chat/transcribe', { method: 'POST', headers: { 'Content-Type': blob.type }, body: blob });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.text && el) {
+      const cur = el.value;
+      el.value = cur ? (cur.replace(/\s*$/, '') + ' ' + d.text) : d.text;
+      if (el.tagName === 'TEXTAREA') { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }
+      if (el === input) refreshSend();
+    } else if (d && d.error) { flashHint(el || input, d.error); }
+  } catch (e) { flashHint(el || input, 'Transcription failed.'); }
+  _finishDictation();
 }
 
-// A small mic button bound to a target field + end-action — reused in pair cards.
-function makeMic(targetEl, onEnd) {
+// A small mic button bound to a target field — click to dictate into it (no send).
+function makeMic(targetEl) {
   const b = document.createElement('button');
-  b.type = 'button'; b.className = 'mic mic-mini'; b.title = 'Dictate (speak; say "end dictation" to submit)';
+  b.type = 'button'; b.className = 'mic mic-mini'; b.title = 'Dictate into this field (click to stop)';
   b.innerHTML = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">' +
     '<path d="M7 1.2a1.8 1.8 0 0 0-1.8 1.8v3.4a1.8 1.8 0 1 0 3.6 0V3A1.8 1.8 0 0 0 7 1.2Z" fill="currentColor"/>' +
     '<path d="M3.2 6.2v.4a3.8 3.8 0 0 0 7.6 0v-.4M7 10.4v2.4M5 12.8h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" fill="none"/></svg>';
-  b.addEventListener('click', () => micClick(targetEl, onEnd, b));
+  b.addEventListener('click', () => micClick(targetEl, b));
   return b;
 }
 
@@ -2880,8 +2835,45 @@ function flashHint(el, msg) {
   setTimeout(() => { if (tgt.placeholder === msg) tgt.placeholder = ph; }, 4000);
 }
 
+// ── Push-to-talk: hold the bound key to dictate, release to send ─────────────
+let _pttHeld = false, _pttRebind = false;
+function _pttKeyLabel(code) {
+  if (!code) return '—';
+  return code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Arrow/, '');
+}
+function _pttEligible() {
+  const a = document.activeElement;
+  return !a || a === document.body || a === input;   // don't hijack other fields
+}
+function renderPTT() {
+  if (!cfg.pttKey) cfg.pttKey = 'Space';
+  const t = $('#ptt-toggle'), k = $('#ptt-key');
+  if (t) t.classList.toggle('on', !!cfg.pttOn);
+  if (k) k.textContent = _pttRebind ? 'press a key…' : _pttKeyLabel(cfg.pttKey);
+}
+$('#ptt-toggle').addEventListener('click', () => { cfg.pttOn = !cfg.pttOn; saveCfg(); renderPTT(); });
+$('#ptt-key').addEventListener('click', () => { _pttRebind = true; renderPTT(); });
+document.addEventListener('keydown', (e) => {
+  if (_pttRebind) {
+    e.preventDefault(); e.stopPropagation();
+    if (e.code !== 'Escape') cfg.pttKey = e.code;
+    _pttRebind = false; saveCfg(); renderPTT(); return;
+  }
+  if (!cfg.pttOn || !cfg.pttKey || e.code !== cfg.pttKey || !_pttEligible()) return;
+  e.preventDefault();
+  if (e.repeat || _pttHeld || _dictating) return;
+  _pttHeld = true;
+  startDictation(input, $('#mic-btn'), true);
+}, true);
+document.addEventListener('keyup', (e) => {
+  if (!cfg.pttOn || e.code !== cfg.pttKey || !_pttHeld) return;
+  e.preventDefault(); _pttHeld = false;
+  endDictation(true);
+}, true);
+renderPTT();
+
 $('#send-btn').addEventListener('click', onSendClick);
-$('#mic-btn').addEventListener('click', () => micClick(input, send, $('#mic-btn')));
+$('#mic-btn').addEventListener('click', () => micClick(input, $('#mic-btn')));
 $('#clear-btn').addEventListener('click', clearChat);
 $('#conv-new').addEventListener('click', newConversation);
 $('#ws-pick').addEventListener('click', () => openWorkspace());
