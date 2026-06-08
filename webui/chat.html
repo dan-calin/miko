@@ -2683,7 +2683,7 @@ let _dictating = false, _rec = null, _recStream = null, _audioCtx = null, _analy
 let _segActive = false, _segStart = 0, _silenceStart = 0, _hadSpeech = false, _txBusy = 0;
 let _dictEl = null, _dictEnd = null, _dictBtn = null;
 const _END_RE = /(?:^|\s)(?:end|stop)(?:\s+the)?\s+dictation\b|(?:^|\s)[iî]?ncheie\s+dictarea\b|(?:^|\s)gata\s+dictarea\b/i;
-const _VAD_SILENCE_MS = 1000, _VAD_RMS = 0.014, _SEG_MAX_MS = 6000;
+const _VAD_SILENCE_MS = 700, _VAD_RMS = 0.014, _SEG_MAX_MS = 5000;
 function _micBtn() { return $('#mic-btn'); }
 
 // One handler for every mic. `el` = target field, `onEnd` = action when the end

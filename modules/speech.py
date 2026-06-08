@@ -8,7 +8,6 @@ no local model download. Browser audio (webm/opus, mp4) is transcoded to WAV via
 ffmpeg first — Gemini accepts ogg/wav/mp3/flac/aac/aiff directly, so those skip it.
 """
 
-import io
 import logging
 import subprocess
 
@@ -71,12 +70,14 @@ def transcribe(audio_bytes: bytes, mime_type: str = "", api_key: str = "",
             logger.error(f"audio transcode failed: {e}")
             return ""
 
+    import os
     from config import CONFIG
     key = (api_key or "").strip() or getattr(CONFIG, "gemini_api_key", "")
     if not key:
         logger.warning("transcribe: no Gemini key configured")
         return ""
-    model = model or "gemini-2.5-flash"
+    # Default to flash; override to gemini-2.5-flash-lite for faster dictation.
+    model = model or os.getenv("MIKO_DICTATION_MODEL", "gemini-2.5-flash")
 
     instr = ("Transcribe this audio exactly as spoken. Output only the transcription "
              "text, with no commentary, labels, or quotation marks.")
@@ -91,23 +92,15 @@ def transcribe(audio_bytes: bytes, mime_type: str = "", api_key: str = "",
         logger.error(f"gemini client init failed: {e}")
         return ""
 
-    uploaded = None
+    # Inline the audio in the request (no Files API upload/delete round-trips) —
+    # dictation clips are tiny and well under the ~20MB inline limit, so this is
+    # noticeably faster than uploading each clip.
     try:
-        uploaded = client.files.upload(
-            file=io.BytesIO(data),
-            config={"mime_type": send_mime, "display_name": "dictation"},
-        )
         resp = client.models.generate_content(
             model=model,
-            contents=[types.Part.from_uri(file_uri=uploaded.uri, mime_type=send_mime), instr],
+            contents=[types.Part.from_bytes(data=data, mime_type=send_mime), instr],
         )
         return (resp.text or "").strip()
     except Exception as e:
         logger.error(f"transcription failed: {e}")
         return ""
-    finally:
-        if uploaded is not None:
-            try:
-                client.files.delete(name=uploaded.name)
-            except Exception:
-                pass
