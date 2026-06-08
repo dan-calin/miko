@@ -414,7 +414,10 @@ def _build_app():
 
         started = CC.start_session(project_dir, goal, mode=mode, research=research,
                                    provider=provider, model=model, api_key=key,
-                                   base_url=base, max_rounds=max_rounds)
+                                   base_url=base, max_rounds=max_rounds,
+                                   coder=(body.get("coder") or "claude"),
+                                   coder_model=(body.get("coder_model") or "").strip(),
+                                   coder_effort=(body.get("coder_effort") or "").strip())
         if started.get("error"):
             return JSONResponse({"error": started["error"]}, status_code=400)
         token = started["token"]

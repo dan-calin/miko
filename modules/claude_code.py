@@ -40,9 +40,11 @@ def cli_available() -> bool:
 
 
 def _run_claude(repo: str, prompt: str, session_id: str, resume: bool,
-                model: str = "", timeout: int = 1200) -> dict:
+                model: str = "", timeout: int = 1200, effort: str = "") -> dict:
     """One headless Claude Code turn in `repo`. Prompt is fed via stdin to avoid any
-    argv-quoting issues (important on Windows). Returns a normalized dict."""
+    argv-quoting issues (important on Windows). Returns a normalized dict.
+    `model`: alias (haiku/sonnet/opus) or full id — Haiku is much cheaper.
+    `effort`: low/medium/high/xhigh/max — the coder's thinking budget for the turn."""
     argv = [_claude_bin(), "-p", "--output-format", "json",
             "--dangerously-skip-permissions", "--add-dir", repo]
     if resume:
@@ -51,6 +53,8 @@ def _run_claude(repo: str, prompt: str, session_id: str, resume: bool,
         argv += ["--session-id", session_id]
     if model:
         argv += ["--model", model]
+    if effort:
+        argv += ["--effort", effort]
 
     try:
         proc = subprocess.run(
@@ -80,6 +84,78 @@ def _run_claude(repo: str, prompt: str, session_id: str, resume: bool,
         "cost": d.get("total_cost_usd", 0),
         "denials": d.get("permission_denials", []),
     }
+
+
+# ── Alternate coder: Aider (multi-provider) ─────────────────────────────────────
+
+def aider_available() -> bool:
+    return shutil.which("aider") is not None
+
+
+def _provider_env(model: str) -> dict:
+    """Map Miko's .env keys to the env vars Aider expects, by the chosen model's provider —
+    so the user doesn't enter an API key twice. Returns overrides merged over os.environ."""
+    from config import CONFIG
+    env, m = {}, (model or "").lower()
+    if "gemini" in m or m.startswith("google"):
+        if CONFIG.gemini_api_key:
+            env["GEMINI_API_KEY"] = CONFIG.gemini_api_key
+    elif "minimax" in m:                       # MiniMax via its OpenAI-compatible endpoint
+        if getattr(CONFIG, "minimax_api_key", ""):
+            env["OPENAI_API_KEY"] = CONFIG.minimax_api_key
+            env["OPENAI_API_BASE"] = getattr(CONFIG, "minimax_base_url", "")
+    # anthropic/openai/deepseek/etc.: Aider reads ANTHROPIC_API_KEY / OPENAI_API_KEY /
+    # DEEPSEEK_API_KEY straight from the environment if you've exported them in .env.
+    return env
+
+
+def _run_aider(repo, prompt, model="", effort="", resume=False, timeout=1200) -> dict:
+    """One headless Aider turn — the multi-provider 'Custom Provider' coder. Requires
+    `pip install aider-chat`. Pulls provider keys from .env via _provider_env."""
+    import tempfile
+    aider = shutil.which("aider")
+    if not aider:
+        return {"ok": False, "result": "(Aider not installed — run: pip install aider-chat)",
+                "session_id": ""}
+    tf = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
+    tf.write(prompt); tf.close()
+    argv = [aider, "--message-file", tf.name, "--yes-always", "--no-auto-commit",
+            "--no-pretty", "--no-stream"]
+    if model:
+        argv += ["--model", model]
+    if effort:                                 # aider maps to the model's reasoning effort
+        argv += ["--reasoning-effort", "high" if effort in ("xhigh", "max") else effort]
+    if resume:
+        argv += ["--restore-chat-history"]     # reload the repo's .aider chat history
+    env = {**os.environ, **_provider_env(model)}
+    try:
+        proc = subprocess.run(argv, cwd=repo, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout,
+                              shell=(os.name == "nt"), env=env)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "result": f"(Aider timed out after {timeout}s)", "session_id": ""}
+    except Exception as e:
+        return {"ok": False, "result": f"(failed to launch Aider: {e})", "session_id": ""}
+    finally:
+        try:
+            os.unlink(tf.name)
+        except Exception:
+            pass
+    out = (proc.stdout or "").strip()
+    if not out:
+        return {"ok": False, "result": f"(Aider returned nothing. {(proc.stderr or '')[:400]})",
+                "session_id": ""}
+    return {"ok": True, "result": out[:8000], "session_id": ""}
+
+
+def _run_coder(state, prompt, resume, timeout=1200) -> dict:
+    """Dispatch a coder turn to the session's chosen CLI (Claude Code or Aider), with its
+    chosen model + effort."""
+    model, effort = state.get("coder_model", ""), state.get("coder_effort", "")
+    if state.get("coder") == "aider":
+        return _run_aider(state["repo"], prompt, model, effort, resume, timeout)
+    return _run_claude(state["repo"], prompt, state["claude_session"], resume,
+                       model, timeout, effort)
 
 
 # ── Git checkpoints / revert ────────────────────────────────────────────────────
@@ -165,7 +241,9 @@ def _registry_path():
 _DEFAULTS = {"history": list, "checkpoints": list, "round": lambda: 0,
              "max_rounds": lambda: 6, "provider": lambda: "gemini", "model": lambda: "",
              "key": lambda: "", "base": lambda: "", "research": lambda: "",
-             "mode": lambda: "autonomous", "status": lambda: "ready"}
+             "mode": lambda: "autonomous", "status": lambda: "ready",
+             "coder": lambda: "claude", "coder_model": lambda: "", "coder_effort": lambda: "",
+             "framed": lambda: False}
 
 
 def _normalize(state: dict, token: str) -> dict:
@@ -184,7 +262,8 @@ def _persist():
         from config import CONFIG
         CONFIG.data_dir.mkdir(parents=True, exist_ok=True)
         keys = ("repo", "goal", "mode", "round", "max_rounds", "status",
-                "checkpoints", "claude_session", "history")
+                "checkpoints", "claude_session", "history",
+                "coder", "coder_model", "coder_effort", "framed")
         slim = {t: {k: s.get(k) for k in keys} for t, s in _SESSIONS.items()}
         _registry_path().write_text(json.dumps(slim, indent=2), encoding="utf-8")
     except Exception as e:
@@ -309,12 +388,16 @@ def _is_redundant(instr: str, state: dict, threshold: float = 0.82, last_n: int 
 
 
 def start_session(repo, goal, mode="autonomous", research="", provider="gemini",
-                  model="", api_key="", base_url="", max_rounds=6) -> dict:
+                  model="", api_key="", base_url="", max_rounds=6,
+                  coder="claude", coder_model="", coder_effort="") -> dict:
     """Create a pair-programming session (does not run rounds yet)."""
     repo = os.path.abspath(os.path.expanduser((repo or "").strip()))
     if not os.path.isdir(repo):
         return {"error": f"Not a directory: {repo}"}
-    if not cli_available():
+    coder = "aider" if coder == "aider" else "claude"
+    if coder == "aider" and not aider_available():
+        return {"error": "Aider not installed. Install it: pip install aider-chat"}
+    if coder == "claude" and not cli_available():
         return {"error": "Claude Code CLI not found. Install it: npm i -g @anthropic-ai/claude-code"}
     if not ensure_git(repo):
         return {"error": f"Could not initialise git in {repo} (needed for revert)."}
@@ -326,6 +409,8 @@ def start_session(repo, goal, mode="autonomous", research="", provider="gemini",
         "checkpoints": [], "status": "ready",
         "provider": provider, "model": model, "key": api_key, "base": base_url,
         "research": research or "", "max_rounds": int(max_rounds or 6),
+        "coder": coder, "coder_model": coder_model or "", "coder_effort": coder_effort or "",
+        "framed": False,
     }
     _persist()
     return {"token": token, "repo": repo, "mode": _SESSIONS[token]["mode"]}
@@ -389,11 +474,11 @@ def _step(state, should_cancel=None):
     # ends the session; if Claude objects, Miko addresses it and the loop continues.
     if instr.strip().upper().startswith("DONE:"):
         summary = instr.split(":", 1)[1].strip()
-        confirm = _run_claude(repo,
+        confirm = _run_coder(state,
             f"Miko (the lead) considers the goal complete: {summary}\n\nDo you AGREE the goal "
             f"'{state['goal']}' is fully and correctly met? Start your reply with 'AGREED' if "
             "yes, or 'NOT DONE:' followed by exactly what is still missing. Do not change code "
-            "unless truly needed.", state["claude_session"], resume=(rnd > 1), model="")
+            "unless truly needed.", resume=(rnd > 1))
         state["history"].append({"role": "Claude", "text": confirm["result"]})
         yield {"type": "claude", "round": rnd, "text": confirm["result"], "files": []}
         if confirm["result"].strip().upper().startswith("AGREED"):
@@ -419,7 +504,7 @@ def _step(state, should_cancel=None):
         state["framed"] = True
     else:
         prompt = instr
-    res = _run_claude(repo, prompt, state["claude_session"], resume=(rnd > 1), model="")
+    res = _run_coder(state, prompt, resume=(rnd > 1))
     state["history"].append({"role": "Claude", "text": res["result"]})
     files = changed_since(repo, snap)
     state["checkpoints"][-1]["files"] = files

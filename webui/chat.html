@@ -804,6 +804,21 @@
           </div>
           <button type="button" class="as-btn" id="pair-sessions-btn" title="Resume or remove past pair sessions">⟳ Sessions</button>
         </div>
+        <div class="pair-bar" id="pair-coder-bar">
+          <div class="as-effort pair-coder">
+            <button type="button" class="as-eff on" data-coder="claude" title="Claude Code CLI (Anthropic)">Claude</button>
+            <button type="button" class="as-eff" data-coder="aider" title="Aider — multi-provider coder (pip install aider-chat)">Aider</button>
+          </div>
+          <input id="pair-coder-model" class="pair-dir" type="text" spellcheck="false"
+                 placeholder="model — Claude: haiku / sonnet / opus · Aider: gemini/gemini-2.5-flash, deepseek/deepseek-chat …">
+          <div class="as-effort pair-effort" title="Coder thinking/effort level">
+            <button type="button" class="as-eff on" data-effort="">—</button>
+            <button type="button" class="as-eff" data-effort="low">low</button>
+            <button type="button" class="as-eff" data-effort="medium">med</button>
+            <button type="button" class="as-eff" data-effort="high">high</button>
+            <button type="button" class="as-eff" data-effort="max">max</button>
+          </div>
+        </div>
         <div class="pair-sessions" id="pair-sessions"></div>
         <div class="inputbar">
           <textarea id="input" rows="1" placeholder="Message Miko…"></textarea>
@@ -893,6 +908,9 @@ let asResearchMore = false;                 // research-engine "More" row expand
 let approveMode = cfg.approve !== false;   // require approval for edits & commands (default ON)
 let pairMode = false;                       // pair-programming (Miko ↔ Claude Code) active
 let pairKind = cfg.pairKind || 'autonomous';   // autonomous | controlled
+let pairCoder = cfg.pairCoder || 'claude';     // claude | aider  (the coder CLI)
+let pairCoderModel = cfg.pairCoderModel || ''; // coder model (haiku/sonnet/opus or aider model)
+let pairCoderEffort = cfg.pairCoderEffort || '';  // '' | low | medium | high | max
 let curCodeToken = null;                    // active pair session token
 
 function envKeyName(id) { return (MODELS[id] && MODELS[id].env_key) || ''; }
@@ -921,6 +939,7 @@ function saveCfg() {
   cfg.effort   = asEffort;
   cfg.researchModel = asResearch;
   cfg.pairKind = pairKind;
+  cfg.pairCoder = pairCoder; cfg.pairCoderModel = pairCoderModel; cfg.pairCoderEffort = pairCoderEffort;
   cfg.byModel  = cfg.byModel || {};
   cfg.byModel[modelKey()] = { agent: asAgent, skills: asSkills, effort: asEffort };
   localStorage.setItem('miko_cfg', JSON.stringify(cfg));
@@ -1565,6 +1584,7 @@ function sendCode(goal) {
     provider: curProvider, model: $('#model').value, api_key: $('#api-key').value,
     base_url: $('#base-url').value, research_model: asResearch,
     agent: asAgent, skills: asSkills,   // active persona/skills → Miko's build context
+    coder: pairCoder, coder_model: pairCoderModel, coder_effort: pairCoderEffort,
   }, c);
 }
 
@@ -2272,8 +2292,10 @@ function setPairMode(on) {
   pairMode = on;
   $('#pair-btn').classList.toggle('pair-on', on);
   $('#pair-bar').classList.toggle('show', on);
-  $('#input').placeholder = on ? 'Describe what to build — Miko will direct Claude Code…' : 'Message Miko…';
+  $('#pair-coder-bar').classList.toggle('show', on);
+  $('#input').placeholder = on ? 'Describe what to build — Miko will direct the coder…' : 'Message Miko…';
   if (on && !$('#pair-dir').value) $('#pair-dir').value = workspace || '';
+  if (on) $('#pair-coder-model').value = pairCoderModel;
 }
 $('#pair-btn').addEventListener('click', () => setPairMode(!pairMode));
 $('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(el => el.addEventListener('click', () => {
@@ -2282,6 +2304,21 @@ $('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(el => el.addEventL
 }));
 $('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(b => b.classList.toggle('on', b.dataset.mode === pairKind));
 $('#pair-sessions-btn').addEventListener('click', togglePairSessions);
+
+// Coder CLI (Claude / Aider) + model + effort
+function pairCoderSync(sel, cls, val) {
+  $('#pair-coder-bar').querySelectorAll(cls + ' .as-eff').forEach(b => b.classList.toggle('on', b.dataset[sel] === val));
+}
+$('#pair-coder-bar').querySelectorAll('.pair-coder .as-eff').forEach(el => el.addEventListener('click', () => {
+  pairCoder = el.dataset.coder; saveCfg(); pairCoderSync('coder', '.pair-coder', pairCoder);
+}));
+$('#pair-coder-bar').querySelectorAll('.pair-effort .as-eff').forEach(el => el.addEventListener('click', () => {
+  pairCoderEffort = el.dataset.effort; saveCfg(); pairCoderSync('effort', '.pair-effort', pairCoderEffort);
+}));
+$('#pair-coder-model').addEventListener('change', () => { pairCoderModel = $('#pair-coder-model').value.trim(); saveCfg(); });
+pairCoderSync('coder', '.pair-coder', pairCoder);
+pairCoderSync('effort', '.pair-effort', pairCoderEffort);
+$('#pair-coder-model').value = pairCoderModel;
 
 // ── Wiring ─────────────────────────────────────────────────
 $('#drop-btn').addEventListener('click', () => $('#drop').classList.toggle('open'));
