@@ -903,7 +903,7 @@
         </div>
         <div class="inputbar">
           <textarea id="input" rows="1" placeholder="Message Miko…"></textarea>
-          <button class="mic" id="mic-btn" type="button" aria-label="Dictate" title="Dictate (speak instead of type)">
+          <button class="mic" id="mic-btn" type="button" aria-label="Dictate" title="Hands-free dictation — speak, then say &quot;end dictation&quot; to send">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
               <path d="M7 1.2a1.8 1.8 0 0 0-1.8 1.8v3.4a1.8 1.8 0 1 0 3.6 0V3A1.8 1.8 0 0 0 7 1.2Z" fill="currentColor"/>
               <path d="M3.2 6.2v.4a3.8 3.8 0 0 0 7.6 0v-.4M7 10.4v2.4M5 12.8h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" fill="none"/>
@@ -2670,13 +2670,22 @@ $('#base-url').addEventListener('change', saveCfg);
 $('#save-env').addEventListener('click', saveToEnv);
 $('#allow-actions').addEventListener('click', () => { setAllow(!$('#allow-actions').classList.contains('on')); saveCfg(); });
 $('#approve-mode').addEventListener('click', () => { approveMode = !approveMode; setApprove(approveMode); saveCfg(); });
-// ── Voice dictation (speak instead of type) — #6 ─────────────────────────────
-let _rec = null, _recChunks = [], _recStream = null;
+// ── Voice dictation — hands-free, speak instead of type (#6) ─────────────────
+// Click the mic to start a hands-free session: speak naturally; on each pause the
+// utterance is transcribed and appended to the composer. Say the end phrase
+// ("end dictation" / "stop dictation" / RO "încheie dictarea" / "gata dictarea")
+// to finish AND send. Works in normal chat AND pair mode (send() routes both).
+// A manual click stops without sending.
+let _dictating = false, _rec = null, _recChunks = [], _recStream = null;
+let _audioCtx = null, _analyser = null, _vadRAF = null;
+let _segActive = false, _segStart = 0, _silenceStart = 0, _txBusy = 0;
+const _END_RE = /(?:^|\s)(end dictation|stop dictation|[iî]?ncheie dictarea|gata dictarea)\s*[.!?]*\s*$/i;
+const _VAD_SILENCE_MS = 1200, _VAD_RMS = 0.014, _SEG_MIN_MS = 350;
 function _micBtn() { return $('#mic-btn'); }
 
 async function toggleDictation() {
-  if (_rec && _rec.state === 'recording') { _rec.stop(); return; }   // second click = stop
-  if (!navigator.mediaDevices || !window.MediaRecorder) {
+  if (_dictating) { stopDictation(); return; }   // manual click = stop, no send
+  if (!navigator.mediaDevices || !window.MediaRecorder || !(window.AudioContext || window.webkitAudioContext)) {
     setPlaceholderHint('Dictation needs a modern browser with mic support.'); return;
   }
   try {
@@ -2684,49 +2693,112 @@ async function toggleDictation() {
   } catch (e) {
     setPlaceholderHint('Mic access denied — allow the microphone to dictate.'); return;
   }
-  // Pick a mime the browser supports; the server transcodes via ffmpeg anyway.
-  let mime = '';
-  for (const m of ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4']) {
-    if (MediaRecorder.isTypeSupported(m)) { mime = m; break; }
-  }
-  _recChunks = [];
-  _rec = new MediaRecorder(_recStream, mime ? { mimeType: mime } : undefined);
-  _rec.addEventListener('dataavailable', e => { if (e.data && e.data.size) _recChunks.push(e.data); });
-  _rec.addEventListener('stop', onDictationStop);
-  _rec.start();
+  _dictating = true;
   _micBtn().classList.add('recording');
   _micBtn().title = 'Stop dictation';
+  setPlaceholderHint('Listening… say "end dictation" to send.');
+  _startVAD();
 }
 
-async function onDictationStop() {
-  _micBtn().classList.remove('recording');
-  if (_recStream) { _recStream.getTracks().forEach(t => t.stop()); _recStream = null; }
+function _pickMime() {
+  for (const m of ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'])
+    if (MediaRecorder.isTypeSupported(m)) return m;
+  return '';
+}
+
+function _startVAD() {
+  _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (_audioCtx.state === 'suspended') _audioCtx.resume();
+  const src = _audioCtx.createMediaStreamSource(_recStream);
+  _analyser = _audioCtx.createAnalyser(); _analyser.fftSize = 1024;
+  src.connect(_analyser);
+  const buf = new Float32Array(_analyser.fftSize);
+  _segActive = false; _silenceStart = 0;
+  const tick = () => {
+    if (!_dictating) return;
+    _analyser.getFloatTimeDomainData(buf);
+    let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const rms = Math.sqrt(sum / buf.length), now = performance.now();
+    if (rms > _VAD_RMS) {
+      if (!_segActive) _startSegment(now);
+      _silenceStart = 0;
+    } else if (_segActive && _silenceStart === 0) {
+      _silenceStart = now;
+    } else if (_segActive && now - _silenceStart > _VAD_SILENCE_MS) {
+      _endSegment(now);
+    }
+    _vadRAF = requestAnimationFrame(tick);
+  };
+  _vadRAF = requestAnimationFrame(tick);
+}
+
+function _startSegment(now) {
+  _segActive = true; _segStart = now; _recChunks = [];
+  const mime = _pickMime();
+  _rec = new MediaRecorder(_recStream, mime ? { mimeType: mime } : undefined);
+  _rec.addEventListener('dataavailable', e => { if (e.data && e.data.size) _recChunks.push(e.data); });
+  _rec.addEventListener('stop', _onSegmentStop);
+  _rec.start();
+}
+
+function _endSegment(now) {
+  const tooShort = (now - _segStart) < _SEG_MIN_MS;
+  _segActive = false; _silenceStart = 0;
+  if (_rec && _rec.state === 'recording') { _rec._skip = tooShort; _rec.stop(); }
+}
+
+async function _onSegmentStop() {
+  const skip = _rec && _rec._skip;
   const blob = new Blob(_recChunks, { type: (_rec && _rec.mimeType) || 'audio/webm' });
-  _recChunks = []; _rec = null;
-  if (!blob.size) return;
-  const btn = _micBtn(); btn.classList.add('busy'); btn.title = 'Transcribing…';
+  _recChunks = [];
+  if (skip || !blob.size) return;
+  _txBusy++; _micBtn().classList.add('busy');
   try {
     const r = await fetch('/chat/transcribe', {
       method: 'POST', headers: { 'Content-Type': blob.type }, body: blob,
     });
     const d = await r.json().catch(() => ({}));
-    if (r.ok && d.text) {
-      const cur = input.value;
-      input.value = cur ? (cur.replace(/\s*$/, '') + ' ' + d.text) : d.text;
-      input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 180) + 'px';
-      refreshSend(); input.focus();
-    } else {
-      setPlaceholderHint((d && d.error) || 'Could not transcribe that — try again.');
-    }
-  } catch (e) {
-    setPlaceholderHint('Transcription failed: ' + (e.message || ''));
-  } finally {
-    btn.classList.remove('busy'); btn.title = 'Dictate (speak instead of type)';
+    if (r.ok && d.text) _handleDictatedText(d.text);
+  } catch (e) { /* drop this segment, keep listening */ }
+  finally {
+    _txBusy = Math.max(0, _txBusy - 1);
+    if (!_txBusy) { _micBtn().classList.remove('busy'); if (_dictating) _micBtn().classList.add('recording'); }
   }
 }
 
+function _appendToInput(text) {
+  const cur = input.value;
+  input.value = cur ? (cur.replace(/\s*$/, '') + ' ' + text) : text;
+  input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 180) + 'px';
+  refreshSend();
+}
+
+function _handleDictatedText(text) {
+  const m = text.match(_END_RE);
+  if (m) {
+    const before = text.slice(0, m.index).trim();
+    if (before) _appendToInput(before);
+    stopDictation();
+    if (input.value.trim()) send();   // routes to chat / pair / research automatically
+    return;
+  }
+  _appendToInput(text); input.focus();
+}
+
+function stopDictation() {
+  _dictating = false; _segActive = false;
+  if (_vadRAF) { cancelAnimationFrame(_vadRAF); _vadRAF = null; }
+  try { if (_rec && _rec.state === 'recording') { _rec._skip = true; _rec.stop(); } } catch (e) {}
+  _rec = null;
+  if (_audioCtx) { try { _audioCtx.close(); } catch (e) {} _audioCtx = null; }
+  if (_recStream) { _recStream.getTracks().forEach(t => t.stop()); _recStream = null; }
+  const btn = _micBtn(); btn.classList.remove('recording', 'busy'); btn.title = 'Dictate (speak instead of type)';
+  input.placeholder = pairMode ? 'Describe what to build — Miko will direct the coder…' : 'Message Miko…';
+}
+
 function setPlaceholderHint(msg) {
-  const ph = input.placeholder; input.placeholder = msg;
+  const ph = _dictating ? 'Listening… say "end dictation" to send.' : (pairMode ? 'Describe what to build — Miko will direct the coder…' : 'Message Miko…');
+  input.placeholder = msg;
   setTimeout(() => { if (input.placeholder === msg) input.placeholder = ph; }, 4000);
 }
 
