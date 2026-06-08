@@ -626,6 +626,17 @@ def _build_app():
         import agent_skills
         return agent_skills.catalog()
 
+    @app.get("/chat/settings")
+    def chat_settings(_=Depends(_auth)):
+        """Front-end settings sourced from the server config. dictation_lang is the
+        BCP-47 tag for the Web Speech dictation engine: MIKO_DICTATION_LANG if set,
+        else derived from MIKO_LANGUAGE (en→en-US, ro→ro-RO)."""
+        from config import CONFIG
+        lang = os.getenv("MIKO_DICTATION_LANG", "").strip()
+        if not lang:
+            lang = {"ro": "ro-RO", "en": "en-US"}.get(getattr(CONFIG, "language", "en"), "en-US")
+        return {"dictation_lang": lang}
+
     @app.post("/chat/skill/install")
     async def chat_skill_install(request: Request, _=Depends(_auth)):
         """Install an agent/skill from a markdown definition (text only — never runs

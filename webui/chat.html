@@ -2417,6 +2417,12 @@ const AS_THEME = {
   coding: 'Coding', productivity: 'Productivity',
 };
 
+async function loadDictationLang() {
+  // Dictation language comes from the server config (MIKO_DICTATION_LANG / MIKO_LANGUAGE).
+  try { const s = await (await fetch('/chat/settings')).json(); if (s && s.dictation_lang) _dictLang = s.dictation_lang; }
+  catch (e) { /* keep navigator.language default */ }
+}
+
 async function loadAgentSkills() {
   // Unified catalog (Phase 2): agents + skills (with pairs_with) + MCP capabilities.
   try { AS = await (await fetch('/chat/catalog')).json(); }
@@ -2683,7 +2689,7 @@ $('#approve-mode').addEventListener('click', () => { approveMode = !approveMode;
 // A manual click stops without sending. One engine drives every mic on the page.
 let _dictating = false, _rec = null, _recStream = null, _audioCtx = null, _analyser = null, _vadRAF = null;
 let _segActive = false, _segStart = 0, _silenceStart = 0, _hadSpeech = false, _txBusy = 0;
-let _dictEl = null, _dictEnd = null, _dictBtn = null, _sr = null, _srBase = '';
+let _dictEl = null, _dictEnd = null, _dictBtn = null, _sr = null, _srBase = '', _dictLang = '';
 const _END_RE = /(?:^|\s)(?:end|stop)(?:\s+the)?\s+dictation\b|(?:^|\s)[iî]?ncheie\s+dictarea\b|(?:^|\s)gata\s+dictarea\b/i;
 const _VAD_SILENCE_MS = 700, _VAD_RMS = 0.014, _SEG_MAX_MS = 5000;
 function _micBtn() { return $('#mic-btn'); }
@@ -2720,7 +2726,7 @@ async function startDictation(el, onEnd, btn) {
 function _startWebSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   _sr = new SR();
-  _sr.lang = (cfg.dictLang || navigator.language || 'en-US');   // override via cfg.dictLang
+  _sr.lang = (_dictLang || navigator.language || 'en-US');   // from server config (MIKO_DICTATION_LANG / MIKO_LANGUAGE)
   _sr.continuous = true;
   _sr.interimResults = true;
   _dictating = true;
@@ -2919,6 +2925,7 @@ emptyState();
 checkServer();
 loadWorkspace();
 loadAgentSkills();
+loadDictationLang();
 renderMonitor();
 loadModels().then(() => input.focus());
 // Restore the last conversation (if it still has messages), then list all.
