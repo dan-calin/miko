@@ -473,6 +473,72 @@ def _build_app():
             return JSONResponse(res, status_code=400)
         return res
 
+    # ── Sub-agents (user-launchable + observable) ──────────────────────────────
+    @app.post("/chat/agents/launch")
+    async def chat_agents_launch(request: Request, _=Depends(_auth)):
+        """Launch a batch of parallel sub-agents (non-blocking). Returns the batch view;
+        the UI then streams /chat/agents/stream to watch them work."""
+        from modules import agent_jobs
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        tasks = body.get("tasks") or []
+        if isinstance(tasks, str):
+            tasks = [tasks]
+        tasks = [str(t).strip() for t in tasks if str(t).strip()]
+        if not tasks:
+            return JSONResponse({"error": "Provide at least one task."}, status_code=400)
+        view = agent_jobs.launch(
+            tasks, (body.get("context") or "").strip(),
+            (body.get("provider") or "gemini").strip(),
+            (body.get("model") or "").strip(),
+            (body.get("api_key") or "").strip(),
+            (body.get("base_url") or "").strip(),
+        )
+        if view.get("error"):
+            return JSONResponse(view, status_code=400)
+        return view
+
+    @app.post("/chat/agents/stream")
+    async def chat_agents_stream(request: Request, _=Depends(_auth)):
+        """NDJSON stream of a batch's live state until every agent is terminal."""
+        from modules import agent_jobs
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        batch_id = (body.get("batch_id") or "").strip()
+        if not batch_id:
+            return JSONResponse({"error": "Missing batch_id."}, status_code=400)
+
+        def factory(should_cancel):
+            return agent_jobs.stream_batch(batch_id)
+        return _ndjson_stream(request, factory)
+
+    @app.get("/chat/agents/list")
+    def chat_agents_list(limit: int = 10, _=Depends(_auth)):
+        from modules import agent_jobs
+        return {"batches": agent_jobs.list_batches(limit)}
+
+    @app.get("/chat/agents/batch")
+    def chat_agents_batch(batch_id: str, _=Depends(_auth)):
+        from modules import agent_jobs
+        return agent_jobs.get_batch(batch_id) or {}
+
+    @app.post("/chat/agents/cancel")
+    async def chat_agents_cancel(request: Request, _=Depends(_auth)):
+        from modules import agent_jobs
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if body.get("agent_id"):
+            return agent_jobs.cancel_agent(body["agent_id"].strip())
+        if body.get("batch_id"):
+            return agent_jobs.cancel_batch(body["batch_id"].strip())
+        return JSONResponse({"error": "Provide batch_id or agent_id."}, status_code=400)
+
     @app.post("/chat/code/revert")
     async def chat_code_revert(request: Request, _=Depends(_auth)):
         """Revert the repo to a checkpoint (UI Revert button)."""

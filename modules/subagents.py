@@ -16,15 +16,10 @@ Safety:
 """
 
 import logging
-import threading
-import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger("miko.subagents")
 
-_local = threading.local()
-_MAX = 5
-_PER_AGENT_CHARS = 2000
+_MAX = 5   # cap on tasks accepted per spawn_agents call
 
 TOOL_DECLARATIONS = [
     {
@@ -70,30 +65,14 @@ def _get_router():
     return CommandRouter(CONFIG)
 
 
-def _run_one(task: str, context: str, model: str, key: str) -> str:
-    _local.depth = 1   # mark this worker thread so nested spawn_agents is refused
-    try:
-        import chat_backend
-        router = _get_router()
-        prompt = (f"{context}\n\n---\n\nTask: {task}" if context else task)
-        prompt += ("\n\nYou are a focused sub-agent. Use your tools to complete ONLY this "
-                   "task, then reply with a concise, self-contained findings summary.")
-        res = chat_backend.chat(
-            router, f"subagent-{uuid.uuid4().hex[:8]}", prompt,
-            "gemini", model, key, allow_actions=False, effort="standard",
-        )
-        reply = (res.get("reply") or "").strip()
-        return reply[:_PER_AGENT_CHARS] or "(no findings)"
-    except Exception as e:
-        logger.warning(f"sub-agent failed: {e}")
-        return f"(sub-agent error: {e})"
-    finally:
-        _local.depth = 0
-
-
 def spawn_agents(tasks, context: str = "") -> str:
-    """Run up to _MAX focused sub-agents in parallel; return their combined findings."""
-    if getattr(_local, "depth", 0) >= 1:
+    """Run up to _MAX focused sub-agents in parallel; return their combined findings.
+
+    Delegates to modules.agent_jobs so the run is recorded + observable in the live
+    sub-agent panel (and the per-provider concurrency cap applies), while keeping the
+    blocking text contract Miko expects."""
+    from modules import agent_jobs
+    if agent_jobs.in_subagent():
         return "[Sub-agents cannot spawn further sub-agents.]"
 
     if isinstance(tasks, str):
@@ -106,20 +85,13 @@ def spawn_agents(tasks, context: str = "") -> str:
     key = getattr(CONFIG, "gemini_api_key", "")
     if not key:
         return "Sub-agents need the Gemini key (LLM_API_KEY) configured."
-    model = "gemini-2.5-flash"
-    context = (context or "").strip()
 
-    results = [None] * len(tasks)
-    with ThreadPoolExecutor(max_workers=min(_MAX, len(tasks))) as ex:
-        futs = {ex.submit(_run_one, t, context, model, key): i for i, t in enumerate(tasks)}
-        for fut in as_completed(futs):
-            i = futs[fut]
-            try:
-                results[i] = fut.result()
-            except Exception as e:
-                results[i] = f"(sub-agent error: {e})"
-
-    out = [f"Delegated to {len(tasks)} sub-agent(s):"]
-    for i, (task, res) in enumerate(zip(tasks, results), 1):
-        out.append(f"\n### Sub-agent {i}: {task[:80]}\n{res}")
+    batch = agent_jobs.run_and_wait(tasks, (context or "").strip(),
+                                    "gemini", "gemini-2.5-flash", key)
+    if batch.get("error"):
+        return batch["error"]
+    out = [f"Delegated to {len(batch['agents'])} sub-agent(s):"]
+    for i, a in enumerate(batch["agents"], 1):
+        body = a["result"] if a["status"] == "done" else f"({a['status']}: {a.get('error', '') or '—'})"
+        out.append(f"\n### Sub-agent {i}: {a['task'][:80]}\n{body}")
     return "\n".join(out)

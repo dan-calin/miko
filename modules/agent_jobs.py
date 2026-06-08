@@ -185,6 +185,28 @@ def launch(tasks, context: str, provider: str, model: str, key: str, base: str =
     return _batch_view(batch)
 
 
+def in_subagent() -> bool:
+    """True when called from inside a running sub-agent thread (blocks nested spawns)."""
+    return getattr(_local, "depth", 0) >= 1
+
+
+def run_and_wait(tasks, context: str, provider: str, model: str, key: str,
+                 base: str = "", timeout: float = 600) -> dict:
+    """Launch a batch and block until every agent is terminal; return the batch view.
+    Used by the blocking spawn_agents tool so Miko's own spawns are observable too."""
+    view = launch(tasks, context, provider, model, key, base)
+    if view.get("error"):
+        return view
+    bid = view["batch_id"]
+    start = _now()
+    while _now() - start < timeout:
+        b = get_batch(bid)
+        if b.get("status") != "running":
+            return b
+        time.sleep(0.4)
+    return get_batch(bid)
+
+
 def get_batch(batch_id: str) -> dict:
     with _LOCK:
         b = _BATCHES.get(batch_id)
