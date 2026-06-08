@@ -2674,17 +2674,20 @@ $('#save-env').addEventListener('click', saveToEnv);
 $('#allow-actions').addEventListener('click', () => { setAllow(!$('#allow-actions').classList.contains('on')); saveCfg(); });
 $('#approve-mode').addEventListener('click', () => { approveMode = !approveMode; setApprove(approveMode); saveCfg(); });
 // ── Voice dictation — hands-free, targets ANY input (#6) ─────────────────────
-// Click a mic to start: it records continuously, transcribing every ~6s and on
-// each natural pause, appending text to the target field live. Say an end phrase
-// ("end dictation" / "stop the dictation" / RO "încheie/gata dictarea") anywhere
-// to finish AND trigger that field's action (send, or approve the pair round).
+// Primary engine: the browser's Web Speech API (Chrome/Edge) — streaming + free,
+// so text appears live as you speak and the end phrase is caught instantly (no
+// server round-trip). Fallback for browsers without it (e.g. Firefox): record →
+// /chat/transcribe (Gemini), which auto-detects language but is slower.
+// Say an end phrase ("end dictation" / "stop the dictation" / RO "încheie/gata
+// dictarea") anywhere to finish AND trigger that field's action (send / approve).
 // A manual click stops without sending. One engine drives every mic on the page.
 let _dictating = false, _rec = null, _recStream = null, _audioCtx = null, _analyser = null, _vadRAF = null;
 let _segActive = false, _segStart = 0, _silenceStart = 0, _hadSpeech = false, _txBusy = 0;
-let _dictEl = null, _dictEnd = null, _dictBtn = null;
+let _dictEl = null, _dictEnd = null, _dictBtn = null, _sr = null, _srBase = '';
 const _END_RE = /(?:^|\s)(?:end|stop)(?:\s+the)?\s+dictation\b|(?:^|\s)[iî]?ncheie\s+dictarea\b|(?:^|\s)gata\s+dictarea\b/i;
 const _VAD_SILENCE_MS = 700, _VAD_RMS = 0.014, _SEG_MAX_MS = 5000;
 function _micBtn() { return $('#mic-btn'); }
+function _hasWebSpeech() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
 
 // One handler for every mic. `el` = target field, `onEnd` = action when the end
 // phrase is heard, `btn` = the mic element to animate. Clicking again stops.
@@ -2694,19 +2697,68 @@ function micClick(el, onEnd, btn) {
 }
 
 async function startDictation(el, onEnd, btn) {
+  _dictEl = el || input; _dictEnd = onEnd || null; _dictBtn = btn || _micBtn();
+  if (_hasWebSpeech()) { _startWebSpeech(); return; }   // fast streaming path
+
+  // Fallback: MediaRecorder → server transcription (slower) for browsers w/o Web Speech.
   if (!navigator.mediaDevices || !window.MediaRecorder || !(window.AudioContext || window.webkitAudioContext)) {
-    flashHint(el, 'Dictation needs a modern browser with mic support.'); return;
+    flashHint(_dictEl, 'Dictation needs Chrome/Edge (or a browser with mic support).'); return;
   }
   try {
     _recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
-    flashHint(el, 'Mic access denied — allow the microphone to dictate.'); return;
+    flashHint(_dictEl, 'Mic access denied — allow the microphone to dictate.'); return;
   }
-  _dictating = true; _dictEl = el || input; _dictEnd = onEnd || null; _dictBtn = btn || _micBtn();
+  _dictating = true;
   _dictBtn.classList.add('recording'); _dictBtn.title = 'Stop dictation';
   flashHint(_dictEl, 'Listening… say "end dictation" to send.');
   _startVAD();
   _startSegment(performance.now());   // always recording from the start
+}
+
+// Streaming dictation via Web Speech (Google's free in-browser STT on Chrome/Edge).
+function _startWebSpeech() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  _sr = new SR();
+  _sr.lang = (cfg.dictLang || navigator.language || 'en-US');   // override via cfg.dictLang
+  _sr.continuous = true;
+  _sr.interimResults = true;
+  _dictating = true;
+  _dictBtn.classList.add('recording'); _dictBtn.title = 'Stop dictation';
+  flashHint(_dictEl, 'Listening… say "end dictation" to send.');
+  _srBase = (_dictEl.value || '').replace(/\s*$/, '');
+  _sr.onresult = (ev) => {
+    if (!_dictating) return;
+    let finalT = '', interim = '';
+    for (let i = 0; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (r.isFinal) finalT += r[0].transcript + ' '; else interim += r[0].transcript;
+    }
+    const combined = (finalT + interim).replace(/\s+/g, ' ').trim();
+    const m = combined.match(_END_RE);
+    if (m) {
+      _setFieldFromDictation(combined.slice(0, m.index).trim());
+      const endFn = _dictEnd; stopDictation(); if (endFn) endFn();
+      return;
+    }
+    _setFieldFromDictation(combined);
+  };
+  _sr.onerror = (e) => {
+    if (e.error === 'no-speech' || e.error === 'aborted') return;
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      flashHint(_dictEl, 'Mic access denied for dictation.'); stopDictation(); return;
+    }
+    flashHint(_dictEl, 'Dictation error: ' + e.error);
+  };
+  _sr.onend = () => { if (_dictating) { try { _sr.start(); } catch (e) {} } };  // keep alive on auto-stop
+  try { _sr.start(); } catch (e) { flashHint(_dictEl, 'Could not start dictation.'); stopDictation(); }
+}
+
+function _setFieldFromDictation(text) {
+  const el = _dictEl; if (!el) return;
+  el.value = _srBase ? (_srBase + (text ? ' ' + text : '')) : text;
+  if (el.tagName === 'TEXTAREA') { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }
+  if (el === input) refreshSend();
 }
 
 function _pickMime() {
@@ -2794,6 +2846,7 @@ function _handleDictatedText(text) {
 
 function stopDictation() {
   _dictating = false; _segActive = false;
+  if (_sr) { try { _sr.onend = null; _sr.onresult = null; _sr.abort(); } catch (e) {} _sr = null; }
   if (_vadRAF) { cancelAnimationFrame(_vadRAF); _vadRAF = null; }
   try { if (_rec && _rec.state === 'recording') { _rec._skip = true; _rec.stop(); } } catch (e) {}
   _rec = null;
