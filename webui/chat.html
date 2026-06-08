@@ -723,9 +723,14 @@
   }
   .offline-banner.show { display: flex; }
   /* ── Settings ── */
-  .settings-cog { margin-left: auto; background: none; border: none; color: var(--text3);
-    font-size: 14px; cursor: pointer; padding: 2px 4px; line-height: 1; }
-  .settings-cog:hover { color: var(--amber); }
+  .settings-cog { margin-left: auto; display: inline-flex; align-items: center; gap: 4px;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text2);
+    font-size: 11px; font-weight: 600; cursor: pointer; padding: 3px 9px; border-radius: 4px; line-height: 1; }
+  .settings-cog .cog-ic { font-size: 12px; }
+  .settings-cog:hover { color: var(--amber); border-color: var(--amber); }
+  .set-link { width: 100%; margin-top: 8px; background: none; border: 1px dashed var(--border);
+    color: var(--text2); font: inherit; font-size: 11px; cursor: pointer; padding: 6px; border-radius: 4px; }
+  .set-link:hover { border-color: var(--amber); color: var(--amber); border-style: solid; }
   .modal-overlay { display: none; position: fixed; inset: 0; z-index: 50;
     background: rgba(0,0,0,.55); align-items: center; justify-content: center; }
   .modal-overlay.show { display: flex; }
@@ -788,7 +793,7 @@
         <rect x="6.6" y="6.6" width="2.8" height="2.8" fill="#c4a257" />
       </svg>
       <span>MIKO</span>
-      <button class="settings-cog" id="settings-cog" type="button" title="Settings — API keys & credentials">⚙</button>
+      <button class="settings-cog" id="settings-cog" type="button" title="Settings — API keys & credentials"><span class="cog-ic">⚙</span> Settings</button>
     </div>
     <div class="rule"></div>
 
@@ -828,6 +833,7 @@
           <span class="keystat warn" id="key-status">⚠ no key</span>
           <button class="savebtn" id="save-env" type="button">↳ save to .env</button>
         </div>
+        <button class="set-link" id="settings-link" type="button">⚙ All keys &amp; credentials (Discord, email, calendar…)</button>
       </div>
       <div class="rule"></div>
 
@@ -2786,6 +2792,7 @@ async function saveSettings() {
   finally { btn.disabled = false; }
 }
 $('#settings-cog').addEventListener('click', openSettings);
+$('#settings-link').addEventListener('click', openSettings);
 $('#settings-close').addEventListener('click', closeSettings);
 $('#settings-save').addEventListener('click', saveSettings);
 $('#settings-modal').addEventListener('click', e => { if (e.target === $('#settings-modal')) closeSettings(); });
