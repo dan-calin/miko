@@ -243,7 +243,7 @@ _DEFAULTS = {"history": list, "checkpoints": list, "round": lambda: 0,
              "key": lambda: "", "base": lambda: "", "research": lambda: "",
              "mode": lambda: "autonomous", "status": lambda: "ready",
              "coder": lambda: "claude", "coder_model": lambda: "", "coder_effort": lambda: "",
-             "framed": lambda: False}
+             "framed": lambda: False, "notified": lambda: False}
 
 
 def _normalize(state: dict, token: str) -> dict:
@@ -263,7 +263,7 @@ def _persist():
         CONFIG.data_dir.mkdir(parents=True, exist_ok=True)
         keys = ("repo", "goal", "mode", "round", "max_rounds", "status",
                 "checkpoints", "claude_session", "history",
-                "coder", "coder_model", "coder_effort", "framed")
+                "coder", "coder_model", "coder_effort", "framed", "notified")
         slim = {t: {k: s.get(k) for k in keys} for t, s in _SESSIONS.items()}
         _registry_path().write_text(json.dumps(slim, indent=2), encoding="utf-8")
     except Exception as e:
@@ -511,6 +511,38 @@ def _step(state, should_cancel=None):
     yield {"type": "claude", "round": rnd, "text": res["result"], "files": files}
 
 
+def _notify_done(state: dict, summary: str = "") -> None:
+    """Ping the owner on Discord when an AUTONOMOUS pair session reaches a terminal
+    state — so the user can walk away and get told when it's finished. Fires at most
+    once per session (guarded by state['notified']); best-effort, never raises."""
+    if state.get("mode") != "autonomous" or state.get("notified"):
+        return
+    state["notified"] = True
+    try:
+        from config import CONFIG
+        from modules.discord_bot import send_dm_direct
+        repo = state.get("repo", "")
+        files = sorted({f for cp in state.get("checkpoints", []) for f in cp.get("files", [])})
+        status = state.get("status", "done")
+        verb = "finished" if status == "done" else status
+        head = f"🤝 Pair session {verb} — {os.path.basename(repo.rstrip('/\\')) or repo}"
+        lines = [head, f"Goal: {state.get('goal', '')[:160]}",
+                 f"Rounds: {state.get('round', 0)}"]
+        if summary and summary not in ("round limit reached", "already complete"):
+            lines.append(f"Summary: {summary[:300]}")
+        elif summary:
+            lines.append(f"Ended: {summary}")
+        if files:
+            shown = ", ".join(files[:8]) + (f" (+{len(files) - 8} more)" if len(files) > 8 else "")
+            lines.append(f"Files changed ({len(files)}): {shown}")
+        else:
+            lines.append("Files changed: none")
+        send_dm_direct(recipient_name=CONFIG.owner_name, message="\n".join(lines))
+        logger.info(f"Pair-done DM sent to {CONFIG.owner_name} (status={status})")
+    except Exception as e:
+        logger.warning(f"pair-done notify failed: {e}")
+
+
 def run(token, should_cancel=None, guidance=""):
     """Generator yielding the live pair-programming events. Autonomous mode loops to the
     handshake; controlled mode runs one round then pauses for approval. `guidance` is
@@ -524,6 +556,8 @@ def run(token, should_cancel=None, guidance=""):
         state["guidance"] = guidance
         # Reopen a finished/maxed-out session when the user gives a fresh instruction —
         # the Claude session still remembers the repo, so we just extend the round budget.
+        # Clear the notify latch so the next completion pings again.
+        state["notified"] = False
         if state.get("round", 0) >= state.get("max_rounds", 6):
             state["max_rounds"] = state.get("round", 0) + 6
     elif state.get("status") == "done":
@@ -533,17 +567,21 @@ def run(token, should_cancel=None, guidance=""):
     state["status"] = "running"
     yield {"type": "status", "text": f"Pairing on: {state['goal'][:80]}"}
 
+    last_summary = ""
     while True:
         if should_cancel and should_cancel():
-            state["status"] = "cancelled"; _persist()
+            state["status"] = "cancelled"; _notify_done(state, "cancelled"); _persist()
             yield {"type": "cancelled"}; return
         for ev in _step(state, should_cancel):
             yield ev
+            if ev.get("type") == "done":
+                last_summary = ev.get("summary", "")
             _persist()   # persist after each event so a mid-round reload sees Miko's message
         if state["status"] in ("done", "cancelled"):
+            _notify_done(state, last_summary); _persist()
             return
         if state["round"] >= state["max_rounds"]:
-            state["status"] = "done"; _persist()
+            state["status"] = "done"; _notify_done(state, "round limit reached"); _persist()
             yield {"type": "done", "rounds": state["round"], "summary": "round limit reached"}
             return
         if state["mode"] == "controlled":
