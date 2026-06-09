@@ -142,22 +142,51 @@ def cancel_email_watch(which: str) -> str:
 
 # ── Matching + poll ─────────────────────────────────────────────────────────────
 
+def _strip_gmail_dots(text: str) -> str:
+    """Gmail ignores dots in the local part, so 'a.b@gmail.com' == 'ab@gmail.com'.
+    Normalize that inside any gmail/googlemail address in the string."""
+    return re.sub(
+        r'([\w.+-]+)@(gmail|googlemail)\.com',
+        lambda m: m.group(1).replace('.', '') + '@gmail.com',
+        (text or "").lower(),
+    )
+
+
 def _matches(rule: dict, frm: str, subj: str) -> bool:
-    s = (rule.get("sender") or "").lower()
-    j = (rule.get("subject") or "").lower()
-    if s and s not in frm.lower():
+    s = (rule.get("sender") or "").strip().lower()
+    j = (rule.get("subject") or "").strip().lower()
+    f = (frm or "").lower()
+    if s and s not in f and _strip_gmail_dots(s) not in _strip_gmail_dots(f):
         return False
-    if j and j not in subj.lower():
+    if j and j not in (subj or "").lower():
         return False
     return bool(s or j)
 
 
-def _notify(rule: dict, frm: str, subj: str, date: str) -> None:
+def _fetch_snippet(M, uid, limit: int = 1500) -> str:
+    """Pull a readable text preview of the matched message body."""
+    try:
+        import email as _email
+        from modules.email_box import _body_text
+        typ, md = M.uid("FETCH", uid, "(BODY.PEEK[])")
+        if not md or not md[0]:
+            return ""
+        msg = _email.message_from_bytes(md[0][1])
+        body = " ".join((_body_text(msg) or "").split())
+        return body[:limit] + ("…" if len(body) > limit else "")
+    except Exception as e:
+        logger.debug(f"email-watch snippet fetch failed: {e}")
+        return ""
+
+
+def _notify(rule: dict, frm: str, subj: str, date: str, body: str = "") -> None:
     try:
         from config import CONFIG
         from modules.discord_bot import send_dm_direct
         msg = (f"📬 Email you were waiting for arrived\n"
                f"From: {frm}\nSubject: {subj}" + (f"\nDate: {date}" if date else ""))
+        if body:
+            msg += f"\n\n{body}"
         send_dm_direct(recipient_name=CONFIG.owner_name, message=msg)
         logger.info(f"email-watch ping sent for {_label(rule)}")
     except Exception as e:
@@ -208,7 +237,8 @@ def _poll_once() -> None:
                 if mid in rule.get("seen", []):
                     continue
                 if _matches(rule, frm_raw + " " + frm, subj):
-                    _notify(rule, frm or frm_raw, subj or "(no subject)", date)
+                    snippet = _fetch_snippet(M, uid)
+                    _notify(rule, frm or frm_raw, subj or "(no subject)", date, snippet)
                     rule.setdefault("seen", []).append(mid)
                     rule["seen"] = rule["seen"][-_SEEN_CAP:]
                     if not rule.get("recurring"):
