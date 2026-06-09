@@ -71,7 +71,8 @@ TOOL_DECLARATIONS = [
             "Discord, ca DM. Inclusiv ție însuți (owner-ul) când user-ul spune 'trimite-mi "
             "X pe discord', 'send me the results on discord', 'dă-mi pe discord lista' — "
             "recipient_name = numele owner-ului. Pune rezultatul efectiv în 'message'. "
-            "NECESITĂ confirmare vocală înainte de trimitere."
+            "Acțiune sensibilă: confirmarea e gestionată automat de sistem — NU cere tu "
+            "confirmare în text, doar apeleaz-o."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -88,8 +89,8 @@ TOOL_DECLARATIONS = [
     {
         "name": "send_discord_channel",
         "description": (
-            "Trimite un mesaj într-un canal text Discord. "
-            "NECESITĂ confirmare vocală înainte de trimitere."
+            "Trimite un mesaj într-un canal text Discord. Acțiune sensibilă: confirmarea e "
+            "gestionată automat de sistem — NU cere tu confirmare în text, doar apeleaz-o."
         ),
         "parameters": {
             "type": "OBJECT",

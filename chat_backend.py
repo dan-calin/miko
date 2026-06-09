@@ -329,7 +329,14 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
         "or awaiting approval, tell the user it is pending their approval — do not say it's done. "
         "Conversely, if a tool result says ACTION COMPLETED, it really happened — report it as "
         "DONE, never as pending. Judge each action ONLY by its own latest tool result, not by "
-        "what an earlier turn said."
+        "what an earlier turn said. "
+        "CONFIRMATIONS ARE AUTOMATIC: this chat has an Approve toggle. When it's ON your "
+        "sensitive actions are held as proposals and the user clicks Approve; when it's OFF they "
+        "run immediately. EITHER WAY you must NEVER ask the user to confirm in text — no 'should "
+        "I send this?', no 'reply yes', no 'confirm the recipient', no asking who to send to. "
+        "Just CALL the tool; the system gates it. Some tool descriptions mention voice "
+        "confirmation — that's only for the voice assistant; ignore it here. When the user says "
+        f"'send me ...' / 'ping me' / 'DM me', the recipient is {owner_name} — never ask who."
     )
     if workspace:
         base += (

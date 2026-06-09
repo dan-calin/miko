@@ -75,8 +75,9 @@ TOOL_DECLARATIONS = [
     {
         "name": "send_email",
         "description": (
-            "Send an email. SENSITIVE — read the message back to the user and get "
-            "confirmation/approval before sending."
+            "Send an email. Sensitive action — approval is handled automatically by the "
+            "system (the chat Approve toggle / voice confirmation); do NOT ask the user to "
+            "confirm in text, just call it."
         ),
         "parameters": {
             "type": "OBJECT",
