@@ -707,6 +707,60 @@ def _build_app():
         from chat_backend import settings_schema
         return settings_schema()
 
+    # ── Scheduler (recurring tasks) ─────────────────────────────────────────────
+    @app.get("/chat/tasks")
+    def chat_tasks_list(_=Depends(_auth)):
+        from modules.scheduled_tasks import list_tasks
+        return {"tasks": list_tasks()}
+
+    @app.post("/chat/tasks/parse")
+    async def chat_tasks_parse(request: Request, _=Depends(_auth)):
+        """Turn a natural-language request into a structured task draft (no persist)."""
+        from modules.scheduled_tasks import parse_task_nl
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        res = parse_task_nl((body.get("text") or "").strip())
+        return JSONResponse(res, status_code=(400 if res.get("error") and not res.get("draft") else 200))
+
+    @app.post("/chat/tasks")
+    async def chat_tasks_create(request: Request, _=Depends(_auth)):
+        """Create a task from structured fields (schedule, time, prompt, …)."""
+        from modules.scheduled_tasks import create_task
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            return create_task(**body)
+        except (ValueError, TypeError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/chat/tasks/action")
+    async def chat_tasks_action(request: Request, _=Depends(_auth)):
+        """Pause / resume / delete / run a task by id. Body: {id, action}."""
+        from modules.scheduled_tasks import set_status, delete_task, run_task_now
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        tid = (body.get("id") or "").strip()
+        action = (body.get("action") or "").strip()
+        if not tid:
+            return JSONResponse({"error": "Missing task id."}, status_code=400)
+        if action == "pause":
+            res = set_status(tid, "paused")
+        elif action == "resume":
+            res = set_status(tid, "active")
+        elif action == "delete":
+            res = delete_task(tid)
+        elif action == "run":
+            res = run_task_now(tid)
+        else:
+            return JSONResponse({"error": "Unknown action."}, status_code=400)
+        return JSONResponse(res, status_code=(400 if res.get("error") else 200))
+
     @app.post("/chat/env")
     async def chat_env_set(request: Request, _=Depends(_auth)):
         from chat_backend import write_env_keys
