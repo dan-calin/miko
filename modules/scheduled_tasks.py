@@ -437,9 +437,16 @@ def _run_task(tid: str, task: dict) -> None:
         router = getattr(tool_server, "_router", None)
         if router is None:
             return
+        # Scheduled tasks are user-authored and run on the owner's behalf, so actions
+        # ARE allowed (a task may need to send/email/run something). The reply is
+        # auto-delivered to Discord below, so tell the model not to DM it itself —
+        # otherwise a "ping me" task tries send_discord_dm and double-sends.
+        note = ("[Scheduled task — your reply is delivered to the user on Discord "
+                "automatically, so just produce the requested content/answer directly; "
+                "do NOT call a tool to send this message yourself.]\n\n")
         out = chat_backend.chat(
-            router=router, session_id=f"scheduled-{tid}", message=task["prompt"],
-            provider="gemini", model="", allow_actions=False,
+            router=router, session_id=f"scheduled-{tid}", message=note + task["prompt"],
+            provider="gemini", model="", allow_actions=True,
             owner_name=CONFIG.owner_name, language=getattr(CONFIG, "language", "en"),
         )
         reply = (out or {}).get("reply") or "(no result)"
