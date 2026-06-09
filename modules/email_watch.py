@@ -105,15 +105,29 @@ def watch_email(sender: str = "", subject: str = "", recurring: bool = True) -> 
     if not _Cfg().imap_ready():
         return ("Email isn't configured, so I can't watch the inbox. Set EMAIL_USER / "
                 "EMAIL_PASS / EMAIL_IMAP_HOST in .env (for Gmail use an App Password).")
-    rid = "watch-" + uuid.uuid4().hex[:6]
     reg = _load()
+    mode = "every time" if recurring else "once, when it first arrives"
+    # Don't stack duplicate watches for the same target — reuse an existing active
+    # one (and deactivate any other duplicates so a single email pings only once).
+    sl, jl = sender.lower(), subject.lower()
+    existing = [r for r in reg.values()
+                if r.get("active") and r.get("sender", "").strip().lower() == sl
+                and r.get("subject", "").strip().lower() == jl]
+    if existing:
+        keep = existing[0]
+        keep["recurring"] = bool(recurring)
+        for dup in existing[1:]:
+            dup["active"] = False
+        _save(reg)
+        start()
+        return f"Already watching for mail {_label(keep)} — I'll ping you on Discord {mode}."
+    rid = "watch-" + uuid.uuid4().hex[:6]
     reg[rid] = {
         "sender": sender, "subject": subject, "recurring": bool(recurring),
         "active": True, "created": datetime.now().isoformat(), "seen": [],
     }
     _save(reg)
     start()  # make sure the daemon is running
-    mode = "every time" if recurring else "once, when it first arrives"
     return f"Watching for mail {_label(reg[rid])} — I'll ping you on Discord {mode}. (id {rid})"
 
 
@@ -254,6 +268,7 @@ def _poll_once() -> None:
             logger.info(f"email-watch poll #{_poll_count}: {len(active)} watch(es), 0 msgs since {since}")
             return
         changed = False
+        notified = set()   # message-ids already pinged this poll (dedupe across overlapping watches)
         for uid in uids:
             typ, md = M.uid("FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)])")
             if not md or not md[0]:
@@ -276,14 +291,18 @@ def _poll_once() -> None:
                         rule["seen"] = rule["seen"][-_SEEN_CAP:]
                         changed = True
                         continue
-                    snippet = _fetch_snippet(M, uid)
-                    _notify(rule, frm or frm_raw, subj or "(no subject)", date, snippet)
+                    # Another overlapping watch already pinged for this exact email this
+                    # poll — record it as seen here too, but don't send a duplicate DM.
+                    if mid not in notified:
+                        snippet = _fetch_snippet(M, uid)
+                        _notify(rule, frm or frm_raw, subj or "(no subject)", date, snippet)
+                        notified.add(mid)
+                        fired += 1
                     rule.setdefault("seen", []).append(mid)
                     rule["seen"] = rule["seen"][-_SEEN_CAP:]
                     if not rule.get("recurring"):
                         rule["active"] = False
                     changed = True
-                    fired += 1
         if changed:
             _save(reg)   # reg holds the same dict objects as `active` → updates persist
         logger.info(f"email-watch poll #{_poll_count}: {len(active)} watch(es), scanned "
