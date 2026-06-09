@@ -72,3 +72,6 @@ mcp>=1.0.0
 
 # ── Timezones (world clock — Windows lacks the IANA tz database) ───────────────
 tzdata>=2024.1
+
+# ── Cron schedules (optional — for cron-expression scheduled tasks) ───────────
+croniter>=2.0.0
