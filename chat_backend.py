@@ -827,7 +827,7 @@ def _describe_image(raw: bytes, mime: str) -> str:
         from google.genai import types
         client = genai.Client(api_key=gkey)
         resp = client.models.generate_content(
-            model=os.getenv("MIKO_DICTATION_MODEL", "gemini-2.5-flash"),
+            model=os.getenv("MIKO_DICTATION_MODEL", "").strip() or "gemini-2.5-flash",
             contents=[types.Part.from_bytes(data=raw, mime_type=mime),
                       types.Part(text="Describe this image thoroughly for someone who can't "
                                       "see it. Transcribe any visible text verbatim.")],
