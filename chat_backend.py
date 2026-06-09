@@ -738,6 +738,68 @@ def _supports_vision(provider: str, model: str, base_url: str = "") -> bool:
     return False
 
 
+def _strip_xml(xml: str) -> str:
+    import html as _html
+    text = _re.sub(r"<[^>]+>", "", xml)
+    text = _html.unescape(text)
+    text = _re.sub(r"[ \t]+", " ", text)
+    text = _re.sub(r"\n[ \t]*\n[ \t]*\n+", "\n\n", text)
+    return text.strip()
+
+
+def _extract_document_text(raw: bytes, name: str, mime: str) -> str:
+    """Pull readable text out of Office/OpenDocument files (all ZIP+XML, so no extra
+    deps) — .docx/.pptx/.xlsx/.odt/.ods/.odp — and .rtf. Returns '' if unsupported."""
+    import io
+    import zipfile
+    ext = os.path.splitext(name or "")[1].lower()
+    try:
+        if ext == ".rtf" or mime == "application/rtf":
+            txt = raw.decode("latin-1", "replace")
+            txt = _re.sub(r"\\'[0-9a-fA-F]{2}", "", txt)
+            txt = _re.sub(r"\\[a-zA-Z]+-?\d* ?", "", txt)
+            txt = txt.replace("{", "").replace("}", "")
+            return _re.sub(r"\n\s*\n\s*\n+", "\n\n", txt).strip()
+        if not zipfile.is_zipfile(io.BytesIO(raw)):
+            return ""
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+        names = zf.namelist()
+        parts = []
+        if "word/document.xml" in names:                       # .docx
+            xml = zf.read("word/document.xml").decode("utf-8", "replace").replace("</w:p>", "\n")
+            parts.append(_strip_xml(xml))
+        elif any(n.startswith("ppt/slides/slide") for n in names):   # .pptx
+            for n in sorted(n for n in names if n.startswith("ppt/slides/slide") and n.endswith(".xml")):
+                xml = zf.read(n).decode("utf-8", "replace").replace("</a:p>", "\n")
+                parts.append(_strip_xml(xml))
+        elif "xl/sharedStrings.xml" in names:                  # .xlsx (cell strings)
+            xml = zf.read("xl/sharedStrings.xml").decode("utf-8", "replace").replace("</si>", "\n")
+            parts.append(_strip_xml(xml))
+        elif "content.xml" in names:                           # ODF (.odt/.ods/.odp)
+            xml = zf.read("content.xml").decode("utf-8", "replace")
+            xml = _re.sub(r"</text:(p|h)>", "\n", xml)
+            parts.append(_strip_xml(xml))
+        return "\n".join(p for p in parts if p).strip()
+    except Exception as e:
+        logger.warning(f"document extract failed for {name}: {e}")
+        return ""
+
+
+def _extract_pdf_text(raw: bytes) -> str:
+    """Best-effort PDF text via an optional lib; '' if none is installed."""
+    try:
+        import io
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            from PyPDF2 import PdfReader
+        reader = PdfReader(io.BytesIO(raw))
+        return "\n".join((pg.extract_text() or "") for pg in reader.pages).strip()
+    except Exception as e:
+        logger.debug(f"pdf extract failed: {e}")
+        return ""
+
+
 def _is_textual(mime: str, name: str) -> bool:
     if (mime or "").startswith("text/"):
         return True
@@ -797,16 +859,28 @@ def _prepare_attachments(attachments, provider, model, base_url, message):
                     f"is a description:\n{desc}]" if desc else
                     f"[User attached image '{name}', but this model can't view images "
                     f"and no image reader is configured.]")
-        elif mime == "application/pdf" and provider == "gemini" and can_see:
-            media.append({"mime": mime, "data": raw})        # Gemini reads PDFs natively
+        elif mime == "application/pdf":
+            if provider == "gemini" and can_see:
+                media.append({"mime": mime, "data": raw})     # Gemini reads PDFs natively
+            else:
+                txt = _extract_pdf_text(raw)
+                extra.append(f"[Attached PDF '{name}']\n```\n{txt[:20000]}\n```" if txt else
+                             f"[User attached PDF '{name}', but no PDF reader is available "
+                             f"(pip install pypdf) and this model can't read PDFs.]")
         elif _is_textual(mime, name):
             txt = raw.decode("utf-8", errors="replace")
             if len(txt) > 20000:
                 txt = txt[:20000] + "\n… (truncated)"
             extra.append(f"[Attached file '{name}']\n```\n{txt}\n```")
         else:
-            extra.append(f"[User attached '{name}' ({mime or 'unknown type'}); this model "
-                         f"can't read this file type.]")
+            doc = _extract_document_text(raw, name, mime)
+            if doc:
+                if len(doc) > 20000:
+                    doc = doc[:20000] + "\n… (truncated)"
+                extra.append(f"[Attached document '{name}' — extracted text]\n```\n{doc}\n```")
+            else:
+                extra.append(f"[User attached '{name}' ({mime or 'unknown type'}); this model "
+                             f"can't read this file type.]")
     if extra:
         message = (message + "\n\n" + "\n\n".join(extra)).strip()
     return media, message
