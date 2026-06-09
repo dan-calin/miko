@@ -894,7 +894,8 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
          api_key: str = "", base_url: str = "", allow_actions: bool = False,
          owner_name: str = "Roxan", language: str = "en", workspace: str = "",
          agent: str = "", skills=None, effort: str = "standard", approval: bool = False,
-         thinking: bool = False, attachments=None, emit=None, should_cancel=None) -> dict:
+         thinking: bool = False, attachments=None, system_extra: str = "",
+         emit=None, should_cancel=None) -> dict:
     """Run one chat turn. Returns {"reply": str, "tools_used": [...], "error": str|None}.
 
     emit: optional callback(event_dict) for live progress (tool_start/tool_end/round).
@@ -946,6 +947,10 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
         system += _memory_context(message)
     except Exception as e:
         logger.warning(f"memory context failed: {e}")
+
+    # Caller-specific framing (e.g. the voice pipeline appends spoken-style rules).
+    if system_extra:
+        system += "\n\n" + system_extra.strip()
 
     history = _get_history(session_id)
     used: list = []
