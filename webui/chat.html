@@ -794,6 +794,51 @@
   .task-row .tr-btns button:hover { border-color: var(--amber); color: var(--amber); }
   .task-row .tr-btns button.del:hover { border-color: var(--red,#e06c75); color: var(--red,#e06c75); }
   .task-empty { font-size: 12px; color: var(--text3); padding: 10px 0; }
+  /* ── Scheduler: view toggle + calendar ── */
+  .task-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .task-tab { flex: 1; background: none; border: 1px solid var(--border); color: var(--text3);
+    border-radius: 5px; padding: 6px 10px; font: inherit; font-size: 11.5px; cursor: pointer; transition: .15s; }
+  .task-tab:hover { color: var(--text2); border-color: color-mix(in srgb, var(--amber) 40%, var(--border)); }
+  .task-tab.active { color: var(--amber); border-color: var(--amber);
+    background: color-mix(in srgb, var(--amber) 8%, transparent); }
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .cal-title { font-size: 13px; color: var(--text); font-weight: 600; }
+  .cal-nav { background: none; border: 1px solid var(--border); color: var(--text2);
+    border-radius: 4px; width: 26px; height: 26px; cursor: pointer; font-size: 15px; line-height: 1; }
+  .cal-nav:hover { border-color: var(--amber); color: var(--amber); }
+  .cal-today-btn { background: none; border: 1px solid var(--border); color: var(--text3);
+    border-radius: 4px; padding: 3px 9px; font: inherit; font-size: 10.5px; cursor: pointer; margin-left: 6px; }
+  .cal-today-btn:hover { border-color: var(--amber); color: var(--amber); }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+  .cal-dow { text-align: center; font-size: 10px; color: var(--text3); font-family: var(--mono);
+    padding-bottom: 3px; text-transform: uppercase; letter-spacing: .04em; }
+  .cal-cell { position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center;
+    border: 1px solid transparent; border-radius: 5px; font-size: 12px; color: var(--text); cursor: pointer; transition: .12s; }
+  .cal-cell:hover:not(.blank) { border-color: var(--amber); background: color-mix(in srgb, var(--amber) 8%, transparent); }
+  .cal-cell.blank { cursor: default; }
+  .cal-cell.past { color: var(--text3); }
+  .cal-cell.today { font-weight: 700; color: var(--amber); }
+  .cal-cell.today::before { content: ''; position: absolute; inset: 0; border: 1px solid color-mix(in srgb, var(--amber) 50%, var(--border)); border-radius: 5px; }
+  .cal-cell.sel { background: var(--amber); color: #0b0b0b; font-weight: 700; border-color: var(--amber); }
+  .cal-cell.sel.today { color: #0b0b0b; }
+  .cd-dot { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
+    width: 4px; height: 4px; border-radius: 50%; background: var(--amber); }
+  .cal-cell.sel .cd-dot { background: #0b0b0b; }
+  .cal-composer { display: none; margin-top: 12px; padding: 10px 11px; border: 1px solid var(--amber);
+    border-radius: 6px; background: color-mix(in srgb, var(--amber) 6%, transparent); }
+  .cal-composer.show { display: block; }
+  .cal-composer .cc-date { font-size: 12.5px; color: var(--amber); font-weight: 600; margin-bottom: 7px; }
+  .cal-composer .cc-existing { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+  .cal-composer .cc-chip { font-family: var(--mono); font-size: 10px; color: var(--text2);
+    border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px; }
+  .cal-composer textarea { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 7px 9px; font: inherit; font-size: 12px; resize: vertical; }
+  .cal-composer textarea:focus { outline: none; border-color: var(--amber); }
+  .cal-composer .cc-row { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+  .cal-composer input[type=time] { background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 8px; font: inherit; font-size: 12px; }
+  .cal-composer input[type=time]:focus { outline: none; border-color: var(--amber); }
+  .cal-composer .cc-hint { font-size: 11px; color: var(--text3); margin-top: 6px; min-height: 13px; }
   .offline-banner .ob-mark { color: var(--amber); font-size: 14px; flex-shrink: 0; }
   .offline-banner .ob-text { flex: 1; line-height: 1.5; }
   .offline-banner code {
@@ -1048,13 +1093,31 @@
       </div>
       <div class="modal-note">Miko runs a task on a schedule and DMs you the result on Discord. Describe it in plain language, or it'll keep your existing tasks below. Changes are live — no restart needed.</div>
       <div class="modal-body" id="tasks-body">
-        <div class="task-new">
-          <textarea id="task-nl" rows="2" spellcheck="false" placeholder="e.g. every morning at 8 summarize my unread emails &#10;or: every Monday at 9 plan my week"></textarea>
-          <div class="task-new-row">
-            <span class="task-hint" id="task-hint"></span>
-            <button class="set-link task-parse" id="task-parse" type="button" style="width:auto;margin:0">Preview schedule</button>
+        <div class="task-tabs">
+          <button class="task-tab active" data-tab="cal" type="button">Pick a day</button>
+          <button class="task-tab" data-tab="nl" type="button">Describe it</button>
+        </div>
+        <div id="task-cal-view">
+          <div class="cal-head">
+            <button class="cal-nav" id="cal-prev" type="button" aria-label="Previous month">‹</button>
+            <span style="display:flex;align-items:center">
+              <span class="cal-title" id="cal-title"></span>
+              <button class="cal-today-btn" id="cal-today" type="button">Today</button>
+            </span>
+            <button class="cal-nav" id="cal-next" type="button" aria-label="Next month">›</button>
           </div>
-          <div id="task-preview" class="task-preview"></div>
+          <div class="cal-grid" id="cal-grid"></div>
+          <div id="cal-composer" class="cal-composer"></div>
+        </div>
+        <div id="task-nl-view" style="display:none">
+          <div class="task-new">
+            <textarea id="task-nl" rows="2" spellcheck="false" placeholder="e.g. every morning at 8 summarize my unread emails &#10;or: every Monday at 9 plan my week"></textarea>
+            <div class="task-new-row">
+              <span class="task-hint" id="task-hint"></span>
+              <button class="set-link task-parse" id="task-parse" type="button" style="width:auto;margin:0">Preview schedule</button>
+            </div>
+            <div id="task-preview" class="task-preview"></div>
+          </div>
         </div>
         <div class="set-group-title" style="margin-top:14px">Your tasks</div>
         <div id="task-list"></div>
@@ -2882,6 +2945,84 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#settin
 
 // ── Scheduler (recurring tasks) panel ────────────────────────────────────────
 let _taskDraft = null;
+let _allTasks = [];                 // cached task list (for calendar markers)
+let _calMonth = null;               // Date = first of the displayed month
+let _calSelDate = null;             // 'YYYY-MM-DD' currently selected day
+const _calToday = new Date();
+
+function _ymd(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function setTaskTab(tab) {
+  document.querySelectorAll('.task-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $('#task-cal-view').style.display = tab === 'cal' ? '' : 'none';
+  $('#task-nl-view').style.display = tab === 'nl' ? '' : 'none';
+}
+
+function renderCalendar() {
+  const grid = $('#cal-grid');
+  if (!grid) return;
+  if (!_calMonth) _calMonth = new Date(_calToday.getFullYear(), _calToday.getMonth(), 1);
+  const y = _calMonth.getFullYear(), m = _calMonth.getMonth();
+  $('#cal-title').textContent = _calMonth.toLocaleString([], { month: 'long', year: 'numeric' });
+  // mark days that hold a one-off task
+  const marks = {};
+  _allTasks.forEach(t => { if (t.schedule === 'once' && t.date && t.status !== 'done') marks[t.date] = (marks[t.date] || 0) + 1; });
+  grid.innerHTML = '';
+  ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach(d => {
+    const h = document.createElement('div'); h.className = 'cal-dow'; h.textContent = d; grid.appendChild(h);
+  });
+  const lead = (new Date(y, m, 1).getDay() + 6) % 7;   // Mon-first
+  for (let i = 0; i < lead; i++) { const b = document.createElement('div'); b.className = 'cal-cell blank'; grid.appendChild(b); }
+  const days = new Date(y, m + 1, 0).getDate();
+  const todayStr = _ymd(_calToday);
+  for (let day = 1; day <= days; day++) {
+    const ds = _ymd(new Date(y, m, day));
+    const c = document.createElement('div'); c.className = 'cal-cell';
+    if (ds === todayStr) c.classList.add('today');
+    if (ds < todayStr) c.classList.add('past');
+    if (ds === _calSelDate) c.classList.add('sel');
+    c.innerHTML = '<span class="cd-num">' + day + '</span>' + (marks[ds] ? '<span class="cd-dot"></span>' : '');
+    c.addEventListener('click', () => selectCalDay(ds));
+    grid.appendChild(c);
+  }
+}
+
+function selectCalDay(ds) {
+  _calSelDate = ds;
+  renderCalendar();
+  const nice = new Date(ds + 'T00:00:00').toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  const onDay = _allTasks.filter(t => t.schedule === 'once' && t.date === ds && t.status !== 'done');
+  const existing = onDay.length
+    ? '<div class="cc-existing">' + onDay.map(t => '<span class="cc-chip">' + escHtml(t.time || '') + ' · ' + escHtml(t.name || t.prompt) + '</span>').join('') + '</div>'
+    : '';
+  const cmp = $('#cal-composer');
+  cmp.innerHTML = '<div class="cc-date">' + escHtml(nice) + '</div>' + existing +
+    '<textarea id="cc-prompt" rows="2" spellcheck="false" placeholder="What should Miko do that day? e.g. ping me to call the dentist"></textarea>' +
+    '<div class="cc-row"><input id="cc-time" type="time" value="09:00">' +
+    '<button class="settings-save" id="cc-add" type="button">Schedule</button></div>' +
+    '<div class="cc-hint" id="cc-hint"></div>';
+  cmp.classList.add('show');
+  $('#cc-add').addEventListener('click', addCalTask);
+  $('#cc-prompt').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) addCalTask(); });
+  $('#cc-prompt').focus();
+}
+
+async function addCalTask() {
+  const prompt = $('#cc-prompt').value.trim();
+  const time = $('#cc-time').value || '09:00';
+  if (!prompt) { $('#cc-hint').textContent = 'Tell Miko what to do that day.'; return; }
+  const btn = $('#cc-add'); btn.disabled = true; btn.textContent = 'Scheduling…';
+  try {
+    const r = await fetch('/chat/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedule: 'once', date: _calSelDate, time, prompt }) });
+    const res = await r.json();
+    if (res.error) { $('#cc-hint').textContent = res.error; btn.disabled = false; btn.textContent = 'Schedule'; return; }
+    $('#cal-composer').classList.remove('show'); _calSelDate = null;
+    await loadTaskList();
+  } catch (e) { $('#cc-hint').textContent = 'Failed to schedule.'; btn.disabled = false; btn.textContent = 'Schedule'; }
+}
 function _fmtNext(ts) {
   if (!ts) return '—';
   const d = new Date(ts * 1000), now = Date.now() / 1000, diff = ts - now;
@@ -2891,15 +3032,24 @@ function _fmtNext(ts) {
   if (diff < 86400) return when + ' (in ' + Math.round(diff / 3600) + 'h)';
   return when;
 }
-function openTasks() { $('#tasks-modal').classList.add('show'); loadTaskList(); }
-function closeTasks() { $('#tasks-modal').classList.remove('show'); $('#task-preview').classList.remove('show'); _taskDraft = null; }
+function openTasks() {
+  $('#tasks-modal').classList.add('show');
+  if (!_calMonth) _calMonth = new Date(_calToday.getFullYear(), _calToday.getMonth(), 1);
+  loadTaskList();
+}
+function closeTasks() {
+  $('#tasks-modal').classList.remove('show'); $('#task-preview').classList.remove('show');
+  $('#cal-composer').classList.remove('show'); _taskDraft = null; _calSelDate = null;
+}
 
 async function loadTaskList() {
   const el = $('#task-list'); el.innerHTML = '<div class="task-empty">Loading…</div>';
   let tasks = [];
   try { tasks = (await (await fetch('/chat/tasks')).json()).tasks || []; }
-  catch (e) { el.innerHTML = '<div class="task-empty">Could not load tasks.</div>'; return; }
-  if (!tasks.length) { el.innerHTML = '<div class="task-empty">No scheduled tasks yet — describe one above.</div>'; return; }
+  catch (e) { _allTasks = []; renderCalendar(); el.innerHTML = '<div class="task-empty">Could not load tasks.</div>'; return; }
+  _allTasks = tasks;
+  renderCalendar();
+  if (!tasks.length) { el.innerHTML = '<div class="task-empty">No scheduled tasks yet — pick a day above or describe one.</div>'; return; }
   el.innerHTML = '';
   tasks.forEach(t => {
     const state = t.status === 'active' ? 'active' : (t.status === 'done' ? 'done' : 'paused');
@@ -2965,6 +3115,10 @@ async function createTaskFromDraft() {
 $('#tasks-btn').addEventListener('click', openTasks);
 $('#tasks-close').addEventListener('click', closeTasks);
 $('#task-parse').addEventListener('click', parseTaskNL);
+document.querySelectorAll('.task-tab').forEach(b => b.addEventListener('click', () => setTaskTab(b.dataset.tab)));
+$('#cal-prev').addEventListener('click', () => { _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() - 1, 1); renderCalendar(); });
+$('#cal-next').addEventListener('click', () => { _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + 1, 1); renderCalendar(); });
+$('#cal-today').addEventListener('click', () => { _calMonth = new Date(_calToday.getFullYear(), _calToday.getMonth(), 1); renderCalendar(); });
 $('#tasks-modal').addEventListener('click', e => { if (e.target === $('#tasks-modal')) closeTasks(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#tasks-modal').classList.contains('show')) closeTasks(); });
 
