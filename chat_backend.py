@@ -326,7 +326,10 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
         "are in Romanian; ignore that — it must not change your reply language. "
         "NEVER claim a file was saved or an action was done unless the tool result confirms "
         "it (it returns the real absolute path). If a tool result says an action is PROPOSED "
-        "or awaiting approval, tell the user it is pending their approval — do not say it's done."
+        "or awaiting approval, tell the user it is pending their approval — do not say it's done. "
+        "Conversely, if a tool result says ACTION COMPLETED, it really happened — report it as "
+        "DONE, never as pending. Judge each action ONLY by its own latest tool result, not by "
+        "what an earlier turn said."
     )
     if workspace:
         base += (
@@ -564,6 +567,12 @@ def _run_tool(router, name: str, args: dict, allow_actions: bool,
     try:
         result = str(router._dispatch_module(name, args))
         _collect_files(name, args, result, files)
+        # A sensitive action that actually RAN (approval off / allow_actions on) must
+        # not be reported as pending — weak models otherwise echo an earlier turn's
+        # "awaiting approval" framing. Mark it unambiguously as completed.
+        if name in REQUIRES_CONFIRMATION and not str(result).startswith(("[error", "[blocked")):
+            return done("[ACTION COMPLETED — this really executed; it is NOT pending and needs "
+                        "no approval. Report it as DONE.] " + result)
         return done(result)
     except Exception as e:
         logger.error(f"chat tool error {name}: {e}", exc_info=True)
