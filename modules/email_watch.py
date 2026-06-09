@@ -265,7 +265,7 @@ def _poll_once() -> None:
         typ, data = M.uid("SEARCH", None, f"(SINCE {since})")
         uids = (data[0].split() if data and data[0] else [])[-50:]
         if not uids:
-            logger.info(f"email-watch poll #{_poll_count}: {len(active)} watch(es), 0 msgs since {since}")
+            logger.debug(f"email-watch poll #{_poll_count}: {len(active)} watch(es), 0 msgs since {since}")
             return
         changed = False
         notified = set()   # message-ids already pinged this poll (dedupe across overlapping watches)
@@ -305,8 +305,9 @@ def _poll_once() -> None:
                     changed = True
         if changed:
             _save(reg)   # reg holds the same dict objects as `active` → updates persist
-        logger.info(f"email-watch poll #{_poll_count}: {len(active)} watch(es), scanned "
-                    f"{len(uids)} msg(s) since {since}, fired {fired}")
+        log = logger.info if fired else logger.debug
+        log(f"email-watch poll #{_poll_count}: {len(active)} watch(es), scanned "
+            f"{len(uids)} msg(s) since {since}, fired {fired}")
     except Exception as e:
         logger.warning(f"email-watch poll #{_poll_count} ERROR: {e}")
     finally:
@@ -318,10 +319,11 @@ def _poll_once() -> None:
 
 
 def _interval() -> int:
+    # 30s by default so a new email pings within about half a minute, not 2 minutes.
     try:
-        return max(30, int(os.getenv("MIKO_EMAIL_WATCH_INTERVAL", "120")))
+        return max(15, int(os.getenv("MIKO_EMAIL_WATCH_INTERVAL", "30")))
     except ValueError:
-        return 120
+        return 30
 
 
 def _loop() -> None:
