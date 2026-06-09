@@ -763,6 +763,20 @@ def _build_app():
             return JSONResponse({"error": "Unknown action."}, status_code=400)
         return JSONResponse(res, status_code=(400 if res.get("error") else 200))
 
+    @app.get("/chat/inbox")
+    def chat_inbox(limit: int = 25, unread_only: bool = False, _=Depends(_auth)):
+        """Structured inbox listing for the UI (the same mailbox Miko reads)."""
+        from modules.email_box import inbox_view
+        res = inbox_view(limit=limit, unread_only=unread_only)
+        return JSONResponse(res, status_code=(400 if res.get("error") else 200))
+
+    @app.get("/chat/inbox/message")
+    def chat_inbox_message(uid: str, _=Depends(_auth)):
+        """Full body of one inbox message by uid (read-only, won't mark it seen)."""
+        from modules.email_box import message_view
+        res = message_view(uid)
+        return JSONResponse(res, status_code=(400 if res.get("error") else 200))
+
     @app.post("/chat/env")
     async def chat_env_set(request: Request, _=Depends(_auth)):
         from chat_backend import write_env_keys

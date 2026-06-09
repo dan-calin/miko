@@ -311,6 +311,108 @@ def triage_inbox(criteria: str, days: int = 2) -> str:
     return header + (ans or "No matching emails.")
 
 
+def _parse_ts(raw: str):
+    """Email Date header → epoch float, or None."""
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(raw)
+        return dt.timestamp() if dt else None
+    except Exception:
+        return None
+
+
+def inbox_view(limit: int = 25, unread_only: bool = False, folder: str = "INBOX") -> dict:
+    """Structured inbox listing for the UI: newest first, with unread flags + uids.
+    Read-only (BODY.PEEK) so nothing gets marked seen just by listing."""
+    cfg = _Cfg()
+    if not cfg.imap_ready():
+        return {"error": "Email isn't configured. Add EMAIL_USER / EMAIL_PASS / EMAIL_IMAP_HOST in Settings → Email."}
+    import email as _email
+    M = None
+    try:
+        limit = max(1, min(int(limit or 25), 100))
+        M = _imap()
+        M.select(folder, readonly=True)
+        typ, data = M.uid("SEARCH", None, "UNSEEN" if unread_only else "ALL")
+        uids = (data[0].split() if data and data[0] else [])[-limit:][::-1]
+        msgs = []
+        for uid in uids:
+            typ, md = M.uid("FETCH", uid, "(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+            if not md:
+                continue
+            meta, hdr_bytes = b"", b""
+            for part in md:
+                if isinstance(part, tuple):
+                    meta += part[0] or b""
+                    hdr_bytes = part[1] or hdr_bytes
+                elif isinstance(part, (bytes, bytearray)):
+                    meta += part
+            unread = "\\Seen" not in meta.decode("utf-8", "replace")
+            hdr = _email.message_from_bytes(hdr_bytes)
+            name, addr = parseaddr(_dec(hdr.get("From", "")))
+            raw_date = _dec(hdr.get("Date", ""))
+            msgs.append({
+                "uid": uid.decode() if isinstance(uid, (bytes, bytearray)) else str(uid),
+                "from_name": name or addr or _dec(hdr.get("From", "")),
+                "from_addr": addr,
+                "subject": _dec(hdr.get("Subject", "(no subject)")),
+                "date": raw_date[:31],
+                "ts": _parse_ts(hdr.get("Date", "")),
+                "unread": unread,
+            })
+        return {"messages": msgs, "account": cfg.user, "folder": folder}
+    except Exception as e:
+        logger.error(f"inbox_view error: {e}")
+        return {"error": f"Couldn't reach the mailbox: {e}"}
+    finally:
+        if M is not None:
+            try:
+                M.logout()
+            except Exception:
+                pass
+
+
+def message_view(uid: str, folder: str = "INBOX") -> dict:
+    """Full body of one message by uid. Read-only (BODY.PEEK) — won't mark it seen."""
+    cfg = _Cfg()
+    if not cfg.imap_ready():
+        return {"error": "Email isn't configured."}
+    uid = (str(uid) or "").strip()
+    if not uid.isdigit():
+        return {"error": "Bad message id."}
+    import email as _email
+    M = None
+    try:
+        M = _imap()
+        M.select(folder, readonly=True)
+        typ, md = M.uid("FETCH", uid, "(BODY.PEEK[])")
+        if not md or not md[0]:
+            return {"error": "Message not found."}
+        msg = _email.message_from_bytes(md[0][1])
+        name, addr = parseaddr(_dec(msg.get("From", "")))
+        body = _body_text(msg).strip()
+        if len(body) > 20000:
+            body = body[:20000] + "\n… (truncated)"
+        return {
+            "uid": uid,
+            "from_name": name or addr or _dec(msg.get("From", "")),
+            "from_addr": addr,
+            "to": _dec(msg.get("To", "")),
+            "subject": _dec(msg.get("Subject", "(no subject)")),
+            "date": _dec(msg.get("Date", ""))[:31],
+            "body": body,
+        }
+    except Exception as e:
+        logger.error(f"message_view error: {e}")
+        return {"error": f"Couldn't read that email: {e}"}
+    finally:
+        if M is not None:
+            try:
+                M.logout()
+            except Exception:
+                pass
+
+
 def send_email(to: str, subject: str, body: str) -> str:
     cfg = _Cfg()
     if not cfg.smtp_ready():

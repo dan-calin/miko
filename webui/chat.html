@@ -839,6 +839,33 @@
     border-radius: 4px; padding: 6px 8px; font: inherit; font-size: 12px; }
   .cal-composer input[type=time]:focus { outline: none; border-color: var(--amber); }
   .cal-composer .cc-hint { font-size: 11px; color: var(--text3); margin-top: 6px; min-height: 13px; }
+  /* ── Inbox ── */
+  .inbox-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .ib-acct { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--text3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ib-row { display: flex; align-items: center; gap: 9px; padding: 8px 11px; margin: 4px 0;
+    border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: border-color .12s, background .12s; }
+  .ib-row:hover { border-color: var(--amber); background: color-mix(in srgb, var(--amber) 6%, transparent); }
+  .ib-dot { width: 7px; height: 7px; border-radius: 50%; background: transparent; flex: none; }
+  .ib-row.unread .ib-dot { background: var(--amber); box-shadow: 0 0 5px var(--amber); }
+  .ib-main { flex: 1; min-width: 0; }
+  .ib-top { display: flex; align-items: baseline; gap: 8px; }
+  .ib-from { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .ib-row.unread .ib-from { font-weight: 600; }
+  .ib-date { font-size: 10px; color: var(--text3); flex: none; font-family: var(--mono); }
+  .ib-subj { font-size: 11.5px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+  .ib-row.unread .ib-subj { color: var(--text); }
+  .inbox-reader { display: none; }
+  .inbox-reader.show { display: block; }
+  .ib-back { background: none; border: 1px solid var(--border); color: var(--text2);
+    border-radius: 4px; padding: 4px 11px; font: inherit; font-size: 11px; cursor: pointer; margin-bottom: 10px; }
+  .ib-back:hover { border-color: var(--amber); color: var(--amber); }
+  .ib-hdr { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
+  .ib-hdr .ib-h-subj { font-size: 13.5px; color: var(--text); font-weight: 600; margin-bottom: 5px; }
+  .ib-hdr .ib-h-meta { font-size: 11px; color: var(--text3); font-family: var(--mono); line-height: 1.6; }
+  .ib-hdr .ib-h-meta b { color: var(--text2); font-weight: 500; }
+  .ib-bodytext { font-size: 12.5px; color: var(--text); line-height: 1.55; white-space: pre-wrap;
+    word-break: break-word; max-height: 46vh; overflow-y: auto; }
   .offline-banner .ob-mark { color: var(--amber); font-size: 14px; flex-shrink: 0; }
   .offline-banner .ob-text { flex: 1; line-height: 1.5; }
   .offline-banner code {
@@ -874,6 +901,7 @@
       <span>MIKO</span>
       <span class="wm-actions">
         <button class="settings-cog" id="tasks-btn" type="button" title="Scheduled tasks — automation"><svg class="cog-ic" width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7.6" r="5.1" stroke="currentColor" stroke-width="1.1"/><path d="M7 4.8V7.6l1.9 1.3" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.7 2.3 4.5 3.9M11.3 2.3 9.5 3.9" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg> Tasks</button>
+        <button class="settings-cog" id="inbox-btn" type="button" title="Inbox — the mailbox Miko reads from"><svg class="cog-ic" width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="1.6" y="3" width="10.8" height="8" rx="1.2" stroke="currentColor" stroke-width="1.1"/><path d="M2 3.6 7 7.6l5-4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg> Inbox</button>
         <button class="settings-cog" id="settings-cog" type="button" title="Settings — API keys & credentials"><svg class="cog-ic" width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="1.9" stroke="currentColor" stroke-width="1.1"/><path d="M7 1.5v1.6M7 10.9v1.6M1.5 7h1.6M10.9 7h1.6M3.1 3.1l1.1 1.1M9.8 9.8l1.1 1.1M10.9 3.1 9.8 4.2M4.2 9.8 3.1 10.9" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg> Settings</button>
       </span>
     </div>
@@ -1121,6 +1149,28 @@
         </div>
         <div class="set-group-title" style="margin-top:14px">Your tasks</div>
         <div id="task-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="inbox-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-title">Inbox</span>
+        <button class="modal-close" id="inbox-close" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-note">A read-only view of the mailbox Miko reads from — what you see here is what Miko sees. Opening a message won't mark it read.</div>
+      <div class="modal-body" id="inbox-body">
+        <div class="inbox-toolbar">
+          <div class="task-tabs" style="margin:0;flex:none">
+            <button class="task-tab active" id="ib-tab-all" type="button" style="flex:none;padding:5px 12px">All</button>
+            <button class="task-tab" id="ib-tab-unread" type="button" style="flex:none;padding:5px 12px">Unread</button>
+          </div>
+          <span class="ib-acct" id="ib-acct"></span>
+          <button class="cal-today-btn" id="ib-refresh" type="button" style="margin:0">Refresh</button>
+        </div>
+        <div id="inbox-list"></div>
+        <div id="inbox-reader" class="inbox-reader"></div>
       </div>
     </div>
   </div>
@@ -3115,10 +3165,88 @@ async function createTaskFromDraft() {
 $('#tasks-btn').addEventListener('click', openTasks);
 $('#tasks-close').addEventListener('click', closeTasks);
 $('#task-parse').addEventListener('click', parseTaskNL);
-document.querySelectorAll('.task-tab').forEach(b => b.addEventListener('click', () => setTaskTab(b.dataset.tab)));
+document.querySelectorAll('#tasks-modal .task-tab').forEach(b => b.addEventListener('click', () => setTaskTab(b.dataset.tab)));
 $('#cal-prev').addEventListener('click', () => { _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() - 1, 1); renderCalendar(); });
 $('#cal-next').addEventListener('click', () => { _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + 1, 1); renderCalendar(); });
 $('#cal-today').addEventListener('click', () => { _calMonth = new Date(_calToday.getFullYear(), _calToday.getMonth(), 1); renderCalendar(); });
+
+// ── Inbox viewer (read-only: the mailbox Miko reads from) ────────────────────
+let _ibUnread = false;
+function openInbox() { $('#inbox-modal').classList.add('show'); showInboxList(); loadInbox(); }
+function closeInbox() { $('#inbox-modal').classList.remove('show'); }
+function showInboxList() {
+  $('#inbox-reader').classList.remove('show'); $('#inbox-reader').innerHTML = '';
+  $('#inbox-list').style.display = '';
+}
+function setInboxTab(unread) {
+  _ibUnread = unread;
+  $('#ib-tab-all').classList.toggle('active', !unread);
+  $('#ib-tab-unread').classList.toggle('active', unread);
+  loadInbox();
+}
+function _ibDate(ts, raw) {
+  if (!ts) return escHtml((raw || '').slice(0, 16));
+  const d = new Date(ts * 1000), now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return d.toLocaleString([], sameDay ? { hour: '2-digit', minute: '2-digit' }
+    : { month: 'short', day: 'numeric' });
+}
+async function loadInbox() {
+  const el = $('#inbox-list'); el.innerHTML = '<div class="task-empty">Loading inbox…</div>';
+  let d;
+  try { d = await (await fetch('/chat/inbox?limit=30' + (_ibUnread ? '&unread_only=true' : ''))).json(); }
+  catch (e) { el.innerHTML = '<div class="task-empty">Could not reach the mailbox.</div>'; return; }
+  if (d.error) { el.innerHTML = '<div class="task-empty">' + escHtml(d.error) + '</div>'; $('#ib-acct').textContent = ''; return; }
+  $('#ib-acct').textContent = d.account || '';
+  const msgs = d.messages || [];
+  if (!msgs.length) { el.innerHTML = '<div class="task-empty">' + (_ibUnread ? 'No unread mail.' : 'Inbox is empty.') + '</div>'; return; }
+  el.innerHTML = '';
+  msgs.forEach(m => {
+    const row = document.createElement('div'); row.className = 'ib-row' + (m.unread ? ' unread' : '');
+    const dot = document.createElement('span'); dot.className = 'ib-dot';
+    const main = document.createElement('div'); main.className = 'ib-main';
+    main.innerHTML = '<div class="ib-top"><span class="ib-from"></span><span class="ib-date">' + _ibDate(m.ts, m.date) + '</span></div>' +
+      '<div class="ib-subj"></div>';
+    main.querySelector('.ib-from').textContent = m.from_name || m.from_addr || '(unknown)';
+    main.querySelector('.ib-subj').textContent = m.subject || '(no subject)';
+    row.append(dot, main);
+    row.addEventListener('click', () => openMessage(m.uid));
+    el.appendChild(row);
+  });
+}
+async function openMessage(uid) {
+  const reader = $('#inbox-reader');
+  $('#inbox-list').style.display = 'none';
+  reader.classList.add('show');
+  reader.innerHTML = '<button class="ib-back" id="ib-back" type="button">‹ Back to inbox</button><div class="task-empty">Opening…</div>';
+  $('#ib-back').addEventListener('click', showInboxList);
+  let d;
+  try { d = await (await fetch('/chat/inbox/message?uid=' + encodeURIComponent(uid))).json(); }
+  catch (e) { d = { error: 'Could not open the message.' }; }
+  const back = '<button class="ib-back" id="ib-back" type="button">‹ Back to inbox</button>';
+  if (d.error) { reader.innerHTML = back + '<div class="task-empty">' + escHtml(d.error) + '</div>'; $('#ib-back').addEventListener('click', showInboxList); return; }
+  const hdr = document.createElement('div'); hdr.className = 'ib-hdr';
+  hdr.innerHTML = '<div class="ib-h-subj"></div><div class="ib-h-meta">' +
+    '<div><b>From:</b> <span class="m-from"></span></div>' +
+    (d.to ? '<div><b>To:</b> <span class="m-to"></span></div>' : '') +
+    '<div><b>Date:</b> <span class="m-date"></span></div></div>';
+  hdr.querySelector('.ib-h-subj').textContent = d.subject || '(no subject)';
+  hdr.querySelector('.m-from').textContent = (d.from_name && d.from_addr && d.from_name !== d.from_addr)
+    ? d.from_name + ' <' + d.from_addr + '>' : (d.from_addr || d.from_name || '');
+  if (d.to) hdr.querySelector('.m-to').textContent = d.to;
+  hdr.querySelector('.m-date').textContent = d.date || '';
+  const body = document.createElement('div'); body.className = 'ib-bodytext';
+  body.textContent = d.body || '(no text content)';
+  reader.innerHTML = back; reader.appendChild(hdr); reader.appendChild(body);
+  $('#ib-back').addEventListener('click', showInboxList);
+}
+$('#inbox-btn').addEventListener('click', openInbox);
+$('#inbox-close').addEventListener('click', closeInbox);
+$('#ib-refresh').addEventListener('click', loadInbox);
+$('#ib-tab-all').addEventListener('click', () => setInboxTab(false));
+$('#ib-tab-unread').addEventListener('click', () => setInboxTab(true));
+$('#inbox-modal').addEventListener('click', e => { if (e.target === $('#inbox-modal')) closeInbox(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#inbox-modal').classList.contains('show')) closeInbox(); });
 $('#tasks-modal').addEventListener('click', e => { if (e.target === $('#tasks-modal')) closeTasks(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#tasks-modal').classList.contains('show')) closeTasks(); });
 
