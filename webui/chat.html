@@ -652,7 +652,8 @@
   }
   .ws-item:hover { background: var(--surface2); color: var(--text); }
   .ws-item.active { background: var(--surface3); color: var(--text); }
-  .ws-item .ic { font-family: var(--mono); font-size: 11px; flex-shrink: 0; width: 12px; }
+  .ws-item .ic { flex-shrink: 0; display: inline-flex; align-items: center; }
+  .ws-item .ic svg { display: block; }
   .ws-item.dir .ic { color: var(--amber); }
   .ws-item.file .ic { color: var(--text3); }
   .ws-item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; }
@@ -2374,6 +2375,10 @@ function setAllow(on) {
 const CM_THEME = 'material-darker';
 let wsCurDir = '';        // current folder shown in explorer
 let workspace = '';       // the active workspace folder (Miko works here)
+// File-explorer icons (clearer than the old ▸/· glyphs)
+const WS_IC_DIR = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 4.3c0-.55.45-1 1-1h3c.3 0 .58.13.77.36l.66.78c.19.23.47.36.77.36h6.3c.55 0 1 .45 1 1V12c0 .55-.45 1-1 1H2.5c-.55 0-1-.45-1-1V4.3Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>';
+const WS_IC_FILE = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 1.9h4.7L12 5.1V13.6a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5V2.4a.5.5 0 0 1 .5-.5Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M8.6 2.1V5.2h3" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>';
+const WS_IC_UP = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M11.5 12.5V9a3 3 0 0 0-3-3H4M7 3 3.5 6 7 9" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 let edPath = null;        // file currently open in editor
 let edBaseline = '';      // last-saved content (for dirty tracking)
 let cm = null;            // CodeMirror instance (null until first file opened)
@@ -2453,7 +2458,7 @@ async function loadDir(path) {
   if (data.parent !== null && data.parent !== undefined) {
     const up = document.createElement('div');
     up.className = 'ws-item dir';
-    up.innerHTML = '<span class="ic">↰</span><span class="nm">..</span>';
+    up.innerHTML = '<span class="ic">' + WS_IC_UP + '</span><span class="nm">..</span>';
     up.addEventListener('click', () => loadDir(data.parent));
     list.appendChild(up);
   }
@@ -2465,7 +2470,7 @@ async function loadDir(path) {
     const it = document.createElement('div');
     it.className = 'ws-item ' + (ent.is_dir ? 'dir' : 'file');
     if (ent.path === edPath) it.classList.add('active');
-    it.innerHTML = `<span class="ic">${ent.is_dir ? '▸' : '·'}</span><span class="nm"></span>`;
+    it.innerHTML = `<span class="ic">${ent.is_dir ? WS_IC_DIR : WS_IC_FILE}</span><span class="nm"></span>`;
     it.querySelector('.nm').textContent = ent.name;
     it.addEventListener('click', () => ent.is_dir ? loadDir(ent.path) : openFile(ent.path));
     it.addEventListener('contextmenu', e => {
