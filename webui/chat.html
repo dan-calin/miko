@@ -870,6 +870,18 @@
   .ib-hdr .ib-h-meta b { color: var(--text2); font-weight: 500; }
   .ib-bodytext { font-size: 12.5px; color: var(--text); line-height: 1.55; white-space: pre-wrap;
     word-break: break-word; max-height: 46vh; overflow-y: auto; }
+  .ib-view-toggle { display: flex; gap: 4px; margin-bottom: 8px; }
+  .ib-frame { width: 100%; height: 46vh; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  .ib-att-title { font-size: 10px; color: var(--text3); font-family: var(--mono); text-transform: uppercase;
+    letter-spacing: .04em; margin: 14px 0 7px; }
+  .ib-atts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .ib-att-img { width: 84px; height: 84px; object-fit: cover; border: 1px solid var(--border);
+    border-radius: 5px; cursor: pointer; background: #fff; }
+  .ib-att-img:hover { border-color: var(--amber); }
+  .ib-att-file { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text2);
+    text-decoration: none; border: 1px solid var(--border); border-radius: 5px; padding: 7px 11px; font-family: var(--mono); }
+  a.ib-att-file:hover { border-color: var(--amber); color: var(--amber); }
+  div.ib-att-file { opacity: .6; }
   .offline-banner .ob-mark { color: var(--amber); font-size: 14px; flex-shrink: 0; }
   .offline-banner .ob-text { flex: 1; line-height: 1.5; }
   .offline-banner code {
@@ -3259,10 +3271,61 @@ async function openMessage(uid) {
     ? d.from_name + ' <' + d.from_addr + '>' : (d.from_addr || d.from_name || '');
   if (d.to) hdr.querySelector('.m-to').textContent = d.to;
   hdr.querySelector('.m-date').textContent = d.date || '';
-  const body = document.createElement('div'); body.className = 'ib-bodytext';
-  body.textContent = d.body || '(no text content)';
-  reader.innerHTML = back; reader.appendChild(hdr); reader.appendChild(body);
+  reader.innerHTML = back; reader.appendChild(hdr);
   $('#ib-back').addEventListener('click', showInboxList);
+
+  // Body — render HTML in a sandboxed iframe (no scripts run), with a plain-text
+  // fallback toggle. Inline cid: images are already embedded as data URIs server-side.
+  if (d.has_html) {
+    const toggle = document.createElement('div'); toggle.className = 'ib-view-toggle';
+    toggle.innerHTML = '<button class="task-tab active" data-v="rich" type="button" style="flex:none;padding:4px 12px">Rich</button>' +
+      '<button class="task-tab" data-v="plain" type="button" style="flex:none;padding:4px 12px">Plain text</button>';
+    const frame = document.createElement('iframe'); frame.className = 'ib-frame';
+    frame.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
+    frame.srcdoc = '<!doctype html><html><head><meta charset="utf-8"><base target="_blank">' +
+      '<style>html,body{margin:0;padding:10px;background:#fff;color:#111;' +
+      'font:13px/1.55 -apple-system,Segoe UI,Roboto,Arial,sans-serif;word-break:break-word;}' +
+      'img{max-width:100%;height:auto;}a{color:#0a58ca;}</style></head><body>' + d.html + '</body></html>';
+    const plain = document.createElement('div'); plain.className = 'ib-bodytext'; plain.style.display = 'none';
+    plain.textContent = d.body || '(no text content)';
+    toggle.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+      const rich = b.dataset.v === 'rich';
+      toggle.querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+      frame.style.display = rich ? '' : 'none';
+      plain.style.display = rich ? 'none' : '';
+    }));
+    reader.appendChild(toggle); reader.appendChild(frame); reader.appendChild(plain);
+  } else {
+    const body = document.createElement('div'); body.className = 'ib-bodytext';
+    body.textContent = d.body || '(no text content)';
+    reader.appendChild(body);
+  }
+
+  // Attachments — images inline (click to open full), files as download chips.
+  const atts = d.attachments || [];
+  if (atts.length) {
+    const title = document.createElement('div'); title.className = 'ib-att-title';
+    title.textContent = atts.length + ' attachment' + (atts.length > 1 ? 's' : '');
+    const wrap = document.createElement('div'); wrap.className = 'ib-atts';
+    atts.forEach(a => {
+      if (a.is_image && a.data_uri) {
+        const im = document.createElement('img'); im.className = 'ib-att-img'; im.src = a.data_uri; im.title = a.filename;
+        im.addEventListener('click', () => { const w = window.open('', '_blank'); if (w) w.document.write('<title>' + escHtml(a.filename) + '</title><img src="' + a.data_uri + '" style="max-width:100%">'); });
+        wrap.appendChild(im);
+      } else {
+        const c = document.createElement(a.data_uri ? 'a' : 'div'); c.className = 'ib-att-file';
+        if (a.data_uri) { c.href = a.data_uri; c.download = a.filename; }
+        c.textContent = (a.too_large ? '⚠ ' : '⭳ ') + a.filename + ' · ' + fmtBytes(a.size) + (a.too_large ? ' (too large to preview)' : '');
+        wrap.appendChild(c);
+      }
+    });
+    reader.appendChild(title); reader.appendChild(wrap);
+  }
+}
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB']; const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  return (n / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + u[i];
 }
 $('#inbox-btn').addEventListener('click', openInbox);
 $('#inbox-close').addEventListener('click', closeInbox);

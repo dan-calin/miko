@@ -11,8 +11,10 @@ confirmation/approval like other sends). Configure in .env:
   EMAIL_FROM                        (optional display From, defaults to EMAIL_USER)
 """
 
+import base64
 import logging
 import os
+import re
 from email.header import decode_header, make_header
 from email.utils import parseaddr
 
@@ -372,8 +374,75 @@ def inbox_view(limit: int = 25, unread_only: bool = False, folder: str = "INBOX"
                 pass
 
 
+_ATT_MAX = 8_000_000        # per-attachment embed cap (raw bytes)
+_ATT_TOTAL = 16_000_000     # total embedded-attachment cap per message
+
+
+def _decode_part(part) -> str:
+    try:
+        return (part.get_payload(decode=True) or b"").decode(
+            part.get_content_charset() or "utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _inline_cids(html: str, inline: dict) -> str:
+    """Rewrite <img src="cid:..."> to the embedded data: URIs."""
+    if not html or not inline:
+        return html
+
+    def repl(m):
+        cid = m.group(1).strip().strip("<>")
+        uri = inline.get(cid)
+        return f'src="{uri}"' if uri else m.group(0)
+
+    return re.sub(r'src\s*=\s*["\']?\s*cid:([^"\'>\s]+)["\']?', repl, html, flags=re.IGNORECASE)
+
+
+def _collect(msg):
+    """Walk a message → (plain_text, html, inline_cid_map, attachments).
+    Inline images and attachments are embedded as data: URIs (size-capped) so the
+    UI can render them without a second authenticated request."""
+    text, html, inline, atts, total = "", "", {}, [], 0
+    for part in msg.walk():
+        if part.is_multipart():
+            continue
+        ctype = part.get_content_type()
+        disp = str(part.get("Content-Disposition", "")).lower()
+        cid = part.get("Content-ID")
+        filename = part.get_filename()
+        if filename:
+            filename = _dec(filename)
+        is_attach = bool(filename) or "attachment" in disp
+        if ctype == "text/plain" and not is_attach and not text:
+            text = _decode_part(part); continue
+        if ctype == "text/html" and not is_attach and not html:
+            html = _decode_part(part); continue
+        if cid and ctype.startswith("image/"):
+            payload = part.get_payload(decode=True) or b""
+            if 0 < len(payload) <= _ATT_MAX:
+                inline[cid.strip().strip("<>")] = "data:%s;base64,%s" % (
+                    ctype, base64.b64encode(payload).decode())
+        if is_attach:
+            payload = part.get_payload(decode=True) or b""
+            size = len(payload)
+            entry = {
+                "filename": filename or ("image" if ctype.startswith("image/") else "attachment"),
+                "content_type": ctype, "size": size,
+                "is_image": ctype.startswith("image/"),
+            }
+            if 0 < size <= _ATT_MAX and total + size <= _ATT_TOTAL:
+                entry["data_uri"] = "data:%s;base64,%s" % (ctype, base64.b64encode(payload).decode())
+                total += size
+            else:
+                entry["too_large"] = True
+            atts.append(entry)
+    return text, html, inline, atts
+
+
 def message_view(uid: str, folder: str = "INBOX") -> dict:
-    """Full body of one message by uid. Read-only (BODY.PEEK) — won't mark it seen."""
+    """Full message by uid, with rich HTML + inline images + attachments.
+    Read-only (BODY.PEEK) — won't mark it seen."""
     cfg = _Cfg()
     if not cfg.imap_ready():
         return {"error": "Email isn't configured."}
@@ -390,9 +459,19 @@ def message_view(uid: str, folder: str = "INBOX") -> dict:
             return {"error": "Message not found."}
         msg = _email.message_from_bytes(md[0][1])
         name, addr = parseaddr(_dec(msg.get("From", "")))
-        body = _body_text(msg).strip()
+        text, html, inline, atts = _collect(msg)
+        html = _inline_cids(html, inline)
+        body = (text or "").strip()
+        if not body and html:
+            try:
+                from modules.research import _html_to_text
+                body = _html_to_text(html).strip()
+            except Exception:
+                body = ""
         if len(body) > 20000:
             body = body[:20000] + "\n… (truncated)"
+        if html and len(html) > 600000:
+            html = html[:600000]
         return {
             "uid": uid,
             "from_name": name or addr or _dec(msg.get("From", "")),
@@ -400,7 +479,10 @@ def message_view(uid: str, folder: str = "INBOX") -> dict:
             "to": _dec(msg.get("To", "")),
             "subject": _dec(msg.get("Subject", "(no subject)")),
             "date": _dec(msg.get("Date", ""))[:31],
-            "body": body,
+            "body": body or "(no text content)",
+            "html": html,
+            "has_html": bool(html),
+            "attachments": atts,
         }
     except Exception as e:
         logger.error(f"message_view error: {e}")
