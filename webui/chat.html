@@ -772,14 +772,13 @@
   .task-preview.show { display: block; }
   .task-preview .tp-sched { font-family: var(--mono); font-size: 11px; color: var(--amber); }
   .task-preview .tp-prompt { font-size: 12px; color: var(--text2); margin: 3px 0 8px; }
-  .task-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin: 5px 0;
+  .task-row { display: flex; align-items: center; gap: 9px; padding: 8px 12px; margin: 5px 0;
     border: 1px solid var(--border); border-radius: 6px; transition: box-shadow .2s, border-color .2s; }
   .task-row.active { border-color: color-mix(in srgb, var(--amber) 55%, var(--border));
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--amber) 30%, transparent),
                 0 0 10px -2px color-mix(in srgb, var(--amber) 45%, transparent); }
   .task-row.paused { opacity: .6; }
-  .task-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 7px;
-    vertical-align: middle; background: var(--text3); flex: none; }
+  .task-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); flex: none; }
   .task-row.active .task-dot { background: var(--amber); box-shadow: 0 0 6px var(--amber);
     animation: taskpulse 2.2s ease-in-out infinite; }
   .task-row.done .task-dot { background: var(--green); }
@@ -2885,8 +2884,9 @@ async function loadTaskList() {
     const state = t.status === 'active' ? 'active' : (t.status === 'done' ? 'done' : 'paused');
     const paused = t.status !== 'active';
     const row = document.createElement('div'); row.className = 'task-row ' + state;
+    const dot = document.createElement('span'); dot.className = 'task-dot';   // sibling → glow not clipped
     const main = document.createElement('div'); main.className = 'tr-main';
-    main.innerHTML = '<div class="tr-prompt"><span class="task-dot"></span><span class="tr-name"></span></div>' +
+    main.innerHTML = '<div class="tr-prompt"><span class="tr-name"></span></div>' +
       '<div class="tr-sched' + (paused ? ' paused' : '') + '">' + escHtml(t.describe) +
         (t.status === 'active' ? ' · active' : (t.status === 'done' ? ' · done' : ' · paused')) + '</div>' +
       '<div class="tr-next">' + (paused ? '—' : 'next: ' + escHtml(_fmtNext(t.next_run))) +
@@ -2897,7 +2897,7 @@ async function loadTaskList() {
     btns.appendChild(mk('Run', 'run'));
     btns.appendChild(mk(paused ? 'Resume' : 'Pause', paused ? 'resume' : 'pause'));
     btns.appendChild(mk('✕', 'delete', 'del'));
-    row.append(main, btns); el.appendChild(row);
+    row.append(dot, main, btns); el.appendChild(row);
   });
 }
 
