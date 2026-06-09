@@ -74,11 +74,24 @@ def append_turn(cid: str, user_msg: str, assistant_msg: str,
 
 
 def history_for_model(cid: str, limit: int = _MAX_MODEL_HISTORY) -> list:
-    """Return the recent {role, content} pairs for the LLM context window."""
+    """Return the recent {role, content} pairs for the LLM context window.
+
+    Assistant turns that ran tools are tagged with the tool names. Without this the
+    replayed history is text-only, so the model sees past action-confirmations as
+    bare prose ('Sent.', 'Done.') and starts imitating that — narrating actions
+    instead of calling tools. The tag reminds it: confirmations come WITH a tool call.
+    """
     conv = _load(cid)
     if not conv:
         return []
-    msgs = [{"role": m["role"], "content": m["content"]} for m in conv["messages"]]
+    msgs = []
+    for m in conv["messages"]:
+        content = m["content"]
+        if m.get("role") == "assistant":
+            names = list(dict.fromkeys(t for t in (m.get("tools") or []) if isinstance(t, str)))
+            if names:
+                content = f"{content}\n[Done by calling: {', '.join(names)}]"
+        msgs.append({"role": m["role"], "content": content})
     return msgs[-limit:]
 
 

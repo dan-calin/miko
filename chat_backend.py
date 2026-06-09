@@ -324,7 +324,13 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
             "action='read' (sau read_note pentru notițe, read_email pentru email). NU rula comenzi "
             "shell ca să citești un fișier — fără run_command cu 'type', 'cat', 'more', "
             "'Get-Content'; e unealta greșită și cere o aprobare inutilă. Folosește run_command doar "
-            "pentru ce nu are o unealtă dedicată."
+            "pentru ce nu are o unealtă dedicată. "
+            "ORICE acțiune necesită APELAREA uneltei ei ÎN tura CURENTĂ — trimitere mesaj Discord, "
+            "vorbit pe voice, rulat o comandă etc. Să răspunzi 'Gata', 'Zis', 'Trimis' sau 'propus' "
+            "FĂRĂ un apel de unealtă în aceeași tură e o halucinație — interzis. Inclusiv REPETĂRILE: "
+            "când userul zice 'fă din nou', 'iar', 'la fel', 'încă o dată', TREBUIE să apelezi din "
+            "nou unealta; nu poți refolosi acțiunea dintr-o tură anterioară. Răspunsurile marcate "
+            "'[Done by calling: …]' au rulat o unealtă reală — fă la fel de fiecare dată."
         )
         if workspace:
             base += (
@@ -363,7 +369,13 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
         "READING FILES: to read a file's contents use file_op with action='read' (or read_note for "
         "vault notes, read_email for email). NEVER run a shell command to read a file — no "
         "run_command with 'type', 'cat', 'more', 'Get-Content' — that's the wrong tool and forces a "
-        "needless approval. Reserve run_command for things with no dedicated tool."
+        "needless approval. Reserve run_command for things with no dedicated tool. "
+        "EVERY action requires CALLING its tool in the CURRENT turn — sending a Discord message, "
+        "speaking on voice, running a command, etc. Replying 'Done', 'Sent', 'Zis', or 'proposed' "
+        "WITHOUT a matching tool call in the same turn is a hallucination — forbidden. This includes "
+        "REPEATS: when the user says 'do it again', 'again', 'same', 'one more', you MUST call the "
+        "tool again; you cannot reuse an earlier turn's action. Earlier replies tagged "
+        "'[Done by calling: …]' each ran a real tool — match that every time, never just narrate."
     )
     if workspace:
         base += (
