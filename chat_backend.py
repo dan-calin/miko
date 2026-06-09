@@ -184,6 +184,10 @@ SETTINGS_GROUPS = [
     {"category": "Discord", "fields": [
         {"key": "DISCORD_TOKEN", "label": "Bot token", "secret": True},
         {"key": "DISCORD_GUILD_ID", "label": "Server (guild) ID"},
+        {"key": "DISCORD_OWNER", "label": "Your Discord account (exact)",
+         "help": "Your exact Discord username or display name. 'send me' / 'join my call' resolve to this — prevents Miko picking a similar name."},
+        {"key": "OWNER_ALIASES", "label": "Your other names",
+         "help": "Comma-separated names you go by (e.g. Dan,Roxan) that also mean you."},
         {"key": "TRUSTED_VOICE_USERS", "label": "Trusted users (Discord names)",
          "help": "Comma-separated display names allowed to command Miko via DM. Your owner name is always trusted."},
         {"key": "DISCORD_RPC_CLIENT_ID", "label": "Personal-account RPC client ID"},

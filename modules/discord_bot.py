@@ -416,21 +416,58 @@ def _run_coro(coro, timeout: int = 15):
 
 # ── Member / channel lookup ───────────────────────────────────────────────────
 
+_OWNER_ALIAS_WORDS = {"me", "myself", "my", "mine", "owner"}
+
+
+def _is_owner_alias(name_l: str) -> bool:
+    """Does this recipient name mean 'the owner'? Owner name + configured aliases."""
+    aliases = set(_OWNER_ALIAS_WORDS)
+    own = os.getenv("OWNER_NAME", "").strip().lower()
+    if own:
+        aliases.add(own)
+    for a in os.getenv("OWNER_ALIASES", "").split(","):
+        a = a.strip().lower()
+        if a:
+            aliases.add(a)
+    return name_l in aliases
+
+
 def _find_member(name: str) -> Optional[discord.Member]:
+    import re
     guild = bot.get_guild(GUILD_ID)
     if not guild:
         return None
-    name_l = name.lower().strip()
-    for m in guild.members:
-        if m.bot:
-            continue
+    name_l = (name or "").lower().strip()
+    if not name_l:
+        return None
+    members = [m for m in guild.members if not m.bot]
+
+    # Owner references ("me", the owner name, configured aliases) resolve ONLY to the
+    # explicitly configured owner account — never a loose match. This stops "Dan"/"me"
+    # from landing on an unrelated user like "danikm2" via substring matching.
+    owner_handle = os.getenv("DISCORD_OWNER", "").strip().lower()
+    if _is_owner_alias(name_l):
+        if owner_handle:
+            for m in members:
+                if m.display_name.lower() == owner_handle or m.name.lower() == owner_handle:
+                    return m
+            return None        # owner handle set but not found → don't guess
+        # no explicit handle: only an EXACT match on the owner name, never fuzzy
+        for m in members:
+            if m.display_name.lower() == name_l or m.name.lower() == name_l:
+                return m
+        return None
+
+    # 1) exact match on display name or username
+    for m in members:
         if m.display_name.lower() == name_l or m.name.lower() == name_l:
             return m
-    for m in guild.members:
-        if m.bot:
-            continue
-        if name_l in m.display_name.lower() or name_l in m.name.lower():
-            return m
+    # 2) whole-word match only — so "dan" won't match "danikm2"; skip very short queries
+    if len(name_l) >= 3:
+        pat = re.compile(r"\b" + re.escape(name_l) + r"\b")
+        for m in members:
+            if pat.search(m.display_name.lower()) or pat.search(m.name.lower()):
+                return m
     return None
 
 
