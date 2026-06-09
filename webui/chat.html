@@ -475,6 +475,23 @@
     border-radius: 3px; font: inherit; font-size: 11px; padding: 1px 7px; cursor: pointer; }
   .ptt-toggle:hover, .ptt-key:hover { border-color: var(--amber); color: var(--amber); }
   .ptt-toggle.on { background: var(--amber); border-color: var(--amber); color: #0b0b0b; }
+  /* ── Attachments (send files/images) ── */
+  .attach-strip { display: none; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .attach-strip.show { display: flex; }
+  .att-chip { display: inline-flex; align-items: center; gap: 7px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; font-size: 11.5px;
+    color: var(--text2); max-width: 230px; }
+  .att-chip img { width: 28px; height: 28px; object-fit: cover; border-radius: 3px; flex: none; }
+  .att-chip .att-ic { width: 16px; height: 16px; flex: none; color: var(--text3); }
+  .att-chip .att-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .att-chip .att-x { cursor: pointer; color: var(--text3); font-size: 13px; line-height: 1; flex: none; }
+  .att-chip .att-x:hover { color: var(--red, #e06c75); }
+  .inputbar.dragover { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
+  /* attachments shown inside a sent user bubble */
+  .ub-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+  .ub-atts img { max-width: 160px; max-height: 120px; border-radius: 4px; display: block; }
+  .ub-att-file { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text3);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 7px; font-family: var(--mono); }
   .ptt-key { margin-left: -2px; font-family: var(--mono); }
   /* full-width input on top; mic + approve flow inline on the next line */
   .pc-next { flex-direction: row; flex-wrap: wrap; align-items: center; }
@@ -1087,8 +1104,13 @@
             <button type="button" class="as-btn agents-go" id="agents-launch">⛬ Launch sub-agents</button>
           </div>
         </div>
+        <div id="attach-strip" class="attach-strip"></div>
+        <input type="file" id="attach-input" multiple style="display:none">
         <div class="inputbar">
           <textarea id="input" rows="1" placeholder="Message Miko…"></textarea>
+          <button class="mic attach" id="attach-btn" type="button" aria-label="Attach files or images" title="Attach files or images">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.4 6.3 6.6 11a2.55 2.55 0 0 1-3.6-3.6l4.9-4.9a1.7 1.7 0 0 1 2.4 2.4l-4.8 4.8a.85.85 0 0 1-1.2-1.2l4.3-4.3" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <button class="mic" id="mic-btn" type="button" aria-label="Dictate" title="Hands-free dictation — speak, then say &quot;end dictation&quot; to send">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
               <path d="M7 1.2a1.8 1.8 0 0 0-1.8 1.8v3.4a1.8 1.8 0 1 0 3.6 0V3A1.8 1.8 0 0 0 7 1.2Z" fill="currentColor"/>
@@ -1429,11 +1451,22 @@ function renderBotText(host, content) {
 
 function stampFrom(ts) { const d = ts ? new Date(ts) : new Date(); return isNaN(d) ? new Date() : d; }
 
-function addUser(text, ts) {
+function addUser(text, ts, atts) {
   const row = document.createElement('div'); row.className = 'row user';
   const c = document.createElement('div'); c.className = 'content';
   const wrap = document.createElement('div'); wrap.className = 'user-bubble-wrap';
   const b = document.createElement('div'); b.className = 'user-bubble'; b.textContent = text;
+  if (atts && atts.length) {
+    const box = document.createElement('div'); box.className = 'ub-atts';
+    atts.forEach(a => {
+      if ((a.mime || '').startsWith('image/')) {
+        const im = document.createElement('img'); im.src = 'data:' + a.mime + ';base64,' + a.data; im.title = a.name; box.appendChild(im);
+      } else {
+        const f = document.createElement('span'); f.className = 'ub-att-file'; f.textContent = '📎 ' + a.name; box.appendChild(f);
+      }
+    });
+    b.appendChild(box);
+  }
   wrap.appendChild(b); c.appendChild(wrap);
   const st = document.createElement('div'); st.className = 'stamp'; st.textContent = fmtTime(stampFrom(ts));
   c.appendChild(st); row.appendChild(c);
@@ -1647,8 +1680,9 @@ function handleChatEvent(c, ev) {
 }
 
 async function send() {
-  const input = $('#input'), text = input.value.trim();
-  if (!text) return;
+  const input = $('#input'), typed = input.value.trim();
+  if (!typed && !_attach.length) return;
+  const text = typed || 'Take a look at the attached file(s).';
   // Mid-run pair session: queue the message for Miko instead of being blocked by busy.
   if (pairMode && pairStreaming && curCodeToken) {
     input.value = ''; input.style.height = 'auto'; refreshSend();
@@ -1658,8 +1692,10 @@ async function send() {
   if ($('#send-btn').dataset.busy === '1') return;
   saveCfg();
   if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
-  input.value = ''; input.style.height = 'auto'; refreshSend();
-  addUser(text);
+  input.value = ''; input.style.height = 'auto';
+  const atts = _attach.slice();          // snapshot, then clear the composer
+  _attach = []; renderAttach(); refreshSend();
+  addUser(text, null, atts);
   if (pairMode) { sendCode(text); return; }
   if (asSkills.includes('deep-research')) { sendResearch(text); return; }
   const c = addActivityCard();
@@ -1677,6 +1713,7 @@ async function send() {
         allow_actions: $('#allow-actions').classList.contains('on'),
         workspace: workspace,
         agent: asAgent, skills: asSkills, effort: asEffort, approval: approveMode, thinking: thinkMode,
+        attachments: atts.map(a => ({ name: a.name, mime: a.mime, data: a.data })),
       }),
     });
     if (!resp.ok || !resp.body) throw new Error('Stream unavailable (HTTP ' + resp.status + ')');
@@ -2247,7 +2284,62 @@ function clearChatClick() {
   _clearTimer = setTimeout(disarmClear, 3500);
 }
 
-function refreshSend() { $('#send-btn').classList.toggle('can', $('#input').value.trim().length > 0); }
+function refreshSend() { $('#send-btn').classList.toggle('can', $('#input').value.trim().length > 0 || _attach.length > 0); }
+
+// ── Attachments: send files/images to Miko (with model-capability fallback) ───
+let _attach = [];                          // [{name, mime, data(base64), size}]
+const _ATT_MAX = 12 * 1024 * 1024;         // 12 MB per file
+const _ATT_TOTAL = 24 * 1024 * 1024;       // 24 MB total
+function _attTotal() { return _attach.reduce((n, a) => n + (a.size || 0), 0); }
+function renderAttach() {
+  const strip = $('#attach-strip'); strip.innerHTML = '';
+  if (!_attach.length) { strip.classList.remove('show'); return; }
+  strip.classList.add('show');
+  _attach.forEach((a, i) => {
+    const chip = document.createElement('div'); chip.className = 'att-chip';
+    if ((a.mime || '').startsWith('image/')) {
+      const im = document.createElement('img'); im.src = 'data:' + a.mime + ';base64,' + a.data; chip.appendChild(im);
+    } else {
+      const ic = document.createElement('span'); ic.className = 'att-ic'; ic.textContent = '📄'; chip.appendChild(ic);
+    }
+    const nm = document.createElement('span'); nm.className = 'att-nm'; nm.textContent = a.name; chip.appendChild(nm);
+    const x = document.createElement('span'); x.className = 'att-x'; x.textContent = '✕';
+    x.addEventListener('click', () => { _attach.splice(i, 1); renderAttach(); refreshSend(); });
+    chip.appendChild(x); strip.appendChild(chip);
+  });
+}
+function _readFile(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve({
+      name: file.name || 'file', mime: file.type || 'application/octet-stream',
+      data: String(r.result || '').split(',')[1] || '', size: file.size || 0,
+    });
+    r.onerror = reject; r.readAsDataURL(file);
+  });
+}
+async function addAttachments(fileList) {
+  for (const f of Array.from(fileList || [])) {
+    if (f.size > _ATT_MAX) { alert('"' + f.name + '" is larger than 12 MB — skipped.'); continue; }
+    if (_attTotal() + f.size > _ATT_TOTAL) { alert('Attachments exceed 24 MB total — "' + f.name + '" skipped.'); continue; }
+    try { _attach.push(await _readFile(f)); } catch (e) { /* skip */ }
+  }
+  renderAttach(); refreshSend();
+}
+$('#attach-btn').addEventListener('click', () => $('#attach-input').click());
+$('#attach-input').addEventListener('change', e => { addAttachments(e.target.files); e.target.value = ''; });
+$('#input').addEventListener('paste', e => {
+  const items = (e.clipboardData && e.clipboardData.items) || [];
+  const imgs = [];
+  for (const it of items) { if (it.kind === 'file' && (it.type || '').startsWith('image/')) { const f = it.getAsFile(); if (f) imgs.push(f); } }
+  if (imgs.length) { e.preventDefault(); addAttachments(imgs); }
+});
+(function () {   // drag & drop onto the composer
+  const bar = $('.inputbar'); if (!bar) return;
+  ['dragenter', 'dragover'].forEach(ev => bar.addEventListener(ev, e => { e.preventDefault(); bar.classList.add('dragover'); }));
+  ['dragleave', 'drop'].forEach(ev => bar.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || e.target === bar) bar.classList.remove('dragover'); }));
+  bar.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) addAttachments(e.dataTransfer.files); });
+})();
 
 // ── Session monitor (tokens + time) ────────────────────────
 function monAll() { try { return JSON.parse(localStorage.getItem('miko_monitor') || '{}'); } catch (e) { return {}; } }

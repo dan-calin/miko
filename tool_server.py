@@ -239,6 +239,7 @@ def _build_app():
             effort=(body.get("effort") or "standard").strip(),
             approval=bool(body.get("approval", False)),
             thinking=bool(body.get("thinking", False)),
+            attachments=body.get("attachments") or [],
         )
         return JSONResponse(result)
 
@@ -282,6 +283,7 @@ def _build_app():
                 (body.get("effort") or "standard").strip(),
                 bool(body.get("approval", False)),
                 bool(body.get("thinking", False)),
+                body.get("attachments") or [],
                 should_cancel=should_cancel,
             )
 

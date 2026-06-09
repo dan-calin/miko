@@ -16,6 +16,7 @@ tools (delete, send message, shutdown, …) require the per-session "allow actio
 flag, since a text UI has no voice-confirmation step.
 """
 
+import base64
 import json
 import logging
 import os
@@ -697,11 +698,113 @@ def _mcp_tools(protocol: str) -> list:
         return []
 
 
+# ── Attachments (images / files the user sends with a message) ────────────────
+
+_TEXT_EXT = {
+    ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".log", ".py", ".js",
+    ".ts", ".tsx", ".jsx", ".html", ".htm", ".css", ".xml", ".yaml", ".yml",
+    ".ini", ".cfg", ".toml", ".sh", ".bat", ".ps1", ".java", ".c", ".cpp", ".h",
+    ".hpp", ".go", ".rs", ".rb", ".php", ".sql", ".env", ".gitignore",
+}
+
+
+def _supports_vision(provider: str, model: str, base_url: str = "") -> bool:
+    """Whether the selected model can natively take image input. Cautious: only
+    say yes where we're confident (Gemini, real Claude, OpenAI's 4o/o-series).
+    Everything else (MiniMax, generic OpenAI-compatible) gets the describe fallback."""
+    m = (model or "").lower()
+    b = (base_url or "").lower()
+    if "minimax" in b or m.startswith(("minimax", "abab")):
+        return False
+    if provider == "gemini":
+        return True
+    if provider == "anthropic":
+        return m.startswith("claude")          # claude-3+ are all vision-capable
+    # openai-compatible
+    if not b or "api.openai.com" in b:
+        return any(t in m for t in ("4o", "4.1", "4-turbo", "o1", "o3", "o4", "gpt-5"))
+    return False
+
+
+def _is_textual(mime: str, name: str) -> bool:
+    if (mime or "").startswith("text/"):
+        return True
+    if mime in ("application/json", "application/xml", "application/javascript"):
+        return True
+    return os.path.splitext(name or "")[1].lower() in _TEXT_EXT
+
+
+def _describe_image(raw: bytes, mime: str) -> str:
+    """Fallback for models that can't see: caption an image via Gemini so a
+    text-only model still gets its content. Returns '' if no Gemini key."""
+    try:
+        from config import CONFIG
+        gkey = getattr(CONFIG, "gemini_api_key", "") or os.getenv("LLM_API_KEY", "")
+    except Exception:
+        gkey = os.getenv("LLM_API_KEY", "")
+    if not gkey:
+        return ""
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=gkey)
+        resp = client.models.generate_content(
+            model=os.getenv("MIKO_DICTATION_MODEL", "gemini-2.5-flash"),
+            contents=[types.Part.from_bytes(data=raw, mime_type=mime),
+                      types.Part(text="Describe this image thoroughly for someone who can't "
+                                      "see it. Transcribe any visible text verbatim.")],
+        )
+        return (resp.text or "").strip()
+    except Exception as e:
+        logger.warning(f"image describe fallback failed: {e}")
+        return ""
+
+
+def _prepare_attachments(attachments, provider, model, base_url, message):
+    """Split user attachments into native `media` (for vision models) and text the
+    model can read. Returns (media, augmented_message). Images on a non-vision model
+    are captioned via Gemini; text files are inlined; unreadable types get a note."""
+    media, extra = [], []
+    can_see = _supports_vision(provider, model, base_url)
+    for att in (attachments or []):
+        name = att.get("name") or "file"
+        mime = (att.get("mime") or "").lower()
+        try:
+            raw = base64.b64decode(att.get("data") or "")
+        except Exception:
+            continue
+        if not raw:
+            continue
+        if mime.startswith("image/"):
+            if can_see:
+                media.append({"mime": mime, "data": raw})
+            else:
+                desc = _describe_image(raw, mime)
+                extra.append(
+                    f"[Attached image '{name}' — the current model can't view images, so here "
+                    f"is a description:\n{desc}]" if desc else
+                    f"[User attached image '{name}', but this model can't view images "
+                    f"and no image reader is configured.]")
+        elif mime == "application/pdf" and provider == "gemini" and can_see:
+            media.append({"mime": mime, "data": raw})        # Gemini reads PDFs natively
+        elif _is_textual(mime, name):
+            txt = raw.decode("utf-8", errors="replace")
+            if len(txt) > 20000:
+                txt = txt[:20000] + "\n… (truncated)"
+            extra.append(f"[Attached file '{name}']\n```\n{txt}\n```")
+        else:
+            extra.append(f"[User attached '{name}' ({mime or 'unknown type'}); this model "
+                         f"can't read this file type.]")
+    if extra:
+        message = (message + "\n\n" + "\n\n".join(extra)).strip()
+    return media, message
+
+
 def chat(router, session_id: str, message: str, provider: str, model: str,
          api_key: str = "", base_url: str = "", allow_actions: bool = False,
          owner_name: str = "Roxan", language: str = "en", workspace: str = "",
          agent: str = "", skills=None, effort: str = "standard", approval: bool = False,
-         thinking: bool = False, emit=None, should_cancel=None) -> dict:
+         thinking: bool = False, attachments=None, emit=None, should_cancel=None) -> dict:
     """Run one chat turn. Returns {"reply": str, "tools_used": [...], "error": str|None}.
 
     emit: optional callback(event_dict) for live progress (tool_start/tool_end/round).
@@ -761,13 +864,21 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
     rounds = _EFFORT_ROUNDS.get(effort, _MAX_ROUNDS)   # effort → tool-call budget
     pending: list = []                                 # actions awaiting approval
 
+    # Fold user attachments into native image input + readable text (capability-aware).
+    media = []
+    if attachments:
+        try:
+            media, message = _prepare_attachments(attachments, provider, model, base, message)
+        except Exception as e:
+            logger.warning(f"attachment processing failed: {e}")
+
     try:
         if preset["protocol"] == "gemini":
-            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, thinking)
+            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, thinking, media=media)
         elif preset["protocol"] == "anthropic":
-            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, thinking)
+            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, thinking, media=media)
         else:
-            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel)
+            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, media=media)
     except Exception as e:
         logger.error(f"chat() error ({provider}/{model}): {e}", exc_info=True)
         return {"reply": "", "tools_used": used, "files": files, "usage": usage,
@@ -866,14 +977,21 @@ def _accum_usage(usage: dict, resp, proto: str) -> None:
 
 # ── OpenAI-compatible (OpenAI, DeepSeek, Kimi, custom) ────────────────────────
 
-def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None) -> str:
+def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None, media=None) -> str:
     from openai import OpenAI
     from tools import ALL_TOOL_DECLARATIONS_OPENAI
 
     client = OpenAI(api_key=key, base_url=base or None)
     messages = [{"role": "system", "content": system}]
     messages += [{"role": m["role"], "content": m["content"]} for m in history]
-    messages.append({"role": "user", "content": message})
+    if media:
+        content = [{"type": "text", "text": message}]
+        for mm in media:
+            b64 = base64.b64encode(mm["data"]).decode()
+            content.append({"type": "image_url", "image_url": {"url": f"data:{mm['mime']};base64,{b64}"}})
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": message})
     tools = (ALL_TOOL_DECLARATIONS_OPENAI + _mcp_tools("openai")) or None
     rk = _reasoning_kwargs("openai", model, effort)   # native reasoning_effort (if supported)
 
@@ -919,13 +1037,23 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
 
 # ── Anthropic-compatible (MiniMax /anthropic) ────────────────────────────────
 
-def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None, thinking=False) -> str:
+def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None, thinking=False, media=None) -> str:
     import anthropic
     from tools import ALL_TOOL_DECLARATIONS_ANTHROPIC
 
     client = anthropic.Anthropic(api_key=key, base_url=base or None)
     messages = [{"role": m["role"], "content": m["content"]} for m in history]
-    messages.append({"role": "user", "content": message})
+    if media:
+        content = [{"type": "text", "text": message}]
+        for mm in media:
+            b64 = base64.b64encode(mm["data"]).decode()
+            if mm["mime"] == "application/pdf":
+                content.append({"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b64}})
+            else:
+                content.append({"type": "image", "source": {"type": "base64", "media_type": mm["mime"], "data": b64}})
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": message})
     tools = (ALL_TOOL_DECLARATIONS_ANTHROPIC + _mcp_tools("anthropic")) or None
     rk = {**_reasoning_kwargs("anthropic", model, effort),       # real-Claude effort (if supported)
           **_thinking_kwargs("anthropic", model, thinking)}      # thinking toggle (MiniMax M3 + Claude)
@@ -973,7 +1101,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
-def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None, thinking=False) -> str:
+def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None, thinking=False, media=None) -> str:
     from google import genai
     from google.genai import types
     from tools import ALL_TOOL_DECLARATIONS
@@ -986,7 +1114,13 @@ def _run_gemini(router, key, model, system, history, message, allow_actions, use
         )
         for m in history
     ]
-    contents.append(types.Content(role="user", parts=[types.Part(text=message)]))
+    user_parts = [types.Part(text=message)]
+    for mm in (media or []):
+        try:
+            user_parts.append(types.Part.from_bytes(data=mm["data"], mime_type=mm["mime"]))
+        except Exception as e:
+            logger.warning(f"gemini media part skipped: {e}")
+    contents.append(types.Content(role="user", parts=user_parts))
 
     _decls = ALL_TOOL_DECLARATIONS + _mcp_tools("gemini")
     cfg_kwargs = {
