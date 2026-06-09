@@ -318,7 +318,12 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
             "programat sau repetat ('în fiecare dimineață', 'amintește-mi la 6', 'verifică la 2 ore', "
             "'pe 8 să faci…'), TREBUIE să apelezi schedule_task. Nu spune niciodată că 'urmărești', "
             "că 'o să te anunț când vine' sau că ceva e 'programat' decât dacă unealta chiar a rulat "
-            "și a returnat succes ACUM. Dacă unealta eșuează sau lipsește, spune asta direct."
+            "și a returnat succes ACUM. Dacă unealta eșuează sau lipsește, spune asta direct. "
+            "CITIREA FIȘIERELOR: ca să citești conținutul unui fișier folosește file_op cu "
+            "action='read' (sau read_note pentru notițe, read_email pentru email). NU rula comenzi "
+            "shell ca să citești un fișier — fără run_command cu 'type', 'cat', 'more', "
+            "'Get-Content'; e unealta greșită și cere o aprobare inutilă. Folosește run_command doar "
+            "pentru ce nu are o unealtă dedicată."
         )
         if workspace:
             base += (
@@ -353,7 +358,11 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
         "'remind me at 6', 'check X every 2 hours', 'on the 8th do…'), you MUST call schedule_task. "
         "NEVER say you're 'watching', 'keeping an eye out', 'will ping you when it arrives', or that "
         "something is 'scheduled/set up' unless that tool actually ran and returned success THIS "
-        "turn. If the tool fails or isn't available, say so plainly — don't pretend it's running."
+        "turn. If the tool fails or isn't available, say so plainly — don't pretend it's running. "
+        "READING FILES: to read a file's contents use file_op with action='read' (or read_note for "
+        "vault notes, read_email for email). NEVER run a shell command to read a file — no "
+        "run_command with 'type', 'cat', 'more', 'Get-Content' — that's the wrong tool and forces a "
+        "needless approval. Reserve run_command for things with no dedicated tool."
     )
     if workspace:
         base += (
