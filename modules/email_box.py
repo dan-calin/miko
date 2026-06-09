@@ -163,13 +163,13 @@ def list_emails(limit: int = 10, unread_only: bool = False, folder: str = "INBOX
     if not cfg.imap_ready():
         return "Email isn't configured. Set EMAIL_USER / EMAIL_PASS / EMAIL_IMAP_HOST in .env."
     import email as _email
+    M = None
     try:
         M = _imap()
         M.select(folder, readonly=True)
         typ, data = M.search(None, "UNSEEN" if unread_only else "ALL")
         ids = data[0].split()[-int(limit or 10):][::-1]
         if not ids:
-            M.logout()
             return "No emails found." if not unread_only else "No unread emails."
         lines = [f"{'Unread' if unread_only else 'Recent'} emails:"]
         for n, i in enumerate(ids, 1):
@@ -179,11 +179,16 @@ def list_emails(limit: int = 10, unread_only: bool = False, folder: str = "INBOX
             subj = _dec(hdr.get("Subject", "(no subject)"))
             date = _dec(hdr.get("Date", ""))[:25]
             lines.append(f"{n}. {subj} — {frm} ({date})")
-        M.logout()
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"list_emails error: {e}")
         return f"Couldn't reach the mailbox: {e}"
+    finally:
+        if M is not None:
+            try:
+                M.logout()
+            except Exception:
+                pass
 
 
 def read_email(query: str) -> str:
@@ -191,6 +196,7 @@ def read_email(query: str) -> str:
     if not cfg.imap_ready():
         return "Email isn't configured."
     import email as _email
+    M = None
     try:
         M = _imap()
         M.select("INBOX", readonly=True)
@@ -200,11 +206,9 @@ def read_email(query: str) -> str:
             typ, data = M.search(None, "FROM", f'"{query}"')
             ids = data[0].split()
         if not ids:
-            M.logout()
             return f"No email matching '{query}'."
         typ, md = M.fetch(ids[-1], "(RFC822)")
         msg = _email.message_from_bytes(md[0][1])
-        M.logout()
         frm = _dec(msg.get("From", ""))
         subj = _dec(msg.get("Subject", "(no subject)"))
         body = _body_text(msg).strip()
@@ -214,6 +218,12 @@ def read_email(query: str) -> str:
     except Exception as e:
         logger.error(f"read_email error: {e}")
         return f"Couldn't read that email: {e}"
+    finally:
+        if M is not None:
+            try:
+                M.logout()
+            except Exception:
+                pass
 
 
 def search_emails(query: str) -> str:
@@ -221,13 +231,13 @@ def search_emails(query: str) -> str:
     if not cfg.imap_ready():
         return "Email isn't configured."
     import email as _email
+    M = None
     try:
         M = _imap()
         M.select("INBOX", readonly=True)
         typ, data = M.search(None, "TEXT", f'"{query}"')
         ids = data[0].split()[-10:][::-1]
         if not ids:
-            M.logout()
             return f"No emails matching '{query}'."
         lines = [f"Emails matching '{query}':"]
         for i in ids:
@@ -235,11 +245,16 @@ def search_emails(query: str) -> str:
             hdr = _email.message_from_bytes(md[0][1])
             frm = parseaddr(_dec(hdr.get("From", "")))[1]
             lines.append(f"- {_dec(hdr.get('Subject', '(no subject)'))} — {frm}")
-        M.logout()
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"search_emails error: {e}")
         return f"Search failed: {e}"
+    finally:
+        if M is not None:
+            try:
+                M.logout()
+            except Exception:
+                pass
 
 
 def _recent_messages(days: int, cap: int = 30) -> list:

@@ -142,6 +142,16 @@ def cancel_email_watch(which: str) -> str:
 
 # ── Matching + poll ─────────────────────────────────────────────────────────────
 
+def _msg_ts(raw: str):
+    """Email Date header → epoch float (tz-aware), or None."""
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(raw)
+        return dt.timestamp() if dt else None
+    except Exception:
+        return None
+
+
 def _strip_gmail_dots(text: str) -> str:
     """Gmail ignores dots in the local part, so 'a.b@gmail.com' == 'ab@gmail.com'.
     Normalize that inside any gmail/googlemail address in the string."""
@@ -193,13 +203,20 @@ def _notify(rule: dict, frm: str, subj: str, date: str, body: str = "") -> None:
         logger.warning(f"email-watch notify failed: {e}")
 
 
+_poll_count = 0
+
+
 def _poll_once() -> None:
+    global _poll_count
+    _poll_count += 1
     reg = _load()
     active = {k: v for k, v in reg.items() if v.get("active")}
     if not active:
+        logger.debug(f"email-watch poll #{_poll_count}: no active watches")
         return
     from modules.email_box import _Cfg, _imap, _dec
     if not _Cfg().imap_ready():
+        logger.warning("email-watch poll: email isn't configured (EMAIL_USER/PASS/IMAP)")
         return
     import email as _email
     from email.utils import parseaddr
@@ -214,13 +231,25 @@ def _poll_once() -> None:
     since_dt = max(since_dt - timedelta(minutes=5), datetime.now() - timedelta(days=7))
     since = since_dt.strftime("%d-%b-%Y")
 
+    # Per-rule creation epoch — a watch must only fire for mail that arrives AFTER it
+    # was set, never the backlog already in the inbox (a 2-min grace covers clock skew).
+    GRACE = 120
+    created_ts = {}
+    for rid, rule in active.items():
+        try:
+            created_ts[rid] = datetime.fromisoformat(rule.get("created", "")).timestamp() - GRACE
+        except Exception:
+            created_ts[rid] = 0
+
     M = None
+    fired = 0
     try:
         M = _imap()
         M.select("INBOX", readonly=True)
         typ, data = M.uid("SEARCH", None, f"(SINCE {since})")
         uids = (data[0].split() if data and data[0] else [])[-50:]
         if not uids:
+            logger.info(f"email-watch poll #{_poll_count}: {len(active)} watch(es), 0 msgs since {since}")
             return
         changed = False
         for uid in uids:
@@ -233,10 +262,18 @@ def _poll_once() -> None:
             subj = _dec(hdr.get("Subject", ""))
             mid = (hdr.get("Message-ID") or hdr.get("Message-Id") or uid.decode(errors="replace")).strip()
             date = _dec(hdr.get("Date", ""))[:30]
+            msg_ts = _msg_ts(hdr.get("Date", ""))
             for rid, rule in active.items():
                 if mid in rule.get("seen", []):
                     continue
                 if _matches(rule, frm_raw + " " + frm, subj):
+                    # Ignore (but remember) mail that predates the watch — don't fire on
+                    # the backlog, and don't let it burn a fire-once watch.
+                    if msg_ts and created_ts.get(rid) and msg_ts < created_ts[rid]:
+                        rule.setdefault("seen", []).append(mid)
+                        rule["seen"] = rule["seen"][-_SEEN_CAP:]
+                        changed = True
+                        continue
                     snippet = _fetch_snippet(M, uid)
                     _notify(rule, frm or frm_raw, subj or "(no subject)", date, snippet)
                     rule.setdefault("seen", []).append(mid)
@@ -244,10 +281,13 @@ def _poll_once() -> None:
                     if not rule.get("recurring"):
                         rule["active"] = False
                     changed = True
+                    fired += 1
         if changed:
             _save(reg)   # reg holds the same dict objects as `active` → updates persist
+        logger.info(f"email-watch poll #{_poll_count}: {len(active)} watch(es), scanned "
+                    f"{len(uids)} msg(s) since {since}, fired {fired}")
     except Exception as e:
-        logger.warning(f"email-watch poll error: {e}")
+        logger.warning(f"email-watch poll #{_poll_count} ERROR: {e}")
     finally:
         if M is not None:
             try:
@@ -264,13 +304,16 @@ def _interval() -> int:
 
 
 def _loop() -> None:
-    logger.info("Email-watch daemon started")
+    logger.info(f"Email-watch daemon started (polling every {_interval()}s)")
     while True:
         try:
             _poll_once()
-        except Exception as e:
+        except BaseException as e:                 # never let the poll loop die
             logger.warning(f"email-watch loop error: {e}")
-        time.sleep(_interval())
+        try:
+            time.sleep(_interval())
+        except BaseException:
+            time.sleep(120)
 
 
 def start() -> None:
