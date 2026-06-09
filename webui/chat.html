@@ -723,7 +723,8 @@
   }
   .offline-banner.show { display: flex; }
   /* ── Settings ── */
-  .settings-cog { margin-left: auto; display: inline-flex; align-items: center; gap: 4px;
+  .wm-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+  .settings-cog { display: inline-flex; align-items: center; gap: 4px;
     background: var(--surface); border: 1px solid var(--border); color: var(--text2);
     font-size: 11px; font-weight: 600; cursor: pointer; padding: 3px 9px; border-radius: 4px; line-height: 1; }
   .settings-cog .cog-ic { font-size: 12px; }
@@ -760,6 +761,29 @@
     border-radius: 4px; padding: 7px 18px; cursor: pointer; font: inherit; font-size: 12px; }
   .settings-save:hover { background: #d4b063; }
   .settings-save:disabled { opacity: .6; cursor: default; }
+  /* ── Scheduler ── */
+  .task-new textarea { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 7px 9px; font: inherit; font-size: 12px; resize: vertical; }
+  .task-new textarea:focus { outline: none; border-color: var(--amber); }
+  .task-new-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .task-hint { flex: 1; font-size: 11px; color: var(--text3); }
+  .task-preview { display: none; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--amber);
+    border-radius: 5px; background: color-mix(in srgb, var(--amber) 7%, transparent); }
+  .task-preview.show { display: block; }
+  .task-preview .tp-sched { font-family: var(--mono); font-size: 11px; color: var(--amber); }
+  .task-preview .tp-prompt { font-size: 12px; color: var(--text2); margin: 3px 0 8px; }
+  .task-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .task-row .tr-main { flex: 1; min-width: 0; }
+  .task-row .tr-sched { font-family: var(--mono); font-size: 10px; color: var(--text2); }
+  .task-row .tr-sched.paused { color: var(--text3); }
+  .task-row .tr-prompt { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .task-row .tr-next { font-size: 10px; color: var(--text3); }
+  .task-row .tr-btns { display: flex; gap: 4px; flex: none; }
+  .task-row .tr-btns button { background: none; border: 1px solid var(--border); color: var(--text3);
+    border-radius: 3px; font-size: 10px; padding: 2px 6px; cursor: pointer; }
+  .task-row .tr-btns button:hover { border-color: var(--amber); color: var(--amber); }
+  .task-row .tr-btns button.del:hover { border-color: var(--red,#e06c75); color: var(--red,#e06c75); }
+  .task-empty { font-size: 12px; color: var(--text3); padding: 10px 0; }
   .offline-banner .ob-mark { color: var(--amber); font-size: 14px; flex-shrink: 0; }
   .offline-banner .ob-text { flex: 1; line-height: 1.5; }
   .offline-banner code {
@@ -793,7 +817,10 @@
         <rect x="6.6" y="6.6" width="2.8" height="2.8" fill="#c4a257" />
       </svg>
       <span>MIKO</span>
-      <button class="settings-cog" id="settings-cog" type="button" title="Settings — API keys & credentials"><span class="cog-ic">⚙</span> Settings</button>
+      <span class="wm-actions">
+        <button class="settings-cog" id="tasks-btn" type="button" title="Scheduled tasks — automation"><span class="cog-ic">⏰</span> Tasks</button>
+        <button class="settings-cog" id="settings-cog" type="button" title="Settings — API keys & credentials"><span class="cog-ic">⚙</span> Settings</button>
+      </span>
     </div>
     <div class="rule"></div>
 
@@ -993,6 +1020,29 @@
     </div>
   </div>
 
+  <!-- ── Scheduler modal (recurring tasks) ────────────────── -->
+  <div id="tasks-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-title">Scheduled tasks</span>
+        <button class="modal-close" id="tasks-close" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-note">Miko runs a task on a schedule and DMs you the result on Discord. Describe it in plain language, or it'll keep your existing tasks below. Changes are live — no restart needed.</div>
+      <div class="modal-body" id="tasks-body">
+        <div class="task-new">
+          <textarea id="task-nl" rows="2" spellcheck="false" placeholder="e.g. every morning at 8 summarize my unread emails &#10;or: every Monday at 9 plan my week"></textarea>
+          <div class="task-new-row">
+            <span class="task-hint" id="task-hint"></span>
+            <button class="set-link task-parse" id="task-parse" type="button" style="width:auto;margin:0">Preview schedule</button>
+          </div>
+          <div id="task-preview" class="task-preview"></div>
+        </div>
+        <div class="set-group-title" style="margin-top:14px">Your tasks</div>
+        <div id="task-list"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Workspace overlay ───────────────────────────────── -->
   <div id="workspace">
     <div class="ws-head">
@@ -1038,6 +1088,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
+const escHtml = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const messagesEl = $('#messages'), chatEl = $('#chat');
 let MODELS = {}, ENV = {};   // ENV: { ENV_VAR_NAME: value } loaded from .env
 
@@ -2797,6 +2848,90 @@ $('#settings-close').addEventListener('click', closeSettings);
 $('#settings-save').addEventListener('click', saveSettings);
 $('#settings-modal').addEventListener('click', e => { if (e.target === $('#settings-modal')) closeSettings(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#settings-modal').classList.contains('show')) closeSettings(); });
+
+// ── Scheduler (recurring tasks) panel ────────────────────────────────────────
+let _taskDraft = null;
+function _fmtNext(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000), now = Date.now() / 1000, diff = ts - now;
+  const when = d.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' });
+  if (diff < 0) return 'due';
+  if (diff < 3600) return when + ' (in ' + Math.max(1, Math.round(diff / 60)) + 'm)';
+  if (diff < 86400) return when + ' (in ' + Math.round(diff / 3600) + 'h)';
+  return when;
+}
+function openTasks() { $('#tasks-modal').classList.add('show'); loadTaskList(); }
+function closeTasks() { $('#tasks-modal').classList.remove('show'); $('#task-preview').classList.remove('show'); _taskDraft = null; }
+
+async function loadTaskList() {
+  const el = $('#task-list'); el.innerHTML = '<div class="task-empty">Loading…</div>';
+  let tasks = [];
+  try { tasks = (await (await fetch('/chat/tasks')).json()).tasks || []; }
+  catch (e) { el.innerHTML = '<div class="task-empty">Could not load tasks.</div>'; return; }
+  if (!tasks.length) { el.innerHTML = '<div class="task-empty">No scheduled tasks yet — describe one above.</div>'; return; }
+  el.innerHTML = '';
+  tasks.forEach(t => {
+    const row = document.createElement('div'); row.className = 'task-row';
+    const main = document.createElement('div'); main.className = 'tr-main';
+    const paused = t.status !== 'active';
+    main.innerHTML = '<div class="tr-prompt"></div>' +
+      '<div class="tr-sched' + (paused ? ' paused' : '') + '">' + escHtml(t.describe) + (paused ? ' · paused' : (t.status === 'done' ? ' · done' : '')) + '</div>' +
+      '<div class="tr-next">next: ' + (paused ? '—' : escHtml(_fmtNext(t.next_run))) + (t.run_count ? ' · ran ' + t.run_count + '×' : '') + '</div>';
+    main.querySelector('.tr-prompt').textContent = t.name || t.prompt;
+    const btns = document.createElement('div'); btns.className = 'tr-btns';
+    const mk = (label, action, cls) => { const b = document.createElement('button'); b.textContent = label; if (cls) b.className = cls; b.addEventListener('click', () => taskAction(t.id, action)); return b; };
+    btns.appendChild(mk('Run', 'run'));
+    btns.appendChild(mk(paused ? 'Resume' : 'Pause', paused ? 'resume' : 'pause'));
+    btns.appendChild(mk('✕', 'delete', 'del'));
+    row.append(main, btns); el.appendChild(row);
+  });
+}
+
+async function taskAction(id, action) {
+  try { await fetch('/chat/tasks/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, action }) }); }
+  catch (e) {}
+  loadTaskList();
+}
+
+async function parseTaskNL() {
+  const text = $('#task-nl').value.trim();
+  if (!text) { $('#task-hint').textContent = 'Describe the task first.'; return; }
+  const btn = $('#task-parse'); btn.disabled = true; $('#task-hint').textContent = 'Reading…';
+  try {
+    const r = await fetch('/chat/tasks/parse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    const d = await r.json();
+    if (d.error && !d.draft) { $('#task-hint').textContent = d.error; $('#task-preview').classList.remove('show'); return; }
+    _taskDraft = d.draft; $('#task-hint').textContent = '';
+    const pv = $('#task-preview');
+    pv.innerHTML = '<div class="tp-sched">' + escHtml(d.draft.describe) + '</div><div class="tp-prompt"></div>' +
+      '<button class="settings-save" id="task-create" type="button">Create task</button>';
+    pv.querySelector('.tp-prompt').textContent = d.draft.prompt;
+    pv.classList.add('show');
+    $('#task-create').addEventListener('click', createTaskFromDraft);
+  } catch (e) { $('#task-hint').textContent = 'Parse failed.'; }
+  finally { btn.disabled = false; }
+}
+
+async function createTaskFromDraft() {
+  if (!_taskDraft) return;
+  const d = _taskDraft, body = { schedule: d.schedule, prompt: d.prompt, name: d.name,
+    time: d.time, weekday: d.weekday, day: d.day, date: d.date,
+    interval_seconds: d.interval_seconds, cron: d.cron };
+  const btn = $('#task-create'); if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+  try {
+    const r = await fetch('/chat/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await r.json();
+    if (res.error) { $('#task-hint').textContent = res.error; if (btn) { btn.disabled = false; btn.textContent = 'Create task'; } return; }
+    $('#task-nl').value = ''; $('#task-preview').classList.remove('show'); _taskDraft = null;
+    loadTaskList();
+  } catch (e) { $('#task-hint').textContent = 'Create failed.'; if (btn) { btn.disabled = false; btn.textContent = 'Create task'; } }
+}
+
+$('#tasks-btn').addEventListener('click', openTasks);
+$('#tasks-close').addEventListener('click', closeTasks);
+$('#task-parse').addEventListener('click', parseTaskNL);
+$('#tasks-modal').addEventListener('click', e => { if (e.target === $('#tasks-modal')) closeTasks(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#tasks-modal').classList.contains('show')) closeTasks(); });
 
 // ── Voice dictation — push-to-talk or click (#6) ─────────────────────────────
 // Two engines: Web Speech (Chrome/Edge) streams text live as you speak; the
