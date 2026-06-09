@@ -53,15 +53,15 @@ def _print_banner():
     print("   ██║ ╚═╝ ██║██║██║  ██╗╚██████╔╝")
     print("   ╚═╝     ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝ ")
     print()
-    engine = os.getenv("MIKO_VOICE_ENGINE", "chat").strip().lower()
+    engine = os.getenv("MIKO_VOICE_ENGINE", "live").strip().lower()
     print(f"   Voice AI Agent v2.0 — {CONFIG.owner_name}'s Personal Assistant")
-    if engine == "live":
-        print(f"   Engine: Gemini Live ({CONFIG.live_model})")
-        print(f"   Voice : {CONFIG.voice_name}")
-    else:
+    if engine == "chat":
         vp = os.getenv("MIKO_VOICE_PROVIDER", "") or ("minimax" if CONFIG.minimax_api_key else "gemini")
         print(f"   Engine: chat brain (STT → {vp} → TTS)")
         print(f"   Voice : {os.getenv('MIKO_TTS_VOICE', '') or ('ro-RO-AlinaNeural' if CONFIG.language == 'ro' else 'en-US-JennyNeural')}")
+    else:
+        print(f"   Engine: Gemini Live ({CONFIG.live_model})")
+        print(f"   Voice : {CONFIG.voice_name}")
     print(f"   Lang  : {CONFIG.language}")
     print(f"   Mode  : {mode}")
     print(f"   Discord: {'enabled' if CONFIG.discord_token else 'disabled (no token)'}")
@@ -175,21 +175,21 @@ def main():
     mode_manager   = ModeManager(language=CONFIG.language)
     command_router = CommandRouter(CONFIG, speak_callback=None)
 
-    # Voice engine: "chat" (default) = STT → chat_backend brain → TTS, sharing all
-    # of chat mode's tool-routing/anti-hallucination fixes and surviving without a
-    # mic. "live" = the legacy Gemini Live realtime pipeline.
-    engine = os.getenv("MIKO_VOICE_ENGINE", "chat").strip().lower()
-    if engine == "live":
-        from core.audio_handler import AudioHandler
-        audio_handler = AudioHandler(
+    # Voice engine: "live" (default) = Gemini Live realtime audio — lowest latency.
+    # "chat" = STT → chat_backend brain → TTS; shares all chat fixes and runs on any
+    # provider, but each turn costs a few seconds (kept as an option).
+    engine = os.getenv("MIKO_VOICE_ENGINE", "live").strip().lower()
+    if engine == "chat":
+        from core.voice_chat import VoiceChat
+        audio_handler = VoiceChat(
             config=CONFIG,
             mode_manager=mode_manager,
             command_router=command_router,
             memory_file=CONFIG.memory_file,
         )
     else:
-        from core.voice_chat import VoiceChat
-        audio_handler = VoiceChat(
+        from core.audio_handler import AudioHandler
+        audio_handler = AudioHandler(
             config=CONFIG,
             mode_manager=mode_manager,
             command_router=command_router,

@@ -46,6 +46,11 @@ class AudioHandler:
         self.audio_in_queue: asyncio.Queue | None    = None
         self.out_queue: asyncio.Queue | None         = None
 
+        # Live-session resumption: Gemini periodically hands us an opaque handle;
+        # passing it back on reconnect restores the conversation instead of starting
+        # cold (the old behaviour lost all context on every preview-API drop).
+        self._resume_handle: str | None = None
+
         # Dedicated pool for (possibly slow) tool dispatch — RPC handshakes, HTTP
         # token refreshes, UI automation — so they never starve audio-I/O threads.
         from concurrent.futures import ThreadPoolExecutor
@@ -159,13 +164,40 @@ class AudioHandler:
         except Exception:
             pass
 
-        return types.LiveConnectConfig(
+        # Tool discipline — the same anti-hallucination rules the chat brain got.
+        # Voice was narrating actions ("sent it!") without calling tools; forbid it.
+        if is_en:
+            sys_prompt += (
+                "\n\n[TOOL DISCIPLINE]\n"
+                "Every action requires CALLING its tool in the CURRENT turn — sending a "
+                "Discord message, speaking on voice, running a command, anything. Saying "
+                "'done'/'sent' WITHOUT a tool call this turn is a hallucination — forbidden. "
+                "Repeats too: 'do it again' means call the tool again. Never claim a "
+                "capability is missing without checking your tool list — joining Discord "
+                "voice (join_voice), watching email (watch_email), scheduling (schedule_task) "
+                "all exist. To read a file use file_op with action='read', never a shell "
+                "'type'/'cat' command. If a tool fails, say so plainly."
+            )
+        else:
+            sys_prompt += (
+                "\n\n[DISCIPLINA UNELTELOR]\n"
+                "Orice acțiune cere APELAREA uneltei ei ÎN tura curentă — mesaj pe Discord, "
+                "vorbit pe voice, rulat o comandă, orice. Să zici 'gata'/'trimis' FĂRĂ apel "
+                "de unealtă în aceeași tură e halucinație — interzis. La fel repetările: "
+                "'fă din nou' înseamnă apelezi unealta din nou. Nu pretinde că o capabilitate "
+                "lipsește fără să verifici lista de unelte — intrat pe voice (join_voice), "
+                "urmărit emailuri (watch_email), programări (schedule_task) există. Pentru "
+                "citit fișiere folosește file_op cu action='read', niciodată 'type'/'cat' în "
+                "shell. Dacă o unealtă eșuează, spune direct."
+            )
+
+        cfg_kwargs = dict(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
             input_audio_transcription={},
             system_instruction=sys_prompt,
             tools=[{"function_declarations": ALL_TOOL_DECLARATIONS}],
-            session_resumption=types.SessionResumptionConfig(),
+            session_resumption=types.SessionResumptionConfig(handle=self._resume_handle),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -174,6 +206,14 @@ class AudioHandler:
                 )
             ),
         )
+        # Sliding-window compression keeps long sessions under the Live context cap —
+        # without it the server kills the session mid-conversation once it fills.
+        try:
+            cfg_kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
+                sliding_window=types.SlidingWindow())
+        except Exception as e:
+            logger.debug(f"context compression unavailable in this SDK: {e}")
+        return types.LiveConnectConfig(**cfg_kwargs)
 
     # ── Tool execution ────────────────────────────────────────────────────────
 
@@ -209,8 +249,12 @@ class AudioHandler:
     # ── Audio I/O coroutines ──────────────────────────────────────────────────
 
     async def _capture_mic(self) -> None:
-        """Reads microphone via sounddevice, pushes PCM chunks to out_queue."""
-        logger.info(f"Opening mic @ {self._config.send_sample_rate}Hz")
+        """Reads microphone via sounddevice, pushes PCM chunks to out_queue.
+
+        No mic (or mic open failure) must NOT kill the session: the old behaviour
+        raised, the TaskGroup died, and Miko looped connect→disconnect forever.
+        Now we warn once, keep the session alive (speak_text / Discord / daemons
+        all still work), and retry the mic every 30 s."""
         loop = asyncio.get_event_loop()
 
         def _callback(indata, frames, _time, status):
@@ -224,16 +268,39 @@ class AudioHandler:
                     {"data": raw, "mime_type": "audio/pcm;rate=16000"},
                 )
 
-        with sd.InputStream(
-            samplerate=self._config.send_sample_rate,
-            channels=1,
-            dtype="int16",
-            blocksize=self._config.chunk_size,
-            callback=_callback,
-        ):
-            logger.info("Mic open — listening...")
-            while True:
-                await asyncio.sleep(0.1)
+        warned = False
+        while True:
+            try:
+                stream = sd.InputStream(
+                    samplerate=self._config.send_sample_rate,
+                    channels=1,
+                    dtype="int16",
+                    blocksize=self._config.chunk_size,
+                    callback=_callback,
+                )
+                stream.start()
+            except Exception as e:
+                if not warned:
+                    warned = True
+                    logger.warning(f"No microphone available ({e}) — voice input off; "
+                                   f"retrying every 30s. Speech output still works.")
+                    print("[Miko] No microphone found — voice input is off (output, "
+                          "Discord and scheduled tasks still run). Plug one in and "
+                          "I'll pick it up within 30 seconds.")
+                await asyncio.sleep(30)
+                continue
+            warned = False
+            logger.info(f"Mic open @ {self._config.send_sample_rate}Hz — listening...")
+            try:
+                while stream.active:
+                    await asyncio.sleep(0.5)
+                logger.warning("Mic stream stopped (device unplugged?) — will retry")
+            finally:
+                try:
+                    stream.stop(); stream.close()
+                except Exception:
+                    pass
+            await asyncio.sleep(3)   # device vanished mid-session → re-probe
 
     async def _mic_to_session(self) -> None:
         """Forwards mic queue chunks to the Gemini Live WebSocket."""
@@ -289,6 +356,16 @@ class AudioHandler:
                 _buf: list[bytes] = []    # Holds audio chunks until wake word or turn end
 
                 async for response in turn:
+
+                    # ── Session-resumption handle (restore context on reconnect) ──
+                    sru = getattr(response, "session_resumption_update", None)
+                    if sru is not None and getattr(sru, "resumable", False):
+                        new_handle = getattr(sru, "new_handle", None)
+                        if new_handle:
+                            self._resume_handle = new_handle
+                    if getattr(response, "go_away", None) is not None:
+                        # Server is about to drop us; run() reconnects with the handle.
+                        logger.info("Live server sent go_away — will resume after reconnect")
 
                     # ── Audio chunk ──────────────────────────────────────────
                     if response.data:
@@ -413,7 +490,11 @@ class AudioHandler:
     # ── Main run loop ─────────────────────────────────────────────────────────
 
     async def run(self) -> None:
-        """Main loop — connects, starts TaskGroup, reconnects on any error."""
+        """Main loop — connects, starts TaskGroup, reconnects on any error.
+
+        Reconnects resume the conversation via the session-resumption handle (so a
+        preview-API drop no longer wipes context), back off exponentially (3→30 s)
+        instead of hammering, and clear a stale handle if the server rejects it."""
         import winsound
 
         client = genai.Client(
@@ -421,9 +502,14 @@ class AudioHandler:
             http_options={"api_version": "v1beta"},
         )
 
+        backoff = 3
+        consecutive_failures = 0
+
         while True:
+            session_started = time.monotonic()
             try:
-                logger.info("Connecting to Gemini Live...")
+                logger.info("Connecting to Gemini Live..."
+                            + (" (resuming session)" if self._resume_handle else ""))
                 config = self._build_live_config()
 
                 async with (
@@ -436,9 +522,15 @@ class AudioHandler:
                     self._loop          = asyncio.get_event_loop()
                     self.audio_in_queue = asyncio.Queue()
                     self.out_queue      = asyncio.Queue(maxsize=20)
+                    session_started     = time.monotonic()
 
-                    print("[Miko] Connected! Speak..." if self._config.language == "en"
-                          else "[Miko] Conectat! Vorbește...")
+                    if self._resume_handle:
+                        print("[Miko] Reconnected — picking up where we left off."
+                              if self._config.language == "en"
+                              else "[Miko] Reconectat — continuăm de unde am rămas.")
+                    else:
+                        print("[Miko] Connected! Speak..." if self._config.language == "en"
+                              else "[Miko] Conectat! Vorbește...")
                     try:
                         winsound.Beep(880, 80)
                         time.sleep(0.05)
@@ -459,13 +551,26 @@ class AudioHandler:
                 logger.error(f"Session error: {e}")
                 traceback.print_exc()
 
-            # Visible + audible feedback so the user knows it's auto-recovering,
-            # not dead. (Gemini Live preview drops connections periodically.)
-            print("[Miko] Connection dropped — reconnecting in 3 seconds..." if self._config.language == "en"
-                  else "[Miko] Conexiune întreruptă — mă reconectez în 3 secunde...")
+            # Backoff: a session that lived a while resets it; rapid-fire failures
+            # grow it (3→30 s). Two immediate failures with a resume handle usually
+            # mean the handle expired — drop it and start a fresh conversation.
+            lived = time.monotonic() - session_started
+            if lived > 60:
+                backoff = 3
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                if consecutive_failures >= 2 and self._resume_handle:
+                    logger.warning("Resume handle looks stale — starting a fresh session")
+                    self._resume_handle = None
+                backoff = min(backoff * 2, 30) if consecutive_failures > 1 else 3
+
+            print((f"[Miko] Connection dropped — reconnecting in {backoff} seconds..."
+                   if self._config.language == "en"
+                   else f"[Miko] Conexiune întreruptă — mă reconectez în {backoff} secunde..."))
             try:
                 winsound.Beep(440, 200)
             except Exception:
                 pass
-            logger.info("Reconnecting in 3 seconds...")
-            await asyncio.sleep(3)
+            logger.info(f"Reconnecting in {backoff} seconds...")
+            await asyncio.sleep(backoff)
