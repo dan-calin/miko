@@ -148,7 +148,12 @@ def _body_text(msg) -> str:
 def _imap():
     import imaplib
     cfg = _Cfg()
-    M = imaplib.IMAP4_SSL(cfg.imap_host, cfg.imap_port)
+    # A timeout so a stale connection can't hang the watch/poll daemon forever
+    # (which would silently stop all polling until the next restart).
+    try:
+        M = imaplib.IMAP4_SSL(cfg.imap_host, cfg.imap_port, timeout=30)
+    except TypeError:               # Python < 3.9 has no timeout kwarg
+        M = imaplib.IMAP4_SSL(cfg.imap_host, cfg.imap_port)
     M.login(cfg.user, cfg.password)
     return M
 

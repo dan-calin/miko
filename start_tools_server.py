@@ -141,6 +141,17 @@ def main() -> None:
     except Exception as e:
         print(f"[tools-server] Calendar reminders failed to start: {e}")
 
+    # Scheduled tasks + inbox watches persist on disk; their daemons must run every
+    # session, not only when a task/watch is created this run.
+    try:
+        from modules.scheduled_tasks import start as _start_tasks
+        _start_tasks()
+        from modules.email_watch import start as _start_watch
+        _start_watch()
+        print("[tools-server] Scheduled tasks + inbox watches active.")
+    except Exception as e:
+        print(f"[tools-server] Task/email-watch daemons failed to start: {e}")
+
     from tool_server import start as _start_tool_server
     _start_tool_server(command_router)
 

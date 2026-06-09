@@ -197,6 +197,16 @@ def main():
     from modules.schedule_briefs import start as _start_briefs
     _start_briefs(CONFIG.owner_name)
 
+    # Scheduled tasks + inbox watches persist on disk; their daemons must run every
+    # session, not only when a task/watch happens to be created this run.
+    try:
+        from modules.scheduled_tasks import start as _start_tasks
+        _start_tasks()
+        from modules.email_watch import start as _start_watch
+        _start_watch()
+    except Exception as e:
+        logger.warning(f"task/email-watch daemons failed to start: {e}")
+
     # ── Run main async loop ──────────────────────────────────────────────────
     try:
         asyncio.run(audio_handler.run())
