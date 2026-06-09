@@ -183,6 +183,8 @@ SETTINGS_GROUPS = [
     {"category": "Discord", "fields": [
         {"key": "DISCORD_TOKEN", "label": "Bot token", "secret": True},
         {"key": "DISCORD_GUILD_ID", "label": "Server (guild) ID"},
+        {"key": "TRUSTED_VOICE_USERS", "label": "Trusted users (Discord names)",
+         "help": "Comma-separated display names allowed to command Miko via DM. Your owner name is always trusted."},
         {"key": "DISCORD_RPC_CLIENT_ID", "label": "Personal-account RPC client ID"},
         {"key": "DISCORD_RPC_CLIENT_SECRET", "label": "RPC client secret", "secret": True},
         {"key": "DISCORD_RPC_REDIRECT", "label": "RPC redirect", "placeholder": "http://localhost"},

@@ -22,6 +22,7 @@ Usage:
 import sys
 import time
 import logging
+import threading
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -34,17 +35,70 @@ from utils.logger import setup_logger
 logger = setup_logger(CONFIG.logs_dir / "tools_server.log")
 
 
-def _start_discord() -> None:
+def _start_discord(command_router) -> None:
     if not CONFIG.discord_token:
         print("[tools-server] Discord token not set — Discord tools disabled.")
         return
     try:
-        from modules.discord_bot import start as discord_start
+        from modules.discord_bot import (
+            start as discord_start, get_pending_messages, send_dm_direct,
+        )
         discord_start()
         print("[tools-server] Discord bot started.")
     except Exception as e:
         logger.warning(f"Discord bot failed to start: {e}")
         print(f"[tools-server] Discord bot failed: {e}")
+        return
+
+    # Process INCOMING Discord DMs even without the voice app running (parity
+    # with main.py). Without this loop the bot connects and can SEND, but nobody
+    # drains the inbound queue — so messages people send Miko go unseen.
+    # Trusted senders (owner + TRUSTED_VOICE_USERS) get a real reply via the
+    # phone commander; untrusted senders are logged but not acted on (so a random
+    # stranger can't drive Miko). Add trusted names via TRUSTED_VOICE_USERS / Settings.
+    try:
+        from modules.phone_commander import init_commander
+        commander = init_commander(CONFIG, command_router)
+    except Exception as e:
+        logger.warning(f"Phone commander init failed: {e}")
+        print(f"[tools-server] Discord DM processing unavailable: {e}")
+        return
+
+    owner_l = CONFIG.owner_name.lower()
+
+    def _poll() -> None:
+        while True:
+            time.sleep(2.0)
+            try:
+                for sender, content, is_dm, audio_data in get_pending_messages():
+                    if not is_dm:
+                        logger.info(f"[discord] mention from {sender}: {content[:60]}")
+                        continue
+                    trusted = (sender.lower() == owner_l
+                               or sender.lower() in CONFIG.trusted_voice_users)
+                    if not trusted:
+                        logger.info(f"[discord] DM from untrusted user {sender!r} ignored: {content[:60]}")
+                        continue
+
+                    def _handle(s=sender, c=content, ad=audio_data):
+                        try:
+                            if ad:
+                                audio_bytes, mime_type = ad
+                                reply = commander.process_voice(audio_bytes, mime_type, sender=s)
+                            else:
+                                reply = commander.process_text(c, sender=s)
+                            send_dm_direct(recipient_name=s, message=reply)
+                            logger.info(f"[discord] replied to {s}")
+                        except Exception as e:
+                            logger.warning(f"[discord] DM handling error for {s}: {e}")
+
+                    logger.info(f"[discord] DM from {sender}: {content[:60]}")
+                    threading.Thread(target=_handle, daemon=True, name="DiscordDM").start()
+            except Exception as e:
+                logger.warning(f"[discord] poll error: {e}")
+
+    threading.Thread(target=_poll, daemon=True, name="DiscordPoll").start()
+    print("[tools-server] Discord DM processing active (replies to owner + trusted users).")
 
 
 def _start_file_indexer() -> None:
@@ -78,7 +132,7 @@ def main() -> None:
         pass
 
     _start_file_indexer()
-    _start_discord()
+    _start_discord(command_router)
 
     try:
         from modules.calendar_reminders import start as _start_reminders
