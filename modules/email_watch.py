@@ -30,18 +30,20 @@ TOOL_DECLARATIONS = [
     {
         "name": "watch_email",
         "description": (
-            "Watch the inbox for a specific email and ping the user on Discord when it "
-            "arrives. Use for 'tell me when I get an email from X', 'look out for a "
-            "message from netcom training and let me know', 'ping me if HR emails me'. "
-            "Give at least one of sender/subject. By default it fires once (when the "
-            "email first arrives); set recurring=true to keep alerting on every match."
+            "Watch the inbox for matching email and ping the user on Discord when it "
+            "arrives. Use for 'look out for emails from X and let me know', 'tell me when "
+            "HR emails me', 'ping me about anything from netcom training'. Give at least "
+            "one of sender/subject. By DEFAULT it keeps watching and alerts on EVERY new "
+            "matching email (recurring) — this is what 'look out for emails from X' means. "
+            "Only set recurring=false when the user wants a single one-off heads-up for one "
+            "specific awaited message ('tell me the moment THIS reply lands, then stop')."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "sender": {"type": "STRING", "description": "Sender name or email substring to match (e.g. 'netcom')."},
                 "subject": {"type": "STRING", "description": "Subject keyword to match (optional)."},
-                "recurring": {"type": "BOOLEAN", "description": "Keep alerting on every match (default false = fire once)."},
+                "recurring": {"type": "BOOLEAN", "description": "Keep alerting on every match. Default TRUE (standing watch). false = fire once then stop."},
             },
         },
     },
@@ -94,7 +96,7 @@ def _label(rule: dict) -> str:
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
-def watch_email(sender: str = "", subject: str = "", recurring: bool = False) -> str:
+def watch_email(sender: str = "", subject: str = "", recurring: bool = True) -> str:
     sender = (sender or "").strip()
     subject = (subject or "").strip()
     if not sender and not subject:
