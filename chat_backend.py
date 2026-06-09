@@ -625,6 +625,21 @@ def _reasoning_kwargs(protocol: str, model: str, effort: str) -> dict:
     return {}
 
 
+def _thinking_kwargs(protocol: str, model: str, thinking: bool) -> dict:
+    """Native reasoning/thinking toggle. On the Anthropic wire both real Claude AND
+    MiniMax M-series accept a `thinking` block — MiniMax M3 ships with thinking OFF by
+    default, which makes it sloppy at tool routing, so enabling adaptive thinking is the
+    fix. Returns {} when the toggle is off (provider default) or unsupported."""
+    if protocol != "anthropic":
+        return {}   # gemini handled via thinking_budget; openai via reasoning_effort
+    if thinking:
+        return {"thinking": {"type": "adaptive"}}
+    m = (model or "").lower()
+    if m.startswith("minimax") or m.startswith("abab"):
+        return {"thinking": {"type": "disabled"}}   # be explicit for MiniMax when off
+    return {}
+
+
 def _create_safe(fn, base_kwargs: dict, extra: dict):
     """Call an SDK create() with reasoning kwargs; if the provider rejects them
     (unsupported model/endpoint), retry once without — so nothing ever breaks."""
@@ -660,7 +675,7 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
          api_key: str = "", base_url: str = "", allow_actions: bool = False,
          owner_name: str = "Roxan", language: str = "en", workspace: str = "",
          agent: str = "", skills=None, effort: str = "standard", approval: bool = False,
-         emit=None, should_cancel=None) -> dict:
+         thinking: bool = False, emit=None, should_cancel=None) -> dict:
     """Run one chat turn. Returns {"reply": str, "tools_used": [...], "error": str|None}.
 
     emit: optional callback(event_dict) for live progress (tool_start/tool_end/round).
@@ -722,9 +737,9 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
 
     try:
         if preset["protocol"] == "gemini":
-            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel)
+            reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, thinking)
         elif preset["protocol"] == "anthropic":
-            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel)
+            reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, thinking)
         else:
             reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel)
     except Exception as e:
@@ -878,7 +893,7 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
 
 # ── Anthropic-compatible (MiniMax /anthropic) ────────────────────────────────
 
-def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None) -> str:
+def _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None, thinking=False) -> str:
     import anthropic
     from tools import ALL_TOOL_DECLARATIONS_ANTHROPIC
 
@@ -886,7 +901,8 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
     messages = [{"role": m["role"], "content": m["content"]} for m in history]
     messages.append({"role": "user", "content": message})
     tools = (ALL_TOOL_DECLARATIONS_ANTHROPIC + _mcp_tools("anthropic")) or None
-    rk = _reasoning_kwargs("anthropic", model, effort)   # real-Claude effort (if supported)
+    rk = {**_reasoning_kwargs("anthropic", model, effort),       # real-Claude effort (if supported)
+          **_thinking_kwargs("anthropic", model, thinking)}      # thinking toggle (MiniMax M3 + Claude)
 
     for _r in range(rounds):
         if _cancelled(should_cancel):
@@ -931,7 +947,7 @@ def _run_anthropic(router, key, base, model, system, history, message, allow_act
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
-def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None) -> str:
+def _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None, thinking=False) -> str:
     from google import genai
     from google.genai import types
     from tools import ALL_TOOL_DECLARATIONS
@@ -952,7 +968,10 @@ def _run_gemini(router, key, model, system, history, message, allow_actions, use
         "tools": [types.Tool(function_declarations=_decls)] if _decls else [],
     }
     # Native thinking budget for 2.5+ models (quick=off, standard=dynamic, deep=high).
+    # The Thinking toggle forces it on (dynamic) even at quick effort.
     budget = _EFFORT_GEMINI_BUDGET.get(effort)
+    if thinking and (budget is None or budget == 0):
+        budget = -1   # dynamic
     use_thinking = budget is not None and any(t in model.lower() for t in ("2.5", "2-5", "3."))
     if use_thinking:
         try:

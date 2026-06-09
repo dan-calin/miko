@@ -238,6 +238,7 @@ def _build_app():
             skills=skills,
             effort=(body.get("effort") or "standard").strip(),
             approval=bool(body.get("approval", False)),
+            thinking=bool(body.get("thinking", False)),
         )
         return JSONResponse(result)
 
@@ -280,6 +281,7 @@ def _build_app():
                 skills,
                 (body.get("effort") or "standard").strip(),
                 bool(body.get("approval", False)),
+                bool(body.get("thinking", False)),
                 should_cancel=should_cancel,
             )
 

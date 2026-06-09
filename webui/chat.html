@@ -898,6 +898,15 @@
             <span class="knob"></span>
           </button>
         </div>
+        <div class="aa-row" style="margin-top:14px">
+          <div style="flex:1">
+            <div class="seclabel" style="margin-bottom:5px">Thinking</div>
+            <div class="aa-desc" id="think-desc">Off — faster replies. On — the model reasons before answering (smarter on MiniMax, Claude, Gemini).</div>
+          </div>
+          <button class="toggle" id="think-mode" role="switch" aria-checked="false" type="button">
+            <span class="knob"></span>
+          </button>
+        </div>
       </div>
       <div class="rule"></div>
 
@@ -1121,6 +1130,7 @@ let asEffort = cfg.effort || 'standard';   // quick | standard | deep | exhausti
 let asResearch = cfg.researchModel || 'gemini-3.5-flash';   // research engine (global)
 let asResearchMore = false;                 // research-engine "More" row expanded (UI-only)
 let approveMode = cfg.approve !== false;   // require approval for edits & commands (default ON)
+let thinkMode = !!cfg.think;               // native reasoning/thinking (default OFF — opt in)
 let pairMode = false;                       // pair-programming (Miko ↔ Claude Code) active
 let pairKind = cfg.pairKind || 'autonomous';   // autonomous | controlled
 let pairCoder = cfg.pairCoder || 'claude';                 // claude | aider
@@ -1152,6 +1162,7 @@ function saveCfg() {
   cfg.baseUrl  = $('#base-url').value;
   cfg.allow    = $('#allow-actions').classList.contains('on');
   cfg.approve  = approveMode;
+  cfg.think    = thinkMode;
   cfg.agent    = asAgent;
   cfg.skills   = asSkills;
   cfg.effort   = asEffort;
@@ -1390,6 +1401,15 @@ function setApprove(on) {
     : 'Off — Miko applies edits & commands directly.';
 }
 
+function setThink(on) {
+  const t = $('#think-mode');
+  t.classList.toggle('on', on);
+  t.setAttribute('aria-checked', on ? 'true' : 'false');
+  $('#think-desc').textContent = on
+    ? 'On — the model reasons before answering. Slower, but smarter (esp. MiniMax M3).'
+    : 'Off — faster replies. On — the model reasons before answering (MiniMax, Claude, Gemini).';
+}
+
 function thinking() {
   const row = document.createElement('div'); row.className = 'row';
   const g = document.createElement('div'); g.className = 'glyph'; g.textContent = 'M';
@@ -1524,7 +1544,7 @@ async function send() {
         api_key: $('#api-key').value, base_url: $('#base-url').value,
         allow_actions: $('#allow-actions').classList.contains('on'),
         workspace: workspace,
-        agent: asAgent, skills: asSkills, effort: asEffort, approval: approveMode,
+        agent: asAgent, skills: asSkills, effort: asEffort, approval: approveMode, thinking: thinkMode,
       }),
     });
     if (!resp.ok || !resp.body) throw new Error('Stream unavailable (HTTP ' + resp.status + ')');
@@ -2804,6 +2824,7 @@ $('#base-url').addEventListener('change', saveCfg);
 $('#save-env').addEventListener('click', saveToEnv);
 $('#allow-actions').addEventListener('click', () => { setAllow(!$('#allow-actions').classList.contains('on')); saveCfg(); });
 $('#approve-mode').addEventListener('click', () => { approveMode = !approveMode; setApprove(approveMode); saveCfg(); });
+$('#think-mode').addEventListener('click', () => { thinkMode = !thinkMode; setThink(thinkMode); saveCfg(); });
 // ── Settings modal (API keys & credentials per category) ─────────────────────
 async function openSettings() {
   const body = $('#settings-body'); $('#settings-status').textContent = 'Loading…';
@@ -3175,6 +3196,7 @@ $('#ob-retry').addEventListener('click', async () => {
 
 setAllow(!!cfg.allow);
 setApprove(approveMode);
+setThink(thinkMode);
 emptyState();
 checkServer();
 loadWorkspace();
