@@ -54,7 +54,7 @@ def _print_banner():
     print("   ╚═╝     ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝ ")
     print()
     engine = os.getenv("MIKO_VOICE_ENGINE", "live").strip().lower()
-    print(f"   Voice AI Agent v2.0 — {CONFIG.owner_name}'s Personal Assistant")
+    print(f"   Personal AI Agent v2.0 — {CONFIG.owner_name}'s Assistant")
     if engine == "chat":
         vp = os.getenv("MIKO_VOICE_PROVIDER", "") or ("minimax" if CONFIG.minimax_api_key else "gemini")
         print(f"   Engine: chat brain (STT → {vp} → TTS)")

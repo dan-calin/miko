@@ -1,10 +1,12 @@
 # Miko — a personal AI agent for Windows
 
-Miko is a personal AI agent for Windows that **researches, remembers, and ships code** —
-reachable by **voice or a web chat UI**. It runs multi-round web research and saves cited
-reports, keeps a local second-brain memory, controls your PC/Discord/calendars, and — the
-headline — **directs Claude Code as a pair-programming teammate** to actually change your
-repos, with your approval and per-round git revert.
+Miko is a personal AI agent for Windows that **researches, remembers, watches, and ships
+code** — reachable by **voice or a web chat UI**. It runs multi-round web research and
+saves cited reports, keeps a local second-brain memory, controls your PC / Discord /
+email / calendars, **keeps standing watch** (inbox watches, scheduled tasks, calendar
+briefs — set up just by asking in conversation), and — the headline — **directs Claude
+Code as a pair-programming teammate** to actually change your repos, with your approval
+and per-round git revert.
 
 It's a **self-hosted, single-user** tool (your keys live in a local `.env`). You bring API
 keys for the models you use; several integrations below are **optional and require their
@@ -35,10 +37,25 @@ English) and replies in the language you write/speak.
 - **Web Chat UI** (`/chat`) — any model (Gemini, OpenAI, Anthropic Claude, MiniMax,
   DeepSeek, Kimi, xAI Grok, or any OpenAI-compatible endpoint), a **live activity view**
   that shows each tool call as it runs, a **Stop** button, an **approval mode** (review
-  file/command changes as diffs before they apply), per-model persona/skill/effort settings,
-  a built-in file explorer + editor, resumable conversations, and a selectable workspace.
-- **Voice** — real-time voice in/out via **Gemini Live** (ACTIVE / STANDBY / MUTE modes).
-  *Needs a Gemini key.* This is one input mode, not the whole product.
+  file/command changes as diffs before they apply), **file & image attachments** (drag,
+  drop, or paste — handled sensibly even on models without vision), per-model
+  persona/skill/effort settings, a built-in file explorer + editor, an **Inbox viewer**,
+  a **task scheduler with an interactive calendar**, an in-UI **Settings panel** for every
+  key and credential, resumable conversations, and a selectable workspace.
+- **Email watching** *(optional)* — read, search, triage, and send mail; browse the same
+  inbox Miko reads **inside the UI** (rich HTML, inline images, attachments); and set
+  **standing inbox watches** — tell Miko *"let me know when Andra emails me"*
+  mid-conversation and she schedules it herself, then pings you on Discord with a snippet
+  within ~30 seconds of the mail landing.
+- **Scheduler** — recurring or one-off tasks in plain language ("every morning at 8, DM
+  me my calendar") or from an **interactive calendar** in the Tasks panel; results arrive
+  as Discord DMs. Miko sets these up herself when you ask in conversation — no forms.
+- **Voice** — real-time voice in/out via **Gemini Live** (ACTIVE / STANDBY / MUTE modes),
+  hardened for the real world: sessions **resume with context intact** after a network
+  drop, long conversations are compressed instead of truncated, and a missing microphone
+  means a retry — not a crash loop. A second engine (`MIKO_VOICE_ENGINE=chat`) runs voice
+  through the same brain as chat on **any provider** (STT → chat → TTS). *Needs a Gemini
+  key.* This is one input mode, not the whole product.
 - **PC control** — open apps, file operations, system info, screenshots, reminders,
   clipboard, volume & media keys. *Windows-specific.*
 - **Project mapping** — point Miko at a project folder; it scans it, writes a profile to
@@ -47,11 +64,10 @@ English) and replies in the language you write/speak.
   morning/midday/night Discord briefs.
 - **Discord** — control Miko from your phone via DMs (text or voice notes), stream music
   into a voice channel, and control your **personal** Discord account by voice.
-- **Optional integrations** *(each needs setup/deps)* — **email** (IMAP/SMTP read, triage,
-  and inbox watch-and-notify), **browser automation** (Playwright), **scheduled tasks**
-  (recurring prompts DM'd to you), an **MCP client** (use tools from external Model Context
-  Protocol servers), and a **MiniMax backend** + HTTP **tool server** so external agents can
-  call Miko's tools.
+- **Optional integrations** *(each needs setup/deps)* — **browser automation**
+  (Playwright), an **MCP client** (use tools from external Model Context Protocol
+  servers), and a **MiniMax backend** + HTTP **tool server** so external agents can call
+  Miko's tools.
 
 ---
 
@@ -138,6 +154,11 @@ notifications):
 7. Open the generated URL in a browser and add the bot to your server.
 8. Copy your server ID into `.env` as `DISCORD_GUILD_ID`.
    (Enable Developer Mode in Discord → right-click the server → Copy Server ID.)
+
+**Tell Miko who *you* are.** Set `DISCORD_OWNER` to your exact Discord username (and,
+optionally, `OWNER_ALIASES` to comma-separated nicknames). When you say *"DM me"* or
+*"invite me to voice"*, Miko resolves "me" to **that** account — never to a
+similarly-named friend. Both are editable from the UI's Settings panel.
 
 ---
 
@@ -280,6 +301,34 @@ http://localhost:7832/chat
   *“what workspace are you in?”* and *“create a file here”* follow your choice), and is the
   working directory her `run_command` executes in. It persists across restarts.
 
+**Attachments — send files & images**
+
+- Attach with the paperclip, **paste**, or **drag-and-drop** (up to 12 MB per file).
+- **Images:** vision-capable models (Gemini, Claude, GPT-4o…) see them directly; for
+  text-only models Miko **auto-captions** the image server-side so nothing is silently
+  dropped — every model can talk about what you sent.
+- **Documents:** Word / PowerPoint / Excel / OpenDocument / PDF / RTF are **text-extracted
+  on the server** — no converters, no shell tricks — plus any plain-text/code file as-is.
+
+**Inbox — see what Miko sees**
+
+- The **Inbox** button opens the mailbox Miko watches: unread filter, **rich HTML
+  rendering** (sandboxed — no scripts run), **inline images**, and attachment
+  previews/downloads. Reading never marks mail as seen.
+
+**Tasks — the scheduler panel**
+
+- Lists every scheduled task and inbox watch, live (pause / resume / delete — no restart).
+- Add tasks in **plain language** (*“every 30 minutes, check HN for AI news and DM me”*)
+  or from the **interactive calendar**: click a day, type the task, done.
+
+**Settings — keys & credentials in the UI**
+
+- A grouped **Settings panel** (footer) edits every `.env` credential — Discord, email,
+  calendars, model providers — without touching a file. Secrets are **write-only**: the
+  server masks saved values and never sends them back to the browser. The Reset
+  conversation button next to it asks twice, so a stray click costs nothing.
+
 > **Heads-up:** the Chat UI is served by the same process as the tools. Changes to the page
 > appear on a browser refresh, but new server features (file browser, workspace, …) need the
 > server **restarted** (`python start_tools_server.py` or `python main.py`).
@@ -371,22 +420,43 @@ Spoken replies are kept to one or two sentences (no filler). Beyond STANDBY (wak
 follow-up window), there's a stricter **MUTE** mode ("mute yourself" / "complete silence" /
 "leave me alone") — wake-word only, no window — exited with "Miko, wake up".
 
+The default **Gemini Live** engine is hardened where realtime voice actually breaks:
+when the connection drops, the session **resumes with its context intact** (resumption
+handles) instead of starting over; long sessions use **sliding-window context
+compression** instead of hitting a wall; a missing or unplugged microphone gets a warn +
+retry every 30 s instead of a reconnect death-loop; and reconnects back off exponentially.
+A tool-discipline prompt layer keeps voice honest — every claimed action must be a real
+tool call, so "I've sent it" means it was sent.
+
+Prefer one brain everywhere? `MIKO_VOICE_ENGINE=chat` routes voice through the same
+pipeline as the Chat UI (mic → VAD → STT → `chat()` → neural TTS) on **any provider** —
+full memory, watches, and tool fixes included — at the cost of a few seconds per turn.
+
 ### Email, browser, scheduled tasks & MCP
 
 Four optional capability systems Miko can use when configured:
 
 - **Email** — read, search, and send mail over IMAP/SMTP (`list_emails`, `read_email`,
   `search_emails`, `send_email`), ask plain-language questions about recent mail
-  (`triage_inbox` — "any job-related emails in the past 2 days?"), and **watch the inbox**
-  for a specific sender/subject and get pinged on Discord when it arrives (`watch_email`,
-  `list_email_watches`, `cancel_email_watch`). Set `EMAIL_USER`/`EMAIL_PASS`/`EMAIL_IMAP_HOST`/
-  `EMAIL_SMTP_HOST` in `.env` (Gmail: use an App Password). Sending is gated by approval
-  mode; reading never marks mail unread.
+  (`triage_inbox` — "any job-related emails in the past 2 days?"), and browse the inbox
+  in the UI (the **Inbox** button). **Inbox watches** are standing by default: say
+  *"look out for emails from andra@…"* in conversation and Miko registers the watch
+  herself (`watch_email`), then DMs you on Discord — sender, subject, and a **snippet of
+  the body** — within ~30 seconds (`MIKO_EMAIL_WATCH_INTERVAL`, default 30s). Watches
+  catch Gmail **replies** as well as new threads, ignore Gmail dot-aliases, never
+  double-ping the same email even with overlapping watches, and only fire for mail that
+  arrives **after** the watch was set. The watch daemon starts at boot, so watches survive
+  restarts. Set `EMAIL_USER`/`EMAIL_PASS`/`EMAIL_IMAP_HOST`/`EMAIL_SMTP_HOST` in `.env`
+  (Gmail: use an App Password). Sending is gated by approval mode; reading never marks
+  mail unread.
 - **Browser automation** — Miko *drives* a real headless browser (open, click, type, extract,
   screenshot) for logins and multi-step flows, not just HTML fetches. Needs
   `pip install playwright && python -m playwright install chromium`.
-- **Scheduled tasks** — recurring prompts that run Miko headlessly and DM you the result
-  (`schedule_task "every 30m" "..."`, `list_scheduled_tasks`, `cancel_scheduled_task`).
+- **Scheduled tasks** — recurring or one-off prompts that run Miko headlessly and DM you
+  the result (`schedule_task`, `list_scheduled_tasks`, `cancel_scheduled_task`). Create
+  them three ways: ask in conversation ("every 30 minutes, check…") and Miko schedules
+  herself; describe it in the **Tasks panel**; or pick a day on the panel's **interactive
+  calendar**. The daemon starts at boot, so tasks survive restarts.
 - **MCP client** — connect Miko to external [Model Context Protocol](https://modelcontextprotocol.io)
   servers (stdio or SSE) in `data/mcp_servers.json`; their tools become `mcp_<server>_<tool>`
   available to every chat model. Needs `pip install mcp`.
@@ -530,6 +600,19 @@ On first launch:
 You'll also receive **Discord DM reminders** automatically — 30 minutes and 5 minutes
 before each event — as long as Miko (or `start_tools_server.py`) is running.
 
+### Email & inbox watches
+
+> Requires the email settings in `.env` (see [Email…](#email-browser-scheduled-tasks--mcp)).
+> These work identically in the Chat UI — just type them.
+
+| Voice command | Effect |
+|---------------|--------|
+| `Miko, any new emails?` | Plain-language inbox triage |
+| `Miko, watch for emails from andra@gmail.com` | Standing watch → Discord ping with a snippet (~30 s) |
+| `Miko, what watches are running?` | List active inbox watches |
+| `Miko, stop watching that address` | Cancel a watch |
+| `Miko, every morning at 8, DM me my schedule` | Recurring scheduled task |
+
 ### Journey planning
 
 | Voice command | Effect |
@@ -544,18 +627,26 @@ before each event — as long as Miko (or `start_tools_server.py`) is running.
 
 ```
 main.py
-├── AudioHandler (Gemini Live WebSocket)
-│   ├── Microphone capture (sounddevice, 16 kHz)
-│   ├── Audio playback (sounddevice, 24 kHz)
+├── Voice engine (MIKO_VOICE_ENGINE)
+│   ├── "live" (default): AudioHandler — Gemini Live WebSocket, session-resume,
+│   │     context compression, no-mic resilience (core/audio_handler.py)
+│   └── "chat": VoiceChat — mic → VAD → STT → chat brain → edge-tts, any provider
+│         (core/voice_chat.py)
 │   ├── ModeManager (ACTIVE / STANDBY / AUTO filtering)
 │   └── CommandRouter (tool dispatch + safety)
 ├── DiscordBot thread (own asyncio loop)
 ├── DiscordPoll thread (checks DMs every 2s; runs the phone commander)
 ├── FileIndexer thread (SQLite, full + incremental)
 ├── MemoryExtractor thread (every 5 turns, extracts facts from speech)
-├── ToolServer thread (FastAPI HTTP bridge for external agents)
-└── CalendarReminder thread (DM reminders before events)
+├── ToolServer thread (FastAPI HTTP bridge + Chat UI)
+├── CalendarReminder thread (DM reminders before events)
+├── ScheduledTasks daemon (recurring/one-off prompts → Discord DM)
+└── EmailWatch daemon (IMAP poll every 30s; standing inbox watches)
 ```
+
+`start_tools_server.py` (headless / chat-only mode) runs everything except the voice
+engine — including the Discord DM loop and both daemons — so watches, tasks, and phone
+commands keep working without a microphone.
 
 **Phone commander** (`modules/phone_commander.py`) handles Discord DM commands (text or
 voice notes) with per-user conversation history. It auto-selects its LLM backend:
@@ -580,8 +671,9 @@ learner + reflection), `modules/knowledge.py` (`remember`/`recall`/`forget`), `v
 and supports a propose→approve flow for edits/commands; `modules/subagents.py` runs parallel
 read-only sub-agents (`spawn_agents`); `modules/claude_code.py` drives the **Claude Code CLI**
 for pair programming (`/chat/code`, every round git-checkpointed with per-round revert).
-Optional integrations each live in their own module: `modules/email_box.py` (IMAP/SMTP),
-`modules/browser.py` (Playwright), `modules/scheduled_tasks.py` (recurring prompts), and
+Optional integrations each live in their own module: `modules/email_box.py` (IMAP/SMTP +
+the UI inbox viewer), `modules/email_watch.py` (standing inbox watches), `modules/browser.py`
+(Playwright), `modules/scheduled_tasks.py` (recurring prompts + the calendar scheduler), and
 `modules/mcp_client.py` (external MCP servers).
 
 **Safety:** destructive tools (delete file, send Discord message, shutdown, etc.) require
