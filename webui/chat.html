@@ -260,6 +260,10 @@
   .rs-head .rs-ic { color: var(--amber); font-size: 12px; }
   .rs-status { margin-left: auto; color: var(--text3); text-transform: none; letter-spacing: 0.02em; }
   .rs-card.done .rs-status { color: var(--green); }
+  .pc-hide { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 12px;
+    line-height: 1; padding: 0 2px; margin-left: 4px; }
+  .pc-hide:hover { color: var(--amber); }
+  .pc-view-session { margin-top: 8px; }
   .rs-plan { margin: 9px 0 6px; padding-left: 20px; color: var(--text2); font-size: 12.5px; line-height: 1.6; }
   .rs-plan li { margin: 1px 0; }
   .rs-log { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
@@ -1789,6 +1793,7 @@ function handleChatEvent(c, ev) {
     if (ev.pending && ev.pending.length) renderPending(c.pn, ev.pending);
     if (ev.attachments && _lastUser && _lastUser.setAttMeta) _lastUser.setAttMeta(ev.attachments);
     _lastUser = null;
+    if ((ev.tools_used || []).includes('code_with_claude')) addViewSessionButton(c.pn);
     updateMonitor((ev.usage && ev.usage.total_tokens) || 0);
     c.st.textContent = fmtTime(new Date());
   } else if (ev.type === 'cancelled') {
@@ -2013,6 +2018,8 @@ async function sendResearch(text) {
 }
 
 // ── Pair programming (Miko ↔ Claude Code) ──────────────────
+let _pairCards = {};   // token -> rendered pair card row (so Resume doesn't duplicate)
+
 function addCodeCard() {
   const row = document.createElement('div'); row.className = 'row bot';
   const g = document.createElement('div'); g.className = 'glyph'; g.textContent = 'M';
@@ -2020,12 +2027,20 @@ function addCodeCard() {
   const card = document.createElement('div'); card.className = 'rs-card act';
   card.innerHTML =
     '<div class="rs-head"><span class="rs-ic mk-dot">⚒</span> Pair Programming' +
-    '<span class="rs-status">starting…</span></div><div class="rs-log pc-log"></div>';
+    '<span class="rs-status">starting…</span>' +
+    '<button class="pc-hide" type="button" title="Hide this session (stays under ⟳ Sessions)">✕</button>' +
+    '</div><div class="rs-log pc-log"></div>';
   const st = document.createElement('div'); st.className = 'stamp';
   c.append(card, st); row.append(g, c);
   messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
-  return { card, st, token: null, lastSnap: null,
+  const ref = { row, card, st, token: null, lastSnap: null,
     status: card.querySelector('.rs-status'), log: card.querySelector('.pc-log') };
+  card.querySelector('.pc-hide').addEventListener('click', () => {
+    if (ref.token) delete _pairCards[ref.token];
+    if (curCodeToken === ref.token) curCodeToken = null;
+    row.remove();
+  });
+  return ref;
 }
 
 function pcTurn(c, who, text, files) {
@@ -2079,7 +2094,7 @@ function pcApprove(c) {
 }
 
 function handleCodeEvent(c, ev) {
-  if (ev.type === 'session') { c.token = ev.token; curCodeToken = ev.token; c.status.textContent = ev.mode + ' · ' + ev.repo; }
+  if (ev.type === 'session') { c.token = ev.token; curCodeToken = ev.token; if (ev.token) _pairCards[ev.token] = c.row; c.status.textContent = ev.mode + ' · ' + ev.repo; }
   else if (ev.type === 'status') c.status.textContent = ev.text;
   else if (ev.type === 'checkpoint') pcCheckpoint(c, ev.round, ev.snap);
   else if (ev.type === 'queued') { const el = document.createElement('div'); el.className = 'pc-picked'; el.textContent = '↳ Miko picked up your message' + (ev.count > 1 ? ' (' + ev.count + ')' : ''); c.log.appendChild(el); }
@@ -2381,9 +2396,16 @@ function continueCode(c, guidance) {
 // Render a pair session (restored or resumed) as a card with transcript + checkpoints.
 function renderPairCard(s) {
   if (!s || !s.token) return null;
+  // Already showing this session? Scroll to it instead of stacking a duplicate.
+  const existing = _pairCards[s.token];
+  if (existing && document.body.contains(existing)) {
+    existing.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    curCodeToken = s.token;
+    return null;
+  }
   if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
   const c = addCodeCard();
-  c.token = s.token; curCodeToken = s.token;
+  c.token = s.token; curCodeToken = s.token; _pairCards[s.token] = c.row;
   c.status.textContent = (s.status === 'awaiting' ? 'awaiting your approval' : s.status)
     + ' · round ' + s.round + ' · ' + s.repo + '  (restored)';
   (s.checkpoints || []).forEach(cp => pcCheckpoint(c, cp.round, cp.snap));
@@ -2432,6 +2454,22 @@ function pcContinue(c) {
 // After a page refresh, restore the most recent unfinished pair session.
 async function restorePairSession() {
   try { renderPairCard(await (await fetch('/chat/code/active')).json()); } catch (e) { /* none */ }
+}
+
+// After Miko runs code_with_claude from a chat prompt, give a button to open that
+// session's transcript inline (instead of digging through Pair mode → Sessions).
+async function addViewSessionButton(host) {
+  let token = null;
+  try {
+    const sessions = (await (await fetch('/chat/code/sessions')).json()).sessions || [];
+    token = (sessions[0] || {}).token;   // newest first
+  } catch (e) {}
+  if (!token) return;
+  const b = document.createElement('button');
+  b.className = 'pc-revert pc-view-session'; b.type = 'button';
+  b.textContent = '⚒ View pair session';
+  b.addEventListener('click', () => resumePairSession(token));
+  host.appendChild(b);
 }
 
 // Resume a specific session (from the Sessions list).
@@ -2640,6 +2678,7 @@ async function openConversation(id) {
   loadConversations();
   closeAgentPanel();
   loadAgentPanel(true);   // this conversation's sub-agents
+  _pairCards = {};        // pair cards aren't part of the transcript; drop stale refs
 }
 
 function newConversation() {
@@ -2650,6 +2689,7 @@ function newConversation() {
   loadConversations();
   closeAgentPanel();
   loadAgentPanel(true);   // empty for a fresh conversation
+  _pairCards = {};
   $('#input').focus();
 }
 
