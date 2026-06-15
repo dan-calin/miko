@@ -714,6 +714,58 @@ def _build_app():
             return JSONResponse({"error": "Empty query."}, status_code=400)
         return {"results": KS.search(query, k=int(body.get("k", 6)))}
 
+    # ── Import memory from another AI ────────────────────────────────────────────
+    @app.post("/chat/memory/import/preview")
+    async def chat_memory_import_preview(request: Request, _=Depends(_auth)):
+        """Extract + normalize an exported memory without writing anything. Body:
+        {text?, filename?, data_b64?, source?}. Returns reviewable facts + notes."""
+        import base64
+        from pathlib import Path
+        from modules import memory_import as MI
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        raw = (body.get("text") or "").strip()
+        source = (body.get("source") or "").strip()
+        b64 = body.get("data_b64") or ""
+        if not raw and b64:
+            try:
+                data = base64.b64decode(b64)
+            except Exception:
+                return JSONResponse({"error": "Could not decode the uploaded file."}, status_code=400)
+            try:
+                raw = MI.extract_text(body.get("filename", "memory.txt"), data)
+            except Exception as e:
+                return JSONResponse({"error": f"Could not read the export: {e}"}, status_code=400)
+            if not source:
+                source = Path(body.get("filename", "")).stem
+        if not raw.strip():
+            return JSONResponse({"error": "No readable memory found in that input."}, status_code=400)
+        try:
+            return MI.normalize(raw, source)
+        except Exception as e:
+            return JSONResponse({"error": f"Could not analyze the export: {e}"}, status_code=400)
+
+    @app.post("/chat/memory/import/commit")
+    async def chat_memory_import_commit(request: Request, _=Depends(_auth)):
+        """Write reviewed facts + notes into Miko's long-term memory. Body:
+        {facts:[{category,key,value}], notes:[str], source?}."""
+        from modules import memory_import as MI
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        facts = body.get("facts") or []
+        notes = body.get("notes") or []
+        if not facts and not notes:
+            return JSONResponse({"error": "Nothing selected to import."}, status_code=400)
+        try:
+            out = MI.commit(facts, notes, body.get("source", ""))
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"ok": True, **out}
+
     @app.get("/chat/env")
     def chat_env_get(_=Depends(_auth)):
         from chat_backend import read_env_keys

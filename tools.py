@@ -58,6 +58,7 @@ ALL_TOOL_DECLARATIONS: list = (
     + _safe_import("modules.notes")
     + _safe_import("modules.knowledge")
     + _safe_import("modules.projects")
+    + _safe_import("modules.memory_import")
     + _safe_import("modules.email_box")
     + _safe_import("modules.email_watch")
     + _safe_import("modules.scheduled_tasks")

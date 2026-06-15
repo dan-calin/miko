@@ -844,6 +844,27 @@
     border-radius: 4px; padding: 7px 18px; cursor: pointer; font: inherit; font-size: 12px; }
   .settings-save:hover { background: #d4b063; }
   .settings-save:disabled { opacity: .6; cursor: default; }
+  /* ── Import memory ── */
+  .mem-src-row { margin-bottom: 10px; }
+  .mem-input { display: flex; flex-direction: column; gap: 8px; }
+  .mem-file { display: block; border: 1px dashed var(--border); border-radius: 5px; padding: 14px;
+    text-align: center; cursor: pointer; color: var(--text2); font-size: 12px; transition: .15s; }
+  .mem-file:hover { border-color: var(--amber); color: var(--text); }
+  .mem-file.has-file { border-style: solid; border-color: var(--green); color: var(--text); }
+  .mem-or { text-align: center; font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: .06em; }
+  #mem-text { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 7px 9px; font: inherit; font-size: 12px; resize: vertical; }
+  #mem-text:focus { outline: none; border-color: var(--amber); }
+  .mem-new-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .mem-new-row .task-hint { flex: 1; }
+  .mem-review { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
+  .mem-review-head { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .06em; margin: 8px 0 4px; }
+  .mem-item { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border: 1px solid var(--border);
+    border-radius: 4px; background: var(--bg); font-size: 12px; }
+  .mem-item input { margin-top: 2px; flex: none; }
+  .mem-item .mi-cat { font-family: var(--mono); font-size: 9px; color: var(--amber); text-transform: uppercase; }
+  .mem-item .mi-val { color: var(--text); }
+  .mem-item .mi-key { color: var(--text2); }
   /* ── Scheduler ── */
   .task-new textarea { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 7px 9px; font: inherit; font-size: 12px; resize: vertical; }
@@ -997,6 +1018,7 @@
       <span class="wm-actions">
         <button class="settings-cog" id="tasks-btn" type="button" title="Scheduled tasks — automation"><svg class="cog-ic" width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7.6" r="5.1" stroke="currentColor" stroke-width="1.1"/><path d="M7 4.8V7.6l1.9 1.3" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.7 2.3 4.5 3.9M11.3 2.3 9.5 3.9" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg> Tasks</button>
         <button class="settings-cog" id="inbox-btn" type="button" title="Inbox — the mailbox Miko reads from"><svg class="cog-ic" width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="1.6" y="3" width="10.8" height="8" rx="1.2" stroke="currentColor" stroke-width="1.1"/><path d="M2 3.6 7 7.6l5-4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg> Inbox</button>
+        <button class="settings-cog" id="mem-btn" type="button" title="Import memory from another AI"><svg class="cog-ic" width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 1.8a3.2 3.2 0 0 0-3.2 3.2c0 .5.1 1 .35 1.4A2.6 2.6 0 0 0 4.4 11h5.2a2.6 2.6 0 0 0 .25-3.6c.25-.4.35-.9.35-1.4A3.2 3.2 0 0 0 7 1.8Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M7 11v1.4M5.2 5.4h3.6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg> Memories</button>
       </span>
     </div>
     <div class="rule"></div>
@@ -1297,6 +1319,39 @@
         </div>
         <div id="inbox-list"></div>
         <div id="inbox-reader" class="inbox-reader"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Import memory from another AI ─────────────────────── -->
+  <div id="mem-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-title">Import memory from another AI</span>
+        <button class="modal-close" id="mem-close" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-note">Bring what another assistant knew about you into Miko. Export your memory (e.g. <b>Google Takeout</b> for Gemini, or ChatGPT's data export) and drop the file here, or paste the text. Miko shows you what it found before saving anything — you choose what to keep.</div>
+      <div class="modal-body" id="mem-body">
+        <div class="mem-src-row">
+          <input class="field" id="mem-source" type="text" placeholder="Where's it from? e.g. Gemini, ChatGPT (optional)" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="mem-input">
+          <label class="mem-file" id="mem-file-label">
+            <input id="mem-file" type="file" accept=".zip,.json,.html,.htm,.txt,.md,.csv" hidden />
+            <span id="mem-file-text">⇪ Choose an export file (.zip / .json / .html / .txt)</span>
+          </label>
+          <div class="mem-or">or paste it</div>
+          <textarea id="mem-text" rows="4" spellcheck="false" placeholder="Paste your memory / saved info text here…"></textarea>
+        </div>
+        <div class="mem-new-row">
+          <span class="task-hint" id="mem-hint"></span>
+          <button class="set-link" id="mem-preview" type="button" style="width:auto;margin:0">Preview what Miko found</button>
+        </div>
+        <div id="mem-review" class="mem-review"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="settings-status" id="mem-status"></span>
+        <button class="settings-save" id="mem-import" type="button" style="display:none">Import selected</button>
       </div>
     </div>
   </div>
@@ -3720,6 +3775,111 @@ $('#inbox-modal').addEventListener('click', e => { if (e.target === $('#inbox-mo
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#inbox-modal').classList.contains('show')) closeInbox(); });
 $('#tasks-modal').addEventListener('click', e => { if (e.target === $('#tasks-modal')) closeTasks(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#tasks-modal').classList.contains('show')) closeTasks(); });
+
+// ── Import memory from another AI ────────────────────────────────────────────
+let _memFile = null;            // {name, b64} of a chosen export file
+let _memPreview = null;         // last preview result {facts, notes, source}
+function openMemImport() { $('#mem-modal').classList.add('show'); }
+function closeMemImport() { $('#mem-modal').classList.remove('show'); }
+function _resetMemReview() { _memPreview = null; $('#mem-review').innerHTML = ''; $('#mem-import').style.display = 'none'; }
+
+function _readFileB64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => { const s = r.result; resolve(s.slice(s.indexOf(',') + 1)); };  // strip data: prefix
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+$('#mem-file').addEventListener('change', async e => {
+  const f = e.target.files[0]; const lab = $('#mem-file-label'), txt = $('#mem-file-text');
+  _resetMemReview();
+  if (!f) { _memFile = null; lab.classList.remove('has-file'); txt.textContent = '⇪ Choose an export file (.zip / .json / .html / .txt)'; return; }
+  txt.textContent = 'Reading ' + f.name + '…';
+  try { _memFile = { name: f.name, b64: await _readFileB64(f) }; lab.classList.add('has-file'); txt.textContent = '✓ ' + f.name; }
+  catch (err) { _memFile = null; txt.textContent = 'Could not read that file.'; }
+});
+$('#mem-text').addEventListener('input', _resetMemReview);
+
+async function memPreview() {
+  const status = $('#mem-status'), hint = $('#mem-hint');
+  const text = $('#mem-text').value.trim();
+  const source = $('#mem-source').value.trim();
+  if (!text && !_memFile) { hint.textContent = 'Pick a file or paste some text first.'; return; }
+  hint.textContent = ''; status.textContent = 'Reading and analyzing…';
+  const body = { source };
+  if (text) body.text = text;
+  else { body.filename = _memFile.name; body.data_b64 = _memFile.b64; }
+  let data;
+  try { data = await (await fetch('/chat/memory/import/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json(); }
+  catch (e) { status.textContent = 'Preview failed.'; return; }
+  if (data.error) { status.textContent = data.error; return; }
+  _memPreview = data;
+  renderMemReview(data);
+  status.textContent = '';
+}
+
+function renderMemReview(data) {
+  const host = $('#mem-review'); host.innerHTML = '';
+  const facts = data.facts || [], notes = data.notes || [];
+  if (!facts.length && !notes.length) {
+    host.textContent = 'Nothing durable found to import.'; $('#mem-import').style.display = 'none'; return;
+  }
+  if (facts.length) {
+    const h = document.createElement('div'); h.className = 'mem-review-head'; h.textContent = 'Facts (' + facts.length + ')'; host.appendChild(h);
+    facts.forEach((f, i) => {
+      const row = document.createElement('label'); row.className = 'mem-item';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.dataset.fact = i;
+      const span = document.createElement('span');
+      const cat = document.createElement('span'); cat.className = 'mi-cat'; cat.textContent = f.category + ' · ';
+      const key = document.createElement('span'); key.className = 'mi-key'; key.textContent = (f.key || '').replace(/_/g, ' ') + ': ';
+      const val = document.createElement('span'); val.className = 'mi-val'; val.textContent = f.value;
+      span.append(cat, key, val); row.append(cb, span); host.appendChild(row);
+    });
+  }
+  if (notes.length) {
+    const h = document.createElement('div'); h.className = 'mem-review-head'; h.textContent = 'Memories (' + notes.length + ')'; host.appendChild(h);
+    notes.forEach((n, i) => {
+      const row = document.createElement('label'); row.className = 'mem-item';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.dataset.note = i;
+      const val = document.createElement('span'); val.className = 'mi-val'; val.textContent = n;
+      row.append(cb, val); host.appendChild(row);
+    });
+  }
+  $('#mem-import').style.display = '';
+}
+
+async function memCommit() {
+  if (!_memPreview) return;
+  const status = $('#mem-status'), btn = $('#mem-import');
+  const facts = [], notes = [];
+  $('#mem-review').querySelectorAll('input[type=checkbox]').forEach(cb => {
+    if (!cb.checked) return;
+    if (cb.dataset.fact !== undefined) facts.push(_memPreview.facts[+cb.dataset.fact]);
+    else if (cb.dataset.note !== undefined) notes.push(_memPreview.notes[+cb.dataset.note]);
+  });
+  if (!facts.length && !notes.length) { status.textContent = 'Tick at least one item to import.'; return; }
+  btn.disabled = true; status.textContent = 'Importing…';
+  let data;
+  try { data = await (await fetch('/chat/memory/import/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ facts, notes, source: _memPreview.source }) })).json(); }
+  catch (e) { status.textContent = 'Import failed.'; btn.disabled = false; return; }
+  btn.disabled = false;
+  if (data.error) { status.textContent = data.error; return; }
+  const bits = [];
+  if (data.facts) bits.push(data.facts + ' fact' + (data.facts === 1 ? '' : 's'));
+  if (data.notes) bits.push(data.notes + ' memory note' + (data.notes === 1 ? '' : 's'));
+  status.textContent = '✓ Imported ' + bits.join(' and ') + '. Miko will remember it.';
+  _resetMemReview();
+  $('#mem-text').value = ''; $('#mem-file').value = ''; _memFile = null;
+  $('#mem-file-label').classList.remove('has-file'); $('#mem-file-text').textContent = '⇪ Choose an export file (.zip / .json / .html / .txt)';
+}
+
+$('#mem-btn').addEventListener('click', openMemImport);
+$('#mem-close').addEventListener('click', closeMemImport);
+$('#mem-preview').addEventListener('click', memPreview);
+$('#mem-import').addEventListener('click', memCommit);
+$('#mem-modal').addEventListener('click', e => { if (e.target === $('#mem-modal')) closeMemImport(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#mem-modal').classList.contains('show')) closeMemImport(); });
 
 // ── Voice dictation — push-to-talk or click (#6) ─────────────────────────────
 // Two engines: Web Speech (Chrome/Edge) streams text live as you speak; the

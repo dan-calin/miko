@@ -394,6 +394,10 @@ class CommandRouter:
                 from modules.projects import forget_project
                 return forget_project(**args)
 
+            if tool_name == "import_memories":
+                from modules.memory_import import import_memories
+                return import_memories(**args)
+
             # ── Notes ────────────────────────────────────────────────────────
             if tool_name == "create_note":
                 from modules.notes import _notes_manager
