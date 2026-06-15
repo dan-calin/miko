@@ -1350,6 +1350,7 @@ const escHtml = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').repl
 const messagesEl = $('#messages'), chatEl = $('#chat');
 let MODELS = {}, ENV = {};   // ENV: { ENV_VAR_NAME: value } loaded from .env
 let _lastUser = null;        // handle to the most recent user bubble (to fill attachment overviews)
+let _activeTurn = null;      // { session, card } of the in-flight turn, so its live status survives a conversation switch
 
 const PCODE = { gemini:'GEM', openai:'OAI', anthropic:'CLD', minimax:'MMX', deepseek:'DSK', kimi:'KMI', grok:'GRK', custom:'CST' };
 const codeFor = id => PCODE[id] || id.slice(0,3).toUpperCase();
@@ -1759,7 +1760,7 @@ function addActivityCard() {
   const st = document.createElement('div'); st.className = 'stamp';
   c.append(card, tx, fl, tl, pn, st); row.append(g, c);
   messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
-  return { card, tx, fl, tl, pn, st, _last: null,
+  return { row, card, tx, fl, tl, pn, st, _last: null,
     status: card.querySelector('.rs-status'), log: card.querySelector('.rs-log') };
 }
 
@@ -1829,6 +1830,7 @@ async function send() {
   if (pairMode) { sendCode(text); return; }
   if (asSkills.includes('deep-research')) { sendResearch(text); return; }
   const c = addActivityCard();
+  _activeTurn = { session: turnSession, card: c };   // keep the live status across switches
   setBusy(true);
   curAbort = new AbortController();
   let gotFinal = false, gotFirst = false;
@@ -1871,6 +1873,7 @@ async function send() {
     else handleChatEvent(c, { type: 'error', error: 'Network error: ' + e.message });
   } finally {
     curAbort = null; setBusy(false); chatEl.scrollTop = chatEl.scrollHeight; input.focus();
+    _activeTurn = null;
     loadConversations();   // refresh titles / order after the turn is saved
     loadAgentPanel(false); // surface any sub-agents Miko spawned during the turn
     // If the user switched away and back during this turn, the live card was detached
@@ -2678,7 +2681,12 @@ async function openConversation(id, force) {
       st.textContent = fmtTime(stampFrom(m.ts));
     }
   });
-  if (!(conv.messages || []).length) emptyState();
+  // If a turn for THIS conversation is still running, re-attach its live "Working /
+  // thinking…" card so the status survives the switch and keeps updating in place.
+  if (_activeTurn && _activeTurn.session === id && _activeTurn.card.row) {
+    messagesEl.appendChild(_activeTurn.card.row);
+  }
+  if (!messagesEl.querySelector('.row')) emptyState();
   chatEl.scrollTop = chatEl.scrollHeight;
   renderMonitor();
   loadConversations();
