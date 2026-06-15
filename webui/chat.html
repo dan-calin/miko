@@ -1900,7 +1900,7 @@ function addResearchCard(topic) {
   c.append(card, tx, fl, tl, st); row.append(g, c);
   messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
   return {
-    card, tx, fl, tl, st, steps: {}, srcCount: 0, topic: topic || '', report: '',
+    row, card, tx, fl, tl, st, steps: {}, srcCount: 0, topic: topic || '', report: '',
     status: card.querySelector('.rs-status'),
     plan: card.querySelector('.rs-plan'),
     log: card.querySelector('.rs-log'),
@@ -1989,7 +1989,9 @@ async function saveResearchAsSkill(c, box) {
 }
 
 async function sendResearch(text) {
+  const turnSession = sessionId;
   const c = addResearchCard(text);
+  _activeTurn = { session: turnSession, card: c };
   setBusy(true);
   curAbort = new AbortController();
   try {
@@ -2022,7 +2024,9 @@ async function sendResearch(text) {
       renderBotText(c.tx, '⚠ ' + e.message); c.st.textContent = fmtTime(new Date()); }
   } finally {
     curAbort = null; setBusy(false); chatEl.scrollTop = chatEl.scrollHeight; input.focus();
+    _activeTurn = null;
     loadConversations();
+    if (turnSession === sessionId && !document.body.contains(c.card)) openConversation(sessionId, true);
   }
 }
 
@@ -2119,6 +2123,8 @@ function handleCodeEvent(c, ev) {
 async function streamCode(url, payload, c) {
   setBusy(true); curAbort = new AbortController();
   pairStreaming = true; pairActiveCard = c;
+  const turnSession = sessionId;
+  _activeTurn = { session: turnSession, card: c };   // survive a conversation switch
   $('#input').placeholder = 'Type to queue a message for Miko — picked up next round…';
   try {
     const resp = await fetch(url, {
@@ -2147,6 +2153,7 @@ async function streamCode(url, payload, c) {
     else handleCodeEvent(c, { type: 'error', error: e.message });
   } finally {
     curAbort = null; pairStreaming = false; setBusy(false);
+    _activeTurn = null;
     $('#input').placeholder = pairMode ? 'Describe what to build — Miko will direct the coder…' : 'Message Miko…';
     chatEl.scrollTop = chatEl.scrollHeight; input.focus();
   }
@@ -2683,8 +2690,11 @@ async function openConversation(id, force) {
   });
   // If a turn for THIS conversation is still running, re-attach its live "Working /
   // thinking…" card so the status survives the switch and keeps updating in place.
+  _pairCards = {};        // pair cards aren't part of the transcript; drop stale refs first
   if (_activeTurn && _activeTurn.session === id && _activeTurn.card.row) {
     messagesEl.appendChild(_activeTurn.card.row);
+    // if it's a live pair session, keep its token registered so Resume won't duplicate it
+    if (_activeTurn.card.token) _pairCards[_activeTurn.card.token] = _activeTurn.card.row;
   }
   if (!messagesEl.querySelector('.row')) emptyState();
   chatEl.scrollTop = chatEl.scrollHeight;
@@ -2692,7 +2702,6 @@ async function openConversation(id, force) {
   loadConversations();
   closeAgentPanel();
   loadAgentPanel(true);   // this conversation's sub-agents
-  _pairCards = {};        // pair cards aren't part of the transcript; drop stale refs
 }
 
 function newConversation() {
