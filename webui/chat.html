@@ -854,6 +854,7 @@
     text-align: center; cursor: pointer; color: var(--text2); font-size: 12px; transition: .15s; }
   .mem-file:hover { border-color: var(--amber); color: var(--text); }
   .mem-file.has-file { border-style: solid; border-color: var(--green); color: var(--text); }
+  .mem-file.dragover { border-color: var(--amber); color: var(--text); background: rgba(196,162,87,.07); }
   .mem-or { text-align: center; font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: .06em; }
   #mem-text { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 7px 9px; font: inherit; font-size: 12px; resize: vertical; }
@@ -1345,8 +1346,10 @@
         <div class="mem-input">
           <label class="mem-file" id="mem-file-label">
             <input id="mem-file" type="file" accept=".zip,.json,.html,.htm,.txt,.md,.csv" hidden />
-            <span id="mem-file-text">⇪ Choose an export file (.zip / .json / .html / .txt)</span>
+            <span id="mem-file-text">⇪ Drop an export file here, or click to choose (.zip / .json / .html / .txt)</span>
           </label>
+          <div class="mem-or">or point Miko at a file on this PC (best for large Takeout zips)</div>
+          <input class="field" id="mem-path" type="text" spellcheck="false" autocomplete="off" placeholder="C:\Users\…\takeout-….zip" />
           <div class="mem-or">or paste it</div>
           <textarea id="mem-text" rows="4" spellcheck="false" placeholder="Paste your memory / saved info text here…"></textarea>
         </div>
@@ -3798,24 +3801,44 @@ function _readFileB64(file) {
     r.readAsDataURL(file);
   });
 }
-$('#mem-file').addEventListener('change', async e => {
-  const f = e.target.files[0]; const lab = $('#mem-file-label'), txt = $('#mem-file-text');
-  _resetMemReview();
-  if (!f) { _memFile = null; lab.classList.remove('has-file'); txt.textContent = '⇪ Choose an export file (.zip / .json / .html / .txt)'; return; }
+const _MEM_PICK = '⇪ Drop an export file here, or click to choose (.zip / .json / .html / .txt)';
+const _MEM_MAX_UPLOAD = 60 * 1024 * 1024;   // browsers choke base64-ing huge files; use the path field instead
+async function setMemFile(f) {
+  const lab = $('#mem-file-label'), txt = $('#mem-file-text'), hint = $('#mem-hint');
+  _resetMemReview(); hint.textContent = '';
+  if (!f) { _memFile = null; lab.classList.remove('has-file'); txt.textContent = _MEM_PICK; return; }
+  if (f.size > _MEM_MAX_UPLOAD) {
+    _memFile = null; lab.classList.remove('has-file'); txt.textContent = _MEM_PICK;
+    hint.textContent = 'That file is large (' + Math.round(f.size / 1048576) + ' MB). Paste its full path in the field below instead.';
+    return;
+  }
   txt.textContent = 'Reading ' + f.name + '…';
   try { _memFile = { name: f.name, b64: await _readFileB64(f) }; lab.classList.add('has-file'); txt.textContent = '✓ ' + f.name; }
-  catch (err) { _memFile = null; txt.textContent = 'Could not read that file.'; }
-});
+  catch (err) { _memFile = null; txt.textContent = _MEM_PICK; hint.textContent = "Couldn't read that file here — try pasting its full path below."; }
+}
+$('#mem-file').addEventListener('change', e => setMemFile(e.target.files[0]));
 $('#mem-text').addEventListener('input', _resetMemReview);
+$('#mem-path').addEventListener('input', _resetMemReview);
+// drag & drop onto the dropzone
+const _memZone = $('#mem-file-label');
+['dragenter', 'dragover'].forEach(ev => _memZone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); _memZone.classList.add('dragover'); }));
+['dragleave', 'dragend'].forEach(ev => _memZone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); _memZone.classList.remove('dragover'); }));
+_memZone.addEventListener('drop', e => {
+  e.preventDefault(); e.stopPropagation(); _memZone.classList.remove('dragover');
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) setMemFile(f);
+});
 
 async function memPreview() {
   const status = $('#mem-status'), hint = $('#mem-hint');
   const text = $('#mem-text').value.trim();
+  const path = $('#mem-path').value.trim();
   const source = $('#mem-source').value.trim();
-  if (!text && !_memFile) { hint.textContent = 'Pick a file or paste some text first.'; return; }
+  if (!text && !path && !_memFile) { hint.textContent = 'Drop a file, paste a path, or paste some text first.'; return; }
   hint.textContent = ''; status.textContent = 'Reading and analyzing…';
   const body = { source };
   if (text) body.text = text;
+  else if (path) body.path = path;
   else { body.filename = _memFile.name; body.data_b64 = _memFile.b64; }
   let data;
   try { data = await (await fetch('/chat/memory/import/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json(); }
@@ -3877,8 +3900,8 @@ async function memCommit() {
   if (data.notes) bits.push(data.notes + ' memory note' + (data.notes === 1 ? '' : 's'));
   status.textContent = '✓ Imported ' + bits.join(' and ') + '. Miko will remember it.';
   _resetMemReview();
-  $('#mem-text').value = ''; $('#mem-file').value = ''; _memFile = null;
-  $('#mem-file-label').classList.remove('has-file'); $('#mem-file-text').textContent = '⇪ Choose an export file (.zip / .json / .html / .txt)';
+  $('#mem-text').value = ''; $('#mem-path').value = ''; $('#mem-file').value = ''; _memFile = null;
+  $('#mem-file-label').classList.remove('has-file'); $('#mem-file-text').textContent = _MEM_PICK;
 }
 
 $('#mem-btn').addEventListener('click', openMemImport);

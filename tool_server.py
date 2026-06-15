@@ -718,7 +718,8 @@ def _build_app():
     @app.post("/chat/memory/import/preview")
     async def chat_memory_import_preview(request: Request, _=Depends(_auth)):
         """Extract + normalize an exported memory without writing anything. Body:
-        {text?, filename?, data_b64?, source?}. Returns reviewable facts + notes."""
+        {text?, path?, filename?, data_b64?, source?}. Returns reviewable facts +
+        notes. `path` reads a file on this machine directly (best for large zips)."""
         import base64
         from pathlib import Path
         from modules import memory_import as MI
@@ -728,7 +729,17 @@ def _build_app():
             body = {}
         raw = (body.get("text") or "").strip()
         source = (body.get("source") or "").strip()
+        path = (body.get("path") or "").strip()
         b64 = body.get("data_b64") or ""
+        if not raw and path:
+            try:
+                raw = MI.extract_from_path(path)
+            except FileNotFoundError:
+                return JSONResponse({"error": f"No file found at: {path}"}, status_code=400)
+            except Exception as e:
+                return JSONResponse({"error": f"Could not read the export: {e}"}, status_code=400)
+            if not source:
+                source = Path(path).stem
         if not raw and b64:
             try:
                 data = base64.b64decode(b64)

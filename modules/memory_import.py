@@ -116,28 +116,48 @@ def _text_from_bytes(name: str, data: bytes) -> str:
     return raw
 
 
+def _text_from_zip(z: zipfile.ZipFile) -> str:
+    chunks: list = []
+    for info in z.infolist():
+        if info.is_dir() or Path(info.filename).suffix.lower() not in _TEXT_EXTS:
+            continue
+        try:
+            chunks.append(f"=== {info.filename} ===")
+            chunks.append(_text_from_bytes(info.filename, z.read(info)))
+        except Exception:
+            continue
+    return "\n\n".join(c for c in chunks if c.strip())
+
+
 def extract_text(filename: str, data: bytes) -> str:
-    """Best-effort plain text from an export file (paste callers pass text straight
-    through). Walks a Takeout-style .zip and concatenates the text-bearing entries."""
+    """Best-effort plain text from an export file's bytes (paste callers pass text
+    straight through). Walks a Takeout-style .zip, reading only text-bearing entries."""
     if not data:
         return ""
     ext = Path(filename or "").suffix.lower()
     if ext == ".zip" or data[:2] == b"PK":
-        chunks: list = []
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as z:
-                for info in z.infolist():
-                    if info.is_dir() or Path(info.filename).suffix.lower() not in _TEXT_EXTS:
-                        continue
-                    try:
-                        chunks.append(f"=== {info.filename} ===")
-                        chunks.append(_text_from_bytes(info.filename, z.read(info)))
-                    except Exception:
-                        continue
+                return _text_from_zip(z)
         except zipfile.BadZipFile:
             return _decode(data)
-        return "\n\n".join(c for c in chunks if c.strip())
     return _text_from_bytes(filename or "memory.txt", data)
+
+
+def extract_from_path(path: str) -> str:
+    """Extract text from a file on disk. For .zip this streams entries straight from
+    disk (the right path for a large multi-part Google Takeout export — no need to
+    pull the whole archive through the browser)."""
+    p = Path(str(path).strip().strip('"')).expanduser()
+    if not p.is_file():
+        raise FileNotFoundError(str(p))
+    if p.suffix.lower() == ".zip":
+        try:
+            with zipfile.ZipFile(p) as z:
+                return _text_from_zip(z)
+        except zipfile.BadZipFile:
+            pass
+    return _text_from_bytes(p.name, p.read_bytes())
 
 
 # ── 2. Normalization (LLM) ───────────────────────────────────────────────────
@@ -302,7 +322,7 @@ def import_memories(path: str = "", text: str = "", source: str = "") -> str:
         if not p.is_file():
             return f"I can't find a file at: {path}"
         try:
-            raw = extract_text(p.name, p.read_bytes())
+            raw = extract_from_path(str(p))
         except Exception as e:
             return f"I couldn't read that export: {e}"
         if not src:
