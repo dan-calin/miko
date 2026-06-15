@@ -664,6 +664,9 @@
   }
   .ws-toggle:hover { color: var(--text); }
   .ws-toggle .ic { font-family: var(--mono); font-size: 13px; color: var(--amberDim); }
+  .ws-toggle-row { display: flex; border-bottom: 1px solid var(--border); }
+  .ws-toggle-row .ws-toggle { width: auto; flex: 1; border-bottom: none; }
+  .ws-toggle-row .ws-toggle + .ws-toggle { border-left: 1px solid var(--border); }
 
   /* ── Workspace overlay (file explorer + editor) ─────────────── */
   #workspace {
@@ -1018,7 +1021,6 @@
       <span class="wm-actions">
         <button class="settings-cog" id="tasks-btn" type="button" title="Scheduled tasks — automation"><svg class="cog-ic" width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7.6" r="5.1" stroke="currentColor" stroke-width="1.1"/><path d="M7 4.8V7.6l1.9 1.3" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.7 2.3 4.5 3.9M11.3 2.3 9.5 3.9" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg> Tasks</button>
         <button class="settings-cog" id="inbox-btn" type="button" title="Inbox — the mailbox Miko reads from"><svg class="cog-ic" width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="1.6" y="3" width="10.8" height="8" rx="1.2" stroke="currentColor" stroke-width="1.1"/><path d="M2 3.6 7 7.6l5-4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg> Inbox</button>
-        <button class="settings-cog" id="mem-btn" type="button" title="Import memory from another AI"><svg class="cog-ic" width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 1.8a3.2 3.2 0 0 0-3.2 3.2c0 .5.1 1 .35 1.4A2.6 2.6 0 0 0 4.4 11h5.2a2.6 2.6 0 0 0 .25-3.6c.25-.4.35-.9.35-1.4A3.2 3.2 0 0 0 7 1.8Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M7 11v1.4M5.2 5.4h3.6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg> Memories</button>
       </span>
     </div>
     <div class="rule"></div>
@@ -1123,9 +1125,14 @@
       </div>
     </div>
 
-    <button class="ws-toggle" id="ws-open" type="button">
-      <span class="ic">⌗</span> Open workspace
-    </button>
+    <div class="ws-toggle-row">
+      <button class="ws-toggle" id="ws-open" type="button">
+        <span class="ic">⌗</span> Open workspace
+      </button>
+      <button class="ws-toggle" id="mem-btn" type="button" title="Import memory from another AI">
+        <span class="ic">⊕</span> Memories
+      </button>
+    </div>
     <div class="reset-wrap">
       <button class="reset" id="clear-btn" type="button">
         <span class="ic">↺</span> <span id="clear-label">Reset conversation</span>
