@@ -731,6 +731,11 @@ def _build_app():
         source = (body.get("source") or "").strip()
         path = (body.get("path") or "").strip()
         b64 = body.get("data_b64") or ""
+        # If the user pasted a file/folder path into the text box, treat it as a path.
+        if not path and raw and "\n" not in raw and len(raw) < 500:
+            cand = Path(raw.strip().strip('"')).expanduser()
+            if cand.exists():
+                path, raw = str(cand), ""
         if not raw and path:
             try:
                 raw = MI.extract_from_path(path)

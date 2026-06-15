@@ -34,8 +34,10 @@ logger = logging.getLogger("miko.memory_import")
 
 _CATEGORIES = ("identity", "preferences", "relationships", "notes")
 _TEXT_EXTS = {".txt", ".md", ".json", ".html", ".htm", ".csv"}
-_INPUT_BUDGET = 24000      # chars of extracted text handed to the model
-_PER_FILE_CAP = 200000     # don't read absurdly large single entries
+_INPUT_BUDGET = 80000      # chars of extracted text handed to the model
+_PER_FILE_CAP = 300000     # don't read absurdly large single entries
+_DIR_TOTAL_BUDGET = 2000000  # cap when walking an extracted Takeout folder
+_DIR_MAX_FILES = 400
 
 TOOL_DECLARATIONS = [
     {
@@ -144,11 +146,37 @@ def extract_text(filename: str, data: bytes) -> str:
     return _text_from_bytes(filename or "memory.txt", data)
 
 
+def _text_from_dir(root: Path) -> str:
+    """Walk an extracted Takeout-style folder and concatenate its text-bearing files
+    (.html / .json / .txt / .md / .csv), bounded in count and total size."""
+    chunks: list = []
+    used = files = 0
+    for f in sorted(root.rglob("*")):
+        if files >= _DIR_MAX_FILES or used >= _DIR_TOTAL_BUDGET:
+            break
+        if not f.is_file() or f.suffix.lower() not in _TEXT_EXTS:
+            continue
+        try:
+            piece = _text_from_bytes(f.name, f.read_bytes())
+        except Exception:
+            continue
+        if not piece.strip():
+            continue
+        rel = f.relative_to(root)
+        block = f"=== {rel} ===\n{piece}"
+        chunks.append(block)
+        used += len(block)
+        files += 1
+    return "\n\n".join(chunks)
+
+
 def extract_from_path(path: str) -> str:
-    """Extract text from a file on disk. For .zip this streams entries straight from
-    disk (the right path for a large multi-part Google Takeout export — no need to
-    pull the whole archive through the browser)."""
+    """Extract text from a file OR folder on disk. A .zip streams its entries; a
+    folder (an already-extracted Google Takeout) is walked recursively — both read
+    straight from disk so a large export never has to go through the browser."""
     p = Path(str(path).strip().strip('"')).expanduser()
+    if p.is_dir():
+        return _text_from_dir(p)
     if not p.is_file():
         raise FileNotFoundError(str(p))
     if p.suffix.lower() == ".zip":
@@ -319,14 +347,14 @@ def import_memories(path: str = "", text: str = "", source: str = "") -> str:
     src = (source or "").strip()
     if not raw and path:
         p = Path(path.strip().strip('"')).expanduser()
-        if not p.is_file():
-            return f"I can't find a file at: {path}"
+        if not p.exists():
+            return f"I can't find anything at: {path}"
         try:
             raw = extract_from_path(str(p))
         except Exception as e:
             return f"I couldn't read that export: {e}"
         if not src:
-            src = p.stem
+            src = p.stem or p.name
     if not raw.strip():
         return "There was no readable memory in that export."
 
