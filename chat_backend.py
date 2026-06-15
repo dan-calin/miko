@@ -598,7 +598,8 @@ def _run_tool(router, name: str, args: dict, allow_actions: bool,
     from core.command_router import REQUIRES_CONFIRMATION
 
     used.append(name)
-    _emit(emit, {"type": "tool_start", "name": name, "args": _args_summary(args)})
+    _emit(emit, {"type": "tool_start", "name": name, "args": _args_summary(args),
+                 "note": _tool_activity(name, args)})
 
     def done(result: str, status: str = "ok") -> str:
         _emit(emit, {"type": "tool_end", "name": name, "status": status,
@@ -656,6 +657,61 @@ def _args_summary(args: dict) -> str:
 
 def _result_summary(result: str) -> str:
     return (str(result).replace("\n", " ")[:200]).strip()
+
+
+def _tool_activity(name: str, args: dict) -> str:
+    """A short, present-tense note on what Miko is doing right now, for the activity
+    card header (e.g. 'Creating app.py', 'Modifying styles.css', 'Reading config')."""
+    args = args or {}
+
+    def base(*keys):
+        for k in keys:
+            v = str(args.get(k, "") or "").strip()
+            if v:
+                return os.path.basename(v.rstrip("/\\")) or v
+        return ""
+
+    if name == "file_op":
+        action = str(args.get("action", "")).lower().strip()
+        f = base("path", "destination")
+        if action == "write":
+            path = args.get("path", "") or args.get("destination", "")
+            verb = "Modifying" if (path and os.path.isfile(path)) else "Creating"
+            return f"{verb} {f}" if f else verb
+        # actions whose label is already a full phrase (no filename to append)
+        whole = {"list": "Listing files", "search": "Searching files"}
+        if action in whole:
+            return whole[action]
+        labels = {"read": "Reading", "open": "Reading", "delete": "Deleting",
+                  "move": "Moving", "rename": "Renaming", "copy": "Copying",
+                  "append": "Updating", "mkdir": "Creating folder",
+                  "exists": "Checking", "info": "Inspecting"}
+        verb = labels.get(action, action.capitalize() or "Working on")
+        return f"{verb} {f}".strip()
+    if name == "run_command":
+        task = str(args.get("task", "") or "").replace("\n", " ").strip()
+        return ("Running " + task[:48] + ("…" if len(task) > 48 else "")) if task else "Running a command"
+    if name in ("create_note", "write_note"):
+        return f"Writing note {base('title', 'name', 'path')}".strip()
+    if name == "read_note":
+        return f"Reading note {base('title', 'name', 'path')}".strip()
+    if name in ("deep_research", "research", "research_topic"):
+        topic = str(args.get("topic", "") or args.get("query", "")).strip()
+        return ("Researching " + topic[:48]) if topic else "Researching"
+    if name in ("search_web", "web_search", "browse"):
+        q = str(args.get("query", "") or args.get("url", "")).strip()
+        return ("Searching " + q[:48]) if q else "Searching the web"
+    if name == "code_with_claude":
+        return "Coding with Claude"
+    if name == "spawn_agents":
+        return "Launching sub-agents"
+    if name == "add_project":
+        return f"Mapping {base('name', 'path')}".strip()
+    if name == "import_memories":
+        return "Importing memory"
+    if name == "recall":
+        return "Recalling memory"
+    return name.replace("_", " ").capitalize()
 
 
 # ── Public entry point ────────────────────────────────────────────────────────

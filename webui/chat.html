@@ -1843,7 +1843,7 @@ function handleChatEvent(c, ev) {
     el.querySelector('.rs-lb').textContent = ev.name;
     el.querySelector('.rs-dt').textContent = ev.args ? ' — ' + ev.args : '';
     c.log.appendChild(el); c._last = el;
-    c.status.textContent = 'using ' + ev.name + '…';
+    c.status.textContent = ev.note || ('using ' + ev.name + '…');
   } else if (ev.type === 'tool_end') {
     if (c._last) {
       const mk = ev.status === 'ok' ? '✓' : (ev.status === 'proposed' ? '⏸' : '⚠');
