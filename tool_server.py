@@ -22,23 +22,58 @@ logger = logging.getLogger("miko.toolserver")
 _router = None
 
 
-def _ndjson_stream(request, gen_factory, on_event=None):
-    """Stream a sync generator's events as NDJSON, with client-disconnect → cancel.
+# Explicit, session-scoped cancellation. A streaming turn that wants to be
+# cancellable by an intentional Stop (rather than by any connection hiccup)
+# registers a key; POST /chat/cancel sets it. This decouples "stop this turn"
+# from "the socket blipped", so navigating the SPA never aborts a running turn.
+_CANCELS: set = set()
+_CANCELS_LOCK = threading.Lock()
+
+
+def _request_cancel(key: str) -> None:
+    if key:
+        with _CANCELS_LOCK:
+            _CANCELS.add(key)
+
+
+def _cancel_requested(key: str) -> bool:
+    with _CANCELS_LOCK:
+        return key in _CANCELS
+
+
+def _clear_cancel(key: str) -> None:
+    if key:
+        with _CANCELS_LOCK:
+            _CANCELS.discard(key)
+
+
+def _ndjson_stream(request, gen_factory, on_event=None, cancel_key=None,
+                   cancel_on_disconnect=True):
+    """Stream a sync generator's events as NDJSON.
 
     gen_factory(should_cancel) must return a sync generator of JSON-able event dicts;
     `should_cancel` is a zero-arg callable the generator polls to abort cooperatively.
     on_event(ev) runs per event (for side effects like persisting the final result).
+
+    Cancellation: if `cancel_key` is given, an explicit POST /chat/cancel for that key
+    stops the turn. `cancel_on_disconnect` additionally cancels when the client socket
+    drops — leave it True for short streams, but False for the chat turn so a flaky
+    connection or an in-app navigation can't kill long-running work (it finishes and
+    persists instead).
     """
     import asyncio
     import json as _json
-    import threading
     from fastapi.responses import StreamingResponse
 
     cancel = threading.Event()
+    _clear_cancel(cancel_key)   # fresh start for this key
+
+    def _should_cancel() -> bool:
+        return cancel.is_set() or (cancel_key is not None and _cancel_requested(cancel_key))
 
     async def agen():
         loop = asyncio.get_event_loop()
-        gen = gen_factory(cancel.is_set)
+        gen = gen_factory(_should_cancel)
         _SENT = object()
 
         def _nxt():
@@ -49,7 +84,7 @@ def _ndjson_stream(request, gen_factory, on_event=None):
 
         try:
             while True:
-                if await request.is_disconnected():
+                if cancel_on_disconnect and await request.is_disconnected():
                     cancel.set()
                 item = await loop.run_in_executor(None, _nxt)
                 if item is _SENT:
@@ -62,6 +97,7 @@ def _ndjson_stream(request, gen_factory, on_event=None):
                 yield _json.dumps(item) + "\n"
         finally:
             cancel.set()
+            _clear_cancel(cancel_key)
 
     return StreamingResponse(
         agen(), media_type="application/x-ndjson",
@@ -287,7 +323,24 @@ def _build_app():
                 should_cancel=should_cancel,
             )
 
-        return _ndjson_stream(request, factory)
+        # Chat turns cancel only on an explicit Stop (POST /chat/cancel), never on a
+        # connection blip — so switching conversations mid-turn doesn't abort it.
+        return _ndjson_stream(request, factory,
+                              cancel_key=body.get("session_id", "default"),
+                              cancel_on_disconnect=False)
+
+    @app.post("/chat/cancel")
+    async def chat_cancel(request: Request, _=Depends(_auth)):
+        """Stop the running chat turn for a session (explicit Stop button)."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        sid = (body.get("session_id") or "").strip()
+        if not sid:
+            return JSONResponse({"error": "Missing session_id."}, status_code=400)
+        _request_cancel(sid)
+        return {"ok": True}
 
     @app.post("/chat/approve")
     async def chat_approve(request: Request, _=Depends(_auth)):

@@ -1804,9 +1804,17 @@ function setBusy(on) {
   b.classList.toggle('stop', on);
   b.setAttribute('aria-label', on ? 'Stop' : 'Send message');
 }
+function cancelTurn(sid) {
+  if (!sid) return;
+  try { fetch('/chat/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sid }) }); } catch (e) {}
+}
 function onSendClick() {
-  if ($('#send-btn').dataset.busy === '1') { if (curAbort) curAbort.abort(); }
-  else send();
+  if ($('#send-btn').dataset.busy === '1') {
+    // Stop the running turn explicitly (the chat turn ignores connection drops, so a
+    // plain abort no longer stops the server — tell it to cancel), then abort the read.
+    if (_activeTurn && _activeTurn.session) cancelTurn(_activeTurn.session);
+    if (curAbort) curAbort.abort();
+  } else send();
 }
 
 // A streaming bot bubble with a collapsible live activity log (rounds + tool calls).
