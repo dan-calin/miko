@@ -294,8 +294,55 @@ def commit(facts: list, notes: list, source: str = "") -> dict:
     note_path = ""
     if notes or facts:
         note_path = _write_note(CONFIG.notes_dir, src, facts, notes)
+        _rebuild_memory_index(CONFIG.notes_dir)
 
     return {"facts": fact_count, "notes": len(notes), "source": src, "note": note_path}
+
+
+_MEMORY_INDEX = "Memory"   # the MOC hub that connects every memory note in the graph
+
+
+def _memory_index_path(notes_dir) -> Path:
+    return Path(notes_dir) / f"{_MEMORY_INDEX}.md"
+
+
+def _note_source(note: Path) -> str:
+    """Read an imported-memory note's source label (frontmatter, else the H1, else slug)."""
+    try:
+        head = note.read_text(encoding="utf-8", errors="replace")[:600]
+    except OSError:
+        head = ""
+    m = re.search(r'(?m)^source:\s*"?([^"\n]+)"?', head)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"(?m)^#\s*Imported memory from\s+(.+)$", head)
+    if m:
+        return m.group(1).strip()
+    return note.stem.replace("imported-memory-", "").replace("-", " ")
+
+
+def _rebuild_memory_index(notes_dir) -> None:
+    """(Re)write Memory.md — a map-of-content that wikilinks every memory note, so
+    they form one connected 'Memory' cluster in Obsidian's graph instead of orphans."""
+    base = Path(notes_dir)
+    idx = _memory_index_path(notes_dir)
+    notes = sorted(p for p in base.rglob("imported-memory-*.md") if p.resolve() != idx.resolve())
+    lines = ["---", "type: index", "tags: [memory, moc]", "---", "",
+             "# Memory", "",
+             "Miko's memory hub. Everything Miko remembers about you links back here.", ""]
+    if notes:
+        lines.append("## Imported memory")
+        lines.append("")
+        for n in notes:
+            lines.append(f"- [[{n.stem}|{_note_source(n)}]]")
+    else:
+        lines.append("_No memory notes yet._")
+    idx.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        from memory import knowledge_store as KS
+        KS.index_note_file(idx)
+    except Exception as e:
+        logger.warning(f"index Memory hub failed: {e}")
 
 
 def _imported_folder(notes_dir) -> Path:
@@ -331,6 +378,7 @@ def _write_note(notes_dir, source: str, facts: list, notes: list) -> str:
         for n in notes:
             lines.append(f"- {n}")
         lines.append("")
+    lines.append(f"Part of [[{_MEMORY_INDEX}]]")
     note.write_text("\n".join(lines) + "\n", encoding="utf-8")
     try:
         from memory import knowledge_store as KS
