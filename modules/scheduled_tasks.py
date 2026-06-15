@@ -338,8 +338,10 @@ _PARSE_SYS = (
     "Only include the fields relevant to the chosen schedule. `prompt` is what the "
     "assistant should DO each time (imperative, self-contained). Default time 09:00 if "
     "unspecified. 'every morning'->daily 08:00; 'every Monday'->weekly weekday 0; 'every "
-    "2 hours'->interval 7200. If a year isn't given for a one-off, assume the next "
-    "occurrence. Output ONLY the JSON."
+    "2 hours'->interval 7200. A one-off ('tomorrow', 'on the 16th', 'in 10 minutes') is "
+    "schedule 'once' with an absolute `date` (YYYY-MM-DD) and `time`. Resolve relative "
+    "dates/times against the current date/time given in the request, and always pick a "
+    "date that is in the FUTURE. Output ONLY the JSON."
 )
 
 
@@ -350,9 +352,13 @@ def parse_task_nl(text: str) -> dict:
     try:
         from chat_backend import complete_text
         from config import CONFIG
+        now = datetime.now()
+        user = (f"Current date and time: {now:%Y-%m-%d %H:%M} ({now:%A}). "
+                f"Resolve any relative date/time (tomorrow, tonight, next Monday, in 10 "
+                f"minutes) against this.\n\nRequest: {text}")
         raw = complete_text("gemini", "gemini-2.5-flash",
                             api_key=getattr(CONFIG, "gemini_api_key", ""),
-                            system=_PARSE_SYS, user=text, max_tokens=400)
+                            system=_PARSE_SYS, user=user, max_tokens=400)
     except Exception as e:
         return {"error": f"Could not parse: {e}"}
     raw = (raw or "").strip()

@@ -3620,7 +3620,12 @@ async function parseTaskNL() {
   try {
     const r = await fetch('/chat/tasks/parse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
     const d = await r.json();
-    if (d.error && !d.draft) { $('#task-hint').textContent = d.error; $('#task-preview').classList.remove('show'); return; }
+    // A draft without a `describe` is the raw, un-validated model output — i.e. the
+    // schedule didn't validate. Show the reason instead of a broken preview.
+    if (d.error || !d.draft || !d.draft.describe) {
+      $('#task-hint').textContent = d.error || 'Could not understand that schedule.';
+      $('#task-preview').classList.remove('show'); return;
+    }
     _taskDraft = d.draft; $('#task-hint').textContent = '';
     const pv = $('#task-preview');
     pv.innerHTML = '<div class="tp-sched">' + escHtml(d.draft.describe) + '</div><div class="tp-prompt"></div>' +
