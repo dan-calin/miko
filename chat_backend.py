@@ -334,7 +334,12 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
             "FĂRĂ un apel de unealtă în aceeași tură e o halucinație — interzis. Inclusiv REPETĂRILE: "
             "când userul zice 'fă din nou', 'iar', 'la fel', 'încă o dată', TREBUIE să apelezi din "
             "nou unealta; nu poți refolosi acțiunea dintr-o tură anterioară. Răspunsurile marcate "
-            "'[Done by calling: …]' au rulat o unealtă reală — fă la fel de fiecare dată."
+            "'[Done by calling: …]' au rulat o unealtă reală — fă la fel de fiecare dată. "
+            "SCRIEREA DE COD: când userul îți cere să construiești/creezi/modifici cod sau o aplicație, "
+            "scrii TU fișierele cu file_op — asta e varianta implicită. NU apela code_with_claude decât "
+            "dacă userul cere EXPLICIT Claude Code / pair coder ('folosește Claude Code', "
+            "'fă pair-programming'); rulează un CLI extern pe abonamentul Claude al userului și eșuează "
+            "dacă nu e activ, deci nu-l folosi niciodată neinvitat."
         )
         if workspace:
             base += (
@@ -379,7 +384,12 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
         "WITHOUT a matching tool call in the same turn is a hallucination — forbidden. This includes "
         "REPEATS: when the user says 'do it again', 'again', 'same', 'one more', you MUST call the "
         "tool again; you cannot reuse an earlier turn's action. Earlier replies tagged "
-        "'[Done by calling: …]' each ran a real tool — match that every time, never just narrate."
+        "'[Done by calling: …]' each ran a real tool — match that every time, never just narrate. "
+        "WRITING CODE: when the user asks you to build, create, or change code or an app, write the "
+        "files YOURSELF with file_op — that is the default. Do NOT call code_with_claude unless the "
+        "user EXPLICITLY asks to use Claude Code / the pair coder (e.g. 'use Claude Code', "
+        "'pair-program this'); it runs an external CLI under the user's own Claude subscription and "
+        "fails when that isn't active, so never reach for it uninvited."
     )
     if workspace:
         base += (

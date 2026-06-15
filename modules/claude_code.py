@@ -717,13 +717,16 @@ TOOL_DECLARATIONS = [
     {
         "name": "code_with_claude",
         "description": (
-            "Start a pair-programming session where Miko directs Claude Code (a full "
-            "coder) to build/modify a real project. Miko instructs, Claude implements, "
-            "they iterate until both agree it's done. Use after researching/planning, when "
-            "the user wants actual code written or a repo changed. Every round is "
-            "git-checkpointed so changes can be reverted. Returns the dev transcript + "
-            "outcome. (For watching it live with approve/revert controls, the Chat UI's "
-            "pair-programming panel is better.)"
+            "Hand a build/coding task to the external Claude Code CLI (a separate coder "
+            "that runs under the user's own Claude subscription). ONLY use this when the "
+            "user EXPLICITLY asks for it — e.g. 'use Claude Code', 'pair-program this', "
+            "'have Claude build it', or 'use the pair coder'. Do NOT reach for it on a "
+            "generic 'build/create/make an app' request: by default write the code "
+            "YOURSELF with the file_op tool. This depends on an external CLI and the "
+            "user's Claude plan being active, so calling it uninvited fails when their "
+            "subscription isn't available. When the user does ask: Miko directs Claude, "
+            "it implements, they iterate to a handshake; every round is git-checkpointed "
+            "and revertible. (For live approve/revert, the Chat UI's pair panel is better.)"
         ),
         "parameters": {
             "type": "OBJECT",
