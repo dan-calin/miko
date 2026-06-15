@@ -339,7 +339,11 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
             "scrii TU fișierele cu file_op — asta e varianta implicită. NU apela code_with_claude decât "
             "dacă userul cere EXPLICIT Claude Code / pair coder ('folosește Claude Code', "
             "'fă pair-programming'); rulează un CLI extern pe abonamentul Claude al userului și eșuează "
-            "dacă nu e activ, deci nu-l folosi niciodată neinvitat."
+            "dacă nu e activ, deci nu-l folosi niciodată neinvitat. Când userul CERE Claude Code și nu a "
+            "spus cât să ruleze, ÎNTREABĂ-L O DATĂ — în text — câte runde să pună limită, sau dacă să "
+            "ruleze până decizi TU că proiectul e gata; apoi apelează code_with_claude cu acel număr ca "
+            "max_rounds (pune 0 pentru 'până decizi tu'). Asta e singura întrebare pe care o poți pune "
+            "înainte de a coda — orice altceva cere un apel real de unealtă, nu o întrebare."
         )
         if workspace:
             base += (
@@ -389,7 +393,12 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
         "files YOURSELF with file_op — that is the default. Do NOT call code_with_claude unless the "
         "user EXPLICITLY asks to use Claude Code / the pair coder (e.g. 'use Claude Code', "
         "'pair-program this'); it runs an external CLI under the user's own Claude subscription and "
-        "fails when that isn't active, so never reach for it uninvited."
+        "fails when that isn't active, so never reach for it uninvited. When the user DOES ask for "
+        "Claude Code and hasn't said how long to run it, ASK them ONCE — in text — how many rounds "
+        "to cap it at, or whether to run until you judge the project done; then call code_with_claude "
+        "with that number as max_rounds (pass 0 for 'until you decide it's done'). This rounds "
+        "question is the one clarification you may ask before coding — everything else still requires "
+        "a real tool call, not a question."
     )
     if workspace:
         base += (

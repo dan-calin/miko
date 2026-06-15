@@ -392,10 +392,31 @@ def _is_redundant(instr: str, state: dict, threshold: float = 0.82, last_n: int 
     )
 
 
+# When the user wants Miko to run "until it decides the project is done", there's no
+# fixed round cap — only the two-way handshake ends it. This ceiling is a pure runaway
+# guard (cost / infinite-debate protection); normal runs finish well before it.
+_HARD_MAX_ROUNDS = 40
+
+
+def _resolve_rounds(max_rounds) -> int:
+    """Normalise a requested round budget. <=0 → 'until done' (hard ceiling); otherwise
+    the requested number, clamped to the ceiling."""
+    try:
+        n = int(max_rounds)
+    except (TypeError, ValueError):
+        n = 6
+    if n <= 0:
+        return _HARD_MAX_ROUNDS
+    return min(n, _HARD_MAX_ROUNDS)
+
+
 def start_session(repo, goal, mode="autonomous", research="", provider="gemini",
                   model="", api_key="", base_url="", max_rounds=6,
                   coder="claude", coder_model="", coder_effort="") -> dict:
-    """Create a pair-programming session (does not run rounds yet)."""
+    """Create a pair-programming session (does not run rounds yet).
+
+    max_rounds <= 0 means "run until the handshake" (Miko decides it's done), capped at
+    _HARD_MAX_ROUNDS as a runaway guard."""
     repo = os.path.abspath(os.path.expanduser((repo or "").strip()))
     if not os.path.isdir(repo):
         return {"error": f"Not a directory: {repo}"}
@@ -413,7 +434,7 @@ def start_session(repo, goal, mode="autonomous", research="", provider="gemini",
         "claude_session": str(uuid.uuid4()), "round": 0, "history": [],
         "checkpoints": [], "status": "ready",
         "provider": provider, "model": model, "key": api_key, "base": base_url,
-        "research": research or "", "max_rounds": int(max_rounds or 6),
+        "research": research or "", "max_rounds": _resolve_rounds(max_rounds),
         "coder": coder, "coder_model": coder_model or "", "coder_effort": coder_effort or "",
         "framed": False,
     }
@@ -726,7 +747,10 @@ TOOL_DECLARATIONS = [
             "user's Claude plan being active, so calling it uninvited fails when their "
             "subscription isn't available. When the user does ask: Miko directs Claude, "
             "it implements, they iterate to a handshake; every round is git-checkpointed "
-            "and revertible. (For live approve/revert, the Chat UI's pair panel is better.)"
+            "and revertible. Before launching, ASK the user how many rounds to cap it at, "
+            "or whether to run until you judge the project done — then pass that as "
+            "max_rounds (0 = until done). (For live approve/revert, the Chat UI's pair "
+            "panel is better.)"
         ),
         "parameters": {
             "type": "OBJECT",
@@ -734,7 +758,10 @@ TOOL_DECLARATIONS = [
                 "project_dir": {"type": "STRING", "description": "Absolute path to the project/repo directory."},
                 "goal": {"type": "STRING", "description": "What to build or change (be specific)."},
                 "research": {"type": "STRING", "description": "Optional findings/context to hand Claude."},
-                "max_rounds": {"type": "INTEGER", "description": "Max back-and-forth rounds (default 5)."},
+                "max_rounds": {"type": "INTEGER", "description": (
+                    "Max back-and-forth rounds the user chose. Pass 0 to run until you "
+                    "(Miko) judge the project done — the handshake ends it, with a safety "
+                    "ceiling. Ask the user for this before launching.")},
             },
             "required": ["project_dir", "goal"],
         },
@@ -742,7 +769,7 @@ TOOL_DECLARATIONS = [
 ]
 
 
-def code_with_claude(project_dir: str, goal: str, research: str = "", max_rounds: int = 5) -> str:
+def code_with_claude(project_dir: str, goal: str, research: str = "", max_rounds: int = 6) -> str:
     from config import CONFIG
     started = start_session(
         project_dir, goal, mode="autonomous", research=research,
