@@ -517,6 +517,7 @@ def _build_app():
             (body.get("model") or "").strip(),
             (body.get("api_key") or "").strip(),
             (body.get("base_url") or "").strip(),
+            (body.get("session_id") or "").strip(),
         )
         if view.get("error"):
             return JSONResponse(view, status_code=400)
@@ -539,9 +540,9 @@ def _build_app():
         return _ndjson_stream(request, factory)
 
     @app.get("/chat/agents/list")
-    def chat_agents_list(limit: int = 10, _=Depends(_auth)):
+    def chat_agents_list(limit: int = 20, session_id: str = "", _=Depends(_auth)):
         from modules import agent_jobs
-        return {"batches": agent_jobs.list_batches(limit)}
+        return {"batches": agent_jobs.list_batches(limit, session_id)}
 
     @app.get("/chat/agents/batch")
     def chat_agents_batch(batch_id: str, _=Depends(_auth)):

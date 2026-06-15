@@ -355,6 +355,41 @@
   .agent-cancel-one { margin-left: 6px; background: none; border: none; color: var(--text3);
     font-size: 11px; cursor: pointer; }
   .agent-cancel-one:hover { color: var(--red, #e06c75); }
+  /* ── Sub-agents side panel (persistent, per-conversation) ── */
+  .agents-rail { position: fixed; top: 50%; right: 0; transform: translateY(-50%); z-index: 40;
+    display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer;
+    background: var(--surface); border: 1px solid var(--border); border-right: none;
+    border-radius: 8px 0 0 8px; padding: 11px 7px; color: var(--text2); }
+  .agents-rail:hover { color: var(--amber); border-color: var(--amber); }
+  .agents-rail.hidden { display: none; }
+  .agents-rail .ar-ic { font-size: 14px; }
+  .agents-rail .ar-label { writing-mode: vertical-rl; text-orientation: mixed; font-size: 10px;
+    letter-spacing: 1.5px; font-family: var(--mono); text-transform: uppercase; }
+  .agents-rail .ar-badge { min-width: 17px; height: 17px; border-radius: 9px; background: var(--text3);
+    color: var(--bg); font-family: var(--mono); font-size: 10px; display: none; align-items: center;
+    justify-content: center; padding: 0 4px; }
+  .agents-rail.has-batches .ar-badge { display: flex; }
+  .agents-rail.has-running .ar-badge { background: var(--amber); animation: agentpulse 1.1s ease-in-out infinite; }
+  .agents-panel { position: fixed; top: 0; right: 0; height: 100%; width: 372px; max-width: 90vw;
+    background: var(--bg); border-left: 1px solid var(--border); z-index: 50; display: flex;
+    flex-direction: column; transform: translateX(100%); transition: transform .22s ease;
+    box-shadow: -14px 0 34px rgba(0,0,0,.4); }
+  .agents-panel.show { transform: none; }
+  .agents-panel-head { display: flex; align-items: center; gap: 9px; padding: 17px 16px 13px;
+    border-bottom: 1px solid var(--border); }
+  .agents-panel-head .apt { font-size: 13px; font-weight: 600; color: var(--text); }
+  .agents-panel-head .ap-sub { font-family: var(--mono); font-size: 10px; color: var(--text3); }
+  .agents-panel-new { margin-left: auto; background: none; border: 1px solid var(--border);
+    color: var(--text2); border-radius: 5px; font-size: 11px; padding: 3px 9px; cursor: pointer; }
+  .agents-panel-new:hover { border-color: var(--amber); color: var(--amber); }
+  .agents-panel-close { background: none; border: none; color: var(--text3); cursor: pointer;
+    font-size: 16px; line-height: 1; padding: 2px 4px; }
+  .agents-panel-close:hover { color: var(--text); }
+  .agents-panel-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+  .agents-panel-empty { color: var(--text3); font-size: 12px; text-align: center; padding: 34px 16px;
+    line-height: 1.55; }
+  .agents-panel .agent-batch:first-child { margin-top: 0; }
+  .ap-batch-time { font-family: var(--mono); font-size: 10px; color: var(--text3); margin-left: 6px; }
   .pair-sessions { display: none; flex-direction: column; gap: 4px; margin: 0 0 8px;
     border: 1px solid var(--border); border-radius: 5px; background: var(--surface); padding: 6px; }
   .pair-sessions.show { display: flex; }
@@ -435,6 +470,12 @@
   }
   .as-eff:hover { color: var(--text); border-color: var(--borderMid); }
   .as-eff.on { border-color: var(--amberDim); color: var(--amber); background: var(--surface3); }
+  /* The persona popover's segmented control is reused in the horizontal Pair bars;
+     reset its popover-specific padding so the buttons line up (same height + baseline)
+     with the inputs, selects, and Sessions button sitting beside them. */
+  .pair-bar .as-effort { padding: 0; gap: 6px; align-self: stretch; }
+  .pair-bar .as-eff { flex: 0 0 auto; padding: 0 13px; display: inline-flex; align-items: center; }
+  .pair-bar .as-btn { padding: 6px 12px; font-size: 11px; }
   .inputbar {
     display: flex; gap: 10px; align-items: flex-end;
     background: var(--surface); border: 1px solid var(--border);
@@ -1137,6 +1178,29 @@
     </div>
   </main>
 
+  <!-- ── Sub-agents side panel (persists per conversation) ── -->
+  <div class="agents-rail hidden" id="agents-rail" title="Sub-agents for this conversation">
+    <span class="ar-ic">⛬</span>
+    <span class="ar-badge" id="agents-rail-badge">0</span>
+    <span class="ar-label">Agents</span>
+  </div>
+  <aside class="agents-panel" id="agents-panel">
+    <div class="agents-panel-head">
+      <span class="rs-ic mk-dot">⛬</span>
+      <span>
+        <div class="apt">Sub-agents</div>
+        <div class="ap-sub" id="agents-panel-sub">this conversation</div>
+      </span>
+      <button class="agents-panel-new" id="agents-panel-new" type="button" title="Launch new sub-agents">＋ New</button>
+      <button class="agents-panel-close" id="agents-panel-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="agents-panel-body" id="agents-panel-body">
+      <div class="agents-panel-empty" id="agents-panel-empty">
+        No sub-agents in this conversation yet.<br>Launch a batch from the <b>⛬ Agents</b> button, or ask Miko to delegate.
+      </div>
+    </div>
+  </aside>
+
   <!-- ── Settings modal (API keys & credentials) ──────────── -->
   <div id="settings-modal" class="modal-overlay">
     <div class="modal">
@@ -1741,6 +1805,7 @@ async function send() {
   } finally {
     curAbort = null; setBusy(false); chatEl.scrollTop = chatEl.scrollHeight; input.focus();
     loadConversations();   // refresh titles / order after the turn is saved
+    loadAgentPanel(false); // surface any sub-agents Miko spawned during the turn
   }
 }
 
@@ -2039,15 +2104,17 @@ async function launchAgents() {
     const r = await fetch('/chat/agents/launch', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tasks, context, provider: curProvider, model: $('#model').value,
-        api_key: $('#api-key').value, base_url: $('#base-url').value }),
+        api_key: $('#api-key').value, base_url: $('#base-url').value, session_id: sessionId }),
     });
     const view = await r.json();
     if (!r.ok || view.error) { $('#agents-hint').textContent = view.error || ('HTTP ' + r.status); return; }
-    if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
-    const refs = addAgentBatchCard(view);
     $('#agents-tasks').value = ''; $('#agents-context').value = ''; updateAgentsHint();
     toggleAgentsBar();
-    streamAgents(view.batch_id, refs);
+    const refs = renderPanelBatch(view, true);
+    _panelRefs[view.batch_id] = { refs, view };
+    openAgentPanel();
+    if (view.status === 'running') streamAgents(view.batch_id, refs);
+    updateAgentRail();
   } catch (e) {
     $('#agents-hint').textContent = 'Error: ' + (e.message || '');
   } finally {
@@ -2055,29 +2122,93 @@ async function launchAgents() {
   }
 }
 
-function addAgentBatchCard(view) {
-  const row = document.createElement('div'); row.className = 'row bot';
-  const g = document.createElement('div'); g.className = 'glyph'; g.textContent = 'M';
-  const c = document.createElement('div'); c.className = 'content';
+// ── Sub-agents side panel ────────────────────────────────────────────────────
+let _panelRefs = {};   // batch_id -> { refs, view }  (rendered cards for this session)
+
+function renderPanelBatch(view, prepend) {
+  const body = $('#agents-panel-body');
+  const empty = $('#agents-panel-empty'); if (empty) empty.style.display = 'none';
   const batch = document.createElement('div'); batch.className = 'agent-batch';
+  batch.dataset.batch = view.batch_id;
   const head = document.createElement('div'); head.className = 'agent-batch-head';
-  head.innerHTML = '<span class="rs-ic mk-dot">⛬</span> Sub-agents' +
-    '<span class="ab-cap">' + view.agents.length + ' · ' + (view.provider || '') +
-    ' · max ' + (view.cap || '?') + ' at once</span>';
+  const lbl = document.createElement('span');
+  lbl.innerHTML = '<span class="rs-ic mk-dot">⛬</span> ' + view.agents.length +
+    ' agent' + (view.agents.length === 1 ? '' : 's');
+  const cap = document.createElement('span'); cap.className = 'ab-cap';
+  cap.textContent = (view.provider || '') + ' · max ' + (view.cap || '?');
+  const time = document.createElement('span'); time.className = 'ap-batch-time';
+  time.textContent = view.created ? relTime(view.created * 1000) : '';   // created is epoch seconds
   const cancelAll = document.createElement('button'); cancelAll.className = 'ab-cancel';
   cancelAll.textContent = 'stop all';
   cancelAll.addEventListener('click', () => cancelAgents({ batch_id: view.batch_id }));
-  head.appendChild(cancelAll);
+  if (view.status !== 'running') cancelAll.style.display = 'none';
+  head.append(lbl, cap, time, cancelAll);
   batch.appendChild(head);
   const refs = { batch, agents: {}, cancelAll };
   view.agents.forEach(a => {
     const card = buildAgentCard(a);
     batch.appendChild(card.el); refs.agents[a.id] = card;
   });
-  const st = document.createElement('div'); st.className = 'stamp'; st.textContent = fmtTime(new Date());
-  c.append(batch, st); row.append(g, c);
-  messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
+  if (prepend && body.firstChild) body.insertBefore(batch, body.firstChild);
+  else body.appendChild(batch);
   return refs;
+}
+
+// Load (or refresh) the panel for the current conversation. rebuild=true wipes and
+// re-renders from scratch (used on conversation switch); otherwise it only adds
+// batches not already shown (used after a turn where Miko may have spawned some).
+async function loadAgentPanel(rebuild) {
+  if (rebuild) {
+    $('#agents-panel-body').querySelectorAll('.agent-batch').forEach(el => el.remove());
+    _panelRefs = {};
+  }
+  let batches = [];
+  try {
+    const r = await fetch('/chat/agents/list?session_id=' + encodeURIComponent(sessionId) + '&limit=20');
+    batches = (await r.json()).batches || [];
+  } catch (e) { return; }
+  // batches arrive newest-first; render oldest-first so prepending keeps newest on top.
+  batches.slice().reverse().forEach(v => {
+    const known = _panelRefs[v.batch_id];
+    if (!known) {
+      const refs = renderPanelBatch(v, true);
+      _panelRefs[v.batch_id] = { refs, view: v };
+      if (v.status === 'running') streamAgents(v.batch_id, refs);
+    } else {
+      (v.agents || []).forEach(a => { const c = known.refs.agents[a.id]; if (c) paintAgent(c, a); });
+      if (v.status !== 'running' && known.refs.cancelAll) known.refs.cancelAll.style.display = 'none';
+    }
+  });
+  const empty = $('#agents-panel-empty');
+  if (empty) empty.style.display = batches.length ? 'none' : 'block';
+  updateAgentRail();
+}
+
+function updateAgentRail() {
+  const rail = $('#agents-rail');
+  const ids = Object.keys(_panelRefs);
+  const n = ids.length;
+  const running = ids.filter(id => {
+    const refs = _panelRefs[id].refs;
+    return Object.values(refs.agents).some(c => c.state.textContent === 'running' || c.state.textContent === 'queued');
+  }).length;
+  rail.classList.toggle('hidden', n === 0 && !$('#agents-panel').classList.contains('show'));
+  rail.classList.toggle('has-batches', n > 0);
+  rail.classList.toggle('has-running', running > 0);
+  $('#agents-rail-badge').textContent = running > 0 ? running : n;
+}
+
+function openAgentPanel() {
+  $('#agents-panel').classList.add('show');
+  $('#agents-rail').classList.remove('hidden');
+}
+function closeAgentPanel() {
+  $('#agents-panel').classList.remove('show');
+  updateAgentRail();
+}
+function toggleAgentPanel() {
+  if ($('#agents-panel').classList.contains('show')) closeAgentPanel();
+  else { openAgentPanel(); loadAgentPanel(false); }
 }
 
 function buildAgentCard(a) {
@@ -2138,7 +2269,11 @@ function streamAgents(batchId, refs) {
         let ev; try { ev = JSON.parse(line); } catch (e) { continue; }
         if (ev.type === 'batch') {
           (ev.agents || []).forEach(a => { const card = refs.agents[a.id]; if (card) paintAgent(card, a); });
-          if (ev.status !== 'running') refs.cancelAll.style.display = 'none';
+          if (ev.status !== 'running' && refs.cancelAll) refs.cancelAll.style.display = 'none';
+          updateAgentRail();
+        } else if (ev.type === 'done') {
+          if (refs.cancelAll) refs.cancelAll.style.display = 'none';
+          updateAgentRail();
         }
       }
     }
@@ -2427,6 +2562,8 @@ async function openConversation(id) {
   chatEl.scrollTop = chatEl.scrollHeight;
   renderMonitor();
   loadConversations();
+  closeAgentPanel();
+  loadAgentPanel(true);   // this conversation's sub-agents
 }
 
 function newConversation() {
@@ -2435,6 +2572,8 @@ function newConversation() {
   emptyState();
   renderMonitor();
   loadConversations();
+  closeAgentPanel();
+  loadAgentPanel(true);   // empty for a fresh conversation
   $('#input').focus();
 }
 
@@ -2959,6 +3098,9 @@ $('#pair-btn').addEventListener('click', () => setPairMode(!pairMode));
 $('#agents-btn').addEventListener('click', toggleAgentsBar);
 $('#agents-launch').addEventListener('click', launchAgents);
 $('#agents-tasks').addEventListener('input', updateAgentsHint);
+$('#agents-rail').addEventListener('click', toggleAgentPanel);
+$('#agents-panel-close').addEventListener('click', closeAgentPanel);
+$('#agents-panel-new').addEventListener('click', () => { closeAgentPanel(); toggleAgentsBar(); });
 $('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(el => el.addEventListener('click', () => {
   pairKind = el.dataset.mode; saveCfg();
   $('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(b => b.classList.toggle('on', b === el));
@@ -3678,6 +3820,7 @@ loadModels().then(() => input.focus());
   } catch (e) { /* ignore */ }
   loadConversations();
   await restorePairSession();   // append the active pair card LAST so nothing wipes it
+  loadAgentPanel(true);        // restore this conversation's sub-agents (survives refresh)
 })();
 // Workspace deep link: ?workspace[=<folder-or-file>].
 if (URLP.has('workspace')) {

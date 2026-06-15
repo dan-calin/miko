@@ -917,6 +917,16 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
     if not model:
         return {"reply": "", "tools_used": [], "error": "No model specified."}
 
+    # Tie any sub-agents Miko spawns this turn to the conversation that launched them,
+    # so they show up under the right chat in the sub-agent panel. (Sub-agent sessions
+    # themselves can't spawn, so they never reach launch().)
+    if not session_id.startswith("subagent-"):
+        try:
+            from modules import agent_jobs
+            agent_jobs.set_current_session(session_id)
+        except Exception:
+            pass
+
     # "Whose assistant am I" follows the remembered identity name, so the base
     # prompt agrees with memory after the user corrects their name.
     try:

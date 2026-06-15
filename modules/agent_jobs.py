@@ -14,6 +14,7 @@ agents queue (status 'queued') and start as slots free up, so a batch never exce
 provider's limit no matter how many are launched.
 """
 
+import json
 import logging
 import os
 import threading
@@ -35,6 +36,21 @@ _LOCK = threading.RLock()
 _SEMAPHORES = {}           # provider -> BoundedSemaphore(cap)
 _POOL = ThreadPoolExecutor(max_workers=16, thread_name_prefix="subagent")
 _local = threading.local()
+_session_local = threading.local()   # the conversation a spawn belongs to (per thread)
+
+
+# ── Session attribution ───────────────────────────────────────────────────────
+# A batch is tied to the chat session that launched it, so the UI can show each
+# conversation's own sub-agents. The UI passes session_id explicitly; Miko's own
+# spawn_agents() runs inside a chat turn, so chat_backend stamps the active session
+# on this thread and launch() picks it up.
+
+def set_current_session(session_id: str) -> None:
+    _session_local.sid = (session_id or "").strip()
+
+
+def current_session() -> str:
+    return getattr(_session_local, "sid", "") or ""
 
 
 def provider_cap(provider: str) -> int:
@@ -73,17 +89,80 @@ def _prune_locked() -> None:
 
 
 def _batch_view(batch: dict) -> dict:
-    """A JSON-safe snapshot (omits internal cancel flags)."""
+    """A JSON-safe snapshot (omits the API key + internal cancel flags)."""
     return {
         "batch_id": batch["id"], "created": batch["created"], "context": batch["context"],
         "provider": batch["provider"], "model": batch["model"], "cap": batch["cap"],
-        "status": batch_status(batch),
+        "session_id": batch.get("session_id", ""), "status": batch_status(batch),
         "agents": [{
             "id": a["id"], "task": a["task"], "status": a["status"],
             "steps": list(a["steps"]), "result": a["result"], "error": a["error"],
             "started": a["started"], "finished": a["finished"],
         } for a in batch["agents"]],
     }
+
+
+# ── Disk persistence ──────────────────────────────────────────────────────────
+# Batches live in memory, but the UI panel must survive a page refresh AND a server
+# restart. We persist a key-free snapshot to data/agent_batches.json; the API key and
+# live cancel flags are never written.
+
+def _path():
+    from config import CONFIG
+    return CONFIG.data_dir / "agent_batches.json"
+
+
+def _save() -> None:
+    """Write all batches (key-free) to disk. Best-effort, atomic."""
+    try:
+        with _LOCK:
+            views = [_batch_view(b) for b in
+                     sorted(_BATCHES.values(), key=lambda b: b["created"])]
+        p = _path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(views, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(p)
+    except Exception as e:
+        logger.debug(f"agent_batches save skipped: {e}")
+
+
+def _load() -> None:
+    """Restore persisted batches on startup. Any agent left mid-flight by a crash/
+    restart is marked errored — its worker thread is gone, so it can't resume."""
+    try:
+        p = _path()
+        if not p.exists():
+            return
+        views = json.loads(p.read_text(encoding="utf-8")) or []
+    except Exception as e:
+        logger.debug(f"agent_batches load skipped: {e}")
+        return
+    with _LOCK:
+        for v in views:
+            agents = []
+            for a in v.get("agents", []):
+                st = a.get("status", "done")
+                err = a.get("error", "")
+                if st in ("running", "queued"):
+                    st = "error"
+                    err = err or "Interrupted (Miko restarted)"
+                agents.append({
+                    "id": a.get("id") or "a-" + uuid.uuid4().hex[:8],
+                    "task": a.get("task", ""), "status": st,
+                    "steps": list(a.get("steps", [])), "result": a.get("result", ""),
+                    "error": err, "started": a.get("started", 0.0),
+                    "finished": a.get("finished", 0.0), "cancel": False,
+                })
+            bid = v.get("batch_id") or "batch-" + uuid.uuid4().hex[:8]
+            _BATCHES[bid] = {
+                "id": bid, "created": v.get("created", _now()),
+                "context": v.get("context", ""), "provider": v.get("provider", ""),
+                "model": v.get("model", ""), "key": "", "base": "",
+                "cap": v.get("cap", _DEFAULT_CAP), "session_id": v.get("session_id", ""),
+                "agents": agents,
+            }
+        _prune_locked()
 
 
 def batch_status(batch: dict) -> str:
@@ -162,11 +241,15 @@ def _run_agent(batch: dict, agent: dict) -> None:
             sem.release()
         except ValueError:
             pass
+        _save()   # persist the terminal state so a refresh/restart keeps it
 
 
-def launch(tasks, context: str, provider: str, model: str, key: str, base: str = "") -> dict:
+def launch(tasks, context: str, provider: str, model: str, key: str, base: str = "",
+           session_id: str = "") -> dict:
     """Create a batch and run its agents in the background (non-blocking).
-    Returns the batch view immediately. Respects the per-provider concurrency cap."""
+    Returns the batch view immediately. Respects the per-provider concurrency cap.
+    The batch is tied to session_id (or the active chat session) so the UI panel can
+    group each conversation's sub-agents."""
     tasks = [str(t).strip() for t in (tasks or []) if str(t).strip()]
     if not tasks:
         return {"error": "No tasks to run."}
@@ -174,11 +257,13 @@ def launch(tasks, context: str, provider: str, model: str, key: str, base: str =
     batch = {
         "id": "batch-" + uuid.uuid4().hex[:8], "created": _now(), "context": (context or "").strip(),
         "provider": provider, "model": model, "key": key, "base": base, "cap": cap,
+        "session_id": (session_id or "").strip() or current_session(),
         "agents": [_new_agent(t) for t in tasks],
     }
     with _LOCK:
         _BATCHES[batch["id"]] = batch
         _prune_locked()
+    _save()
     for agent in batch["agents"]:
         _POOL.submit(_run_agent, batch, agent)
     logger.info(f"launched {batch['id']} with {len(tasks)} agent(s), provider={provider} cap={cap}")
@@ -213,9 +298,15 @@ def get_batch(batch_id: str) -> dict:
         return _batch_view(b) if b else {}
 
 
-def list_batches(limit: int = 10) -> list:
+def list_batches(limit: int = 10, session_id: str = "") -> list:
+    """Most-recent batches, newest first. If session_id is given, only that
+    conversation's batches are returned (the UI panel groups by conversation)."""
+    sid = (session_id or "").strip()
     with _LOCK:
-        ordered = sorted(_BATCHES.values(), key=lambda b: b["created"], reverse=True)[:limit]
+        vals = _BATCHES.values()
+        if sid:
+            vals = [b for b in vals if b.get("session_id", "") == sid]
+        ordered = sorted(vals, key=lambda b: b["created"], reverse=True)[:limit]
         return [_batch_view(b) for b in ordered]
 
 
@@ -227,6 +318,7 @@ def cancel_agent(agent_id: str) -> dict:
                     a["cancel"] = True
                     if a["status"] == "queued":
                         a["status"] = "cancelled"; a["finished"] = _now()
+                    _save()
                     return {"cancelled": agent_id}
     return {"error": "Unknown agent."}
 
@@ -240,6 +332,7 @@ def cancel_batch(batch_id: str) -> dict:
             a["cancel"] = True
             if a["status"] == "queued":
                 a["status"] = "cancelled"; a["finished"] = _now()
+    _save()
     return {"cancelled": batch_id}
 
 
@@ -261,3 +354,7 @@ def stream_batch(batch_id: str, interval: float = 0.6, timeout: float = 1800):
             yield {"type": "done", "batch_id": batch_id, "status": view["status"]}
             return
         time.sleep(interval)
+
+
+# Restore any batches from a previous run so the UI panel persists across restarts.
+_load()
