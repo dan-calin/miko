@@ -30,18 +30,25 @@ English) and replies in the language you write/speak.
 - **Second-brain memory** — a local-embedding (fastembed) semantic memory in SQLite that
   learns facts from your conversations (reconciles corrections instead of duplicating),
   recalls by meaning, keeps an episodic log, and stores notes as an **Obsidian-compatible
-  vault** (PARA folders + `[[wikilinks]]`). Works in voice and chat. *Falls back to a
-  provider embedding API, then keyword search, if fastembed isn't installed.*
+  vault** (PARA folders + `[[wikilinks]]`). Works in voice and chat. You can also
+  **import the memory you already have in another AI** — point Miko at a Google Takeout
+  export (Gemini), a ChatGPT data export, or just pasted text, review what it found, and
+  it folds those facts into its own memory. *Falls back to a provider embedding API, then
+  keyword search, if fastembed isn't installed.*
 - **Sub-agents** — Miko can spawn up to 5 focused, **read-only** agents in parallel to
   research several angles or inspect multiple files at once, then synthesize their findings.
 - **Web Chat UI** (`/chat`) — any model (Gemini, OpenAI, Anthropic Claude, MiniMax,
   DeepSeek, Kimi, xAI Grok, or any OpenAI-compatible endpoint), a **live activity view**
-  that shows each tool call as it runs, a **Stop** button, an **approval mode** (review
-  file/command changes as diffs before they apply), **file & image attachments** (drag,
-  drop, or paste — handled sensibly even on models without vision), per-model
-  persona/skill/effort settings, a built-in file explorer + editor, an **Inbox viewer**,
-  a **task scheduler with an interactive calendar**, an in-UI **Settings panel** for every
-  key and credential, resumable conversations, and a selectable workspace.
+  that narrates what Miko is doing in plain language (*Creating app.py*, *Modifying
+  styles.css*, *Researching…*) with each tool call as it runs, a **Stop** button, an
+  **approval mode** (review file/command changes as diffs before they apply), **file &
+  image attachments** (drag, drop, or paste — handled sensibly even on models without
+  vision), per-model persona/skill/effort settings, a built-in file explorer + editor, an
+  **Inbox viewer**, a **task scheduler with an interactive calendar**, a **Memories** panel
+  to import memory from another AI, a side panel of your **sub-agent runs**, an in-UI
+  **Settings panel** for every key and credential, and a selectable workspace. Conversations
+  are resumable, and a running turn **keeps going (and its live status keeps updating) if
+  you switch conversations** — it never silently cancels.
 - **Email watching** *(optional)* — read, search, triage, and send mail; browse the same
   inbox Miko reads **inside the UI** (rich HTML, inline images, attachments); and set
   **standing inbox watches** — tell Miko *"let me know when Andra emails me"*
@@ -322,6 +329,15 @@ http://localhost:7832/chat
 - Add tasks in **plain language** (*“every 30 minutes, check HN for AI news and DM me”*)
   or from the **interactive calendar**: click a day, type the task, done.
 
+**Memories — import what another AI knows about you**
+
+- The **Memories** button (next to **Open workspace**) imports memory exported from another
+  assistant. Drop in a **Google Takeout** export of Gemini (`.zip` or the extracted folder),
+  a **ChatGPT** data export, or paste text — by upload, drag-and-drop, or a path on your PC
+  (best for big exports, since the server reads them straight from disk). Miko previews the
+  facts + memories it found — **scanning a long history in several passes** so nothing buried
+  is missed — and you tick what to keep before anything is saved.
+
 **Settings — keys & credentials in the UI**
 
 - A grouped **Settings panel** (footer) edits every `.env` credential — Discord, email,
@@ -363,6 +379,20 @@ migration. Miko lays a light **PARA** structure over it (`Inbox / Projects / Are
 / Archives / Daily`), routes captures and research into the right folders, and links related
 notes with `[[wikilinks]]`. Deleting a note also clears it from recall.
 
+### Import your memory from another AI
+
+Already have history with another assistant? Bring it across. Open the **Memories** panel
+(or use the `import_memories` tool by voice/chat) and give Miko a **Google Takeout** export
+of Gemini (a `.zip` or the extracted folder), a **ChatGPT** data export, or just pasted text
+— by upload, drag-and-drop, or a path to the file/folder on your PC. Miko extracts the
+readable content (it walks Takeout's HTML/JSON), then **samples across the whole history in
+several passes** (durable facts are scattered through a long chat log, not just at the top)
+and proposes a list of facts + memories. You **review and tick what to keep**; nothing is
+written until you confirm. Kept facts merge into long-term memory using the same
+reconcile rules as live learning, and a provenance note is saved to the vault. Every memory
+note links to a single **`[[Memory]]` hub** so they form one connected cluster in Obsidian's
+graph instead of floating orphans.
+
 ### Deep Research → permanent knowledge
 
 Toggle the **Deep Research** skill (or say "research …"): Miko **distills a clean subject** from
@@ -386,12 +416,17 @@ tool exposes the same loop to voice / mid-chat.
 
 ### Live activity, Stop & sub-agents
 
-Normal chat **streams what Miko is doing** — a "Working" card shows each tool call as it runs
-(`→ web_search(…) ✓`) and which reasoning round it's on, so the menu isn't a black box. The Send
-button becomes a **Stop** button while a turn (or research) is running. And Miko can **summon
+Normal chat **streams what Miko is doing** — a "Working" card narrates the current step in
+plain language (*Creating app.py*, *Modifying styles.css*, *Researching…*, *Coding with
+Claude*) and shows each tool call as it runs (`→ web_search(…) ✓`) and which reasoning round
+it's on, so the menu isn't a black box. The Send button becomes a **Stop** button while a turn
+(or research) is running, and stopping is now **explicit** — switching conversations or a brief
+network blip won't cancel a running turn; it finishes and persists. And Miko can **summon
 sub-agents** (`spawn_agents`): up to five focused, read-only agents that run **in parallel** —
 each searches/reads/recalls on its own and reports back — so big jobs (research several angles,
 inspect many files) finish faster. Sub-agents can't make changes or spawn their own sub-agents.
+A dockable **side panel** lists your sub-agent runs and their steps so they don't scroll away or
+vanish on refresh.
 
 ### Agents, skills & per-model settings
 
@@ -664,7 +699,8 @@ tools) and `file_browser.py` (the workspace file explorer/editor + folder picker
 (SQLite vector store with scored hybrid recall), `memory/memory_manager.py` (extract→reconcile
 learner + reflection), `modules/knowledge.py` (`remember`/`recall`/`forget`), `vault.py`
 (Obsidian/PARA + wikilinks), `deep_research.py` (the research pipeline), `modules/projects.py`
-(project mapping), and `modules/schedule_briefs.py` (calendar briefs). Agents/skills live in
+(project mapping), `modules/memory_import.py` (import memory from another AI → the `[[Memory]]`
+hub), and `modules/schedule_briefs.py` (calendar briefs). Agents/skills live in
 `agent_skills.py` with the original docs vendored under `vendor/ecc/`.
 
 **Agentic surfaces:** `chat_backend.py` streams live tool activity (`/chat/message/stream`)
