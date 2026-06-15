@@ -336,6 +336,20 @@ def cancel_batch(batch_id: str) -> dict:
     return {"cancelled": batch_id}
 
 
+def delete_batch(batch_id: str) -> dict:
+    """Remove a batch from the registry + disk (used to clear a session from the
+    panel). Any still-running agents are signalled to cancel first; their workers
+    hold their own references, so they wind down cleanly."""
+    with _LOCK:
+        b = _BATCHES.pop(batch_id, None)
+        if not b:
+            return {"error": "Unknown batch."}
+        for a in b["agents"]:
+            a["cancel"] = True
+    _save()
+    return {"deleted": batch_id}
+
+
 def stream_batch(batch_id: str, interval: float = 0.6, timeout: float = 1800):
     """Yield batch snapshots until every agent is terminal (for an NDJSON endpoint)."""
     start = _now()

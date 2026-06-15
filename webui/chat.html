@@ -372,9 +372,10 @@
   .agents-rail.has-running .ar-badge { background: var(--amber); animation: agentpulse 1.1s ease-in-out infinite; }
   .agents-panel { position: fixed; top: 0; right: 0; height: 100%; width: 372px; max-width: 90vw;
     background: var(--bg); border-left: 1px solid var(--border); z-index: 50; display: flex;
-    flex-direction: column; transform: translateX(100%); transition: transform .22s ease;
-    box-shadow: -14px 0 34px rgba(0,0,0,.4); }
+    flex-direction: column; transform: translateX(100%);
+    transition: transform .22s ease, width .2s ease; box-shadow: -14px 0 34px rgba(0,0,0,.4); }
   .agents-panel.show { transform: none; }
+  .agents-panel.expanded { width: 60vw; }
   .agents-panel-head { display: flex; align-items: center; gap: 9px; padding: 17px 16px 13px;
     border-bottom: 1px solid var(--border); }
   .agents-panel-head .apt { font-size: 13px; font-weight: 600; color: var(--text); }
@@ -382,14 +383,20 @@
   .agents-panel-new { margin-left: auto; background: none; border: 1px solid var(--border);
     color: var(--text2); border-radius: 5px; font-size: 11px; padding: 3px 9px; cursor: pointer; }
   .agents-panel-new:hover { border-color: var(--amber); color: var(--amber); }
-  .agents-panel-close { background: none; border: none; color: var(--text3); cursor: pointer;
-    font-size: 16px; line-height: 1; padding: 2px 4px; }
-  .agents-panel-close:hover { color: var(--text); }
+  .agents-panel-icon { display: inline-flex; align-items: center; justify-content: center;
+    min-width: 26px; height: 24px; background: var(--surface2, var(--surface));
+    border: 1px solid var(--border); border-radius: 5px; color: var(--text2); cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 0 6px; transition: color .12s, border-color .12s; }
+  .agents-panel-icon:hover { color: var(--amber); border-color: var(--amber); }
+  .agents-panel.expanded #agents-panel-expand { color: var(--amber); border-color: var(--amberDim); }
   .agents-panel-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
   .agents-panel-empty { color: var(--text3); font-size: 12px; text-align: center; padding: 34px 16px;
     line-height: 1.55; }
   .agents-panel .agent-batch:first-child { margin-top: 0; }
   .ap-batch-time { font-family: var(--mono); font-size: 10px; color: var(--text3); margin-left: 6px; }
+  .agent-batch-head .ap-del { background: none; border: none; color: var(--text3); cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 0 2px; margin-left: 4px; }
+  .agent-batch-head .ap-del:hover { color: var(--red, #e06c75); }
   .pair-sessions { display: none; flex-direction: column; gap: 4px; margin: 0 0 8px;
     border: 1px solid var(--border); border-radius: 5px; background: var(--surface); padding: 6px; }
   .pair-sessions.show { display: flex; }
@@ -1192,7 +1199,8 @@
         <div class="ap-sub" id="agents-panel-sub">this conversation</div>
       </span>
       <button class="agents-panel-new" id="agents-panel-new" type="button" title="Launch new sub-agents">＋ New</button>
-      <button class="agents-panel-close" id="agents-panel-close" type="button" aria-label="Close">✕</button>
+      <button class="agents-panel-icon" id="agents-panel-expand" type="button" title="Expand / shrink panel" aria-label="Expand or shrink">⤢</button>
+      <button class="agents-panel-icon" id="agents-panel-min" type="button" title="Minimize to the side" aria-label="Minimize">»</button>
     </div>
     <div class="agents-panel-body" id="agents-panel-body">
       <div class="agents-panel-empty" id="agents-panel-empty">
@@ -2142,7 +2150,10 @@ function renderPanelBatch(view, prepend) {
   cancelAll.textContent = 'stop all';
   cancelAll.addEventListener('click', () => cancelAgents({ batch_id: view.batch_id }));
   if (view.status !== 'running') cancelAll.style.display = 'none';
-  head.append(lbl, cap, time, cancelAll);
+  const del = document.createElement('button'); del.className = 'ap-del';
+  del.textContent = '✕'; del.title = 'Remove this run';
+  del.addEventListener('click', () => deleteBatch(view.batch_id));
+  head.append(lbl, cap, time, cancelAll, del);
   batch.appendChild(head);
   const refs = { batch, agents: {}, cancelAll };
   view.agents.forEach(a => {
@@ -2198,6 +2209,18 @@ function updateAgentRail() {
   $('#agents-rail-badge').textContent = running > 0 ? running : n;
 }
 
+async function deleteBatch(batchId) {
+  try {
+    await fetch('/chat/agents/delete', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batch_id: batchId }) });
+  } catch (e) {}
+  const known = _panelRefs[batchId];
+  if (known) { known.refs.batch.remove(); delete _panelRefs[batchId]; }
+  const any = $('#agents-panel-body').querySelector('.agent-batch');
+  $('#agents-panel-empty').style.display = any ? 'none' : 'block';
+  updateAgentRail();
+}
+
 function openAgentPanel() {
   $('#agents-panel').classList.add('show');
   $('#agents-rail').classList.remove('hidden');
@@ -2210,6 +2233,7 @@ function toggleAgentPanel() {
   if ($('#agents-panel').classList.contains('show')) closeAgentPanel();
   else { openAgentPanel(); loadAgentPanel(false); }
 }
+function toggleExpandPanel() { $('#agents-panel').classList.toggle('expanded'); }
 
 function buildAgentCard(a) {
   const el = document.createElement('div'); el.className = 'agent-card';
@@ -3099,7 +3123,8 @@ $('#agents-btn').addEventListener('click', toggleAgentsBar);
 $('#agents-launch').addEventListener('click', launchAgents);
 $('#agents-tasks').addEventListener('input', updateAgentsHint);
 $('#agents-rail').addEventListener('click', toggleAgentPanel);
-$('#agents-panel-close').addEventListener('click', closeAgentPanel);
+$('#agents-panel-min').addEventListener('click', closeAgentPanel);
+$('#agents-panel-expand').addEventListener('click', toggleExpandPanel);
 $('#agents-panel-new').addEventListener('click', () => { closeAgentPanel(); toggleAgentsBar(); });
 $('#pair-bar').querySelectorAll('.pair-mode .as-eff').forEach(el => el.addEventListener('click', () => {
   pairKind = el.dataset.mode; saveCfg();
@@ -3181,6 +3206,11 @@ function syncCoderUI() {
     (ids.includes('__custom__') ? '' : _opt('__custom__', 'Custom — type model id'));
   const isCustom = !ids.includes(pairCoderModel) || pairCoderModel === '__custom__';
   modelSel.value = isCustom ? '__custom__' : pairCoderModel;
+  // When the provider only offers free-form model entry (Custom provider, Ollama),
+  // the dropdown's sole option is the "type it yourself" placeholder — pointless, so
+  // hide it and let the text box take the space.
+  const onlyCustom = ids.length === 1 && ids[0] === '__custom__';
+  modelSel.style.display = onlyCustom ? 'none' : '';
   const custom = $('#pair-model-custom');
   custom.style.display = isCustom ? '' : 'none';
   if (isCustom) custom.value = (pairCoderModel === '__custom__' ? '' : pairCoderModel);

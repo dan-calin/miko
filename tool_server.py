@@ -562,6 +562,19 @@ def _build_app():
             return agent_jobs.cancel_batch(body["batch_id"].strip())
         return JSONResponse({"error": "Provide batch_id or agent_id."}, status_code=400)
 
+    @app.post("/chat/agents/delete")
+    async def chat_agents_delete(request: Request, _=Depends(_auth)):
+        """Remove a sub-agent batch from the panel (and disk)."""
+        from modules import agent_jobs
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        bid = (body.get("batch_id") or "").strip()
+        if not bid:
+            return JSONResponse({"error": "Missing batch_id."}, status_code=400)
+        return agent_jobs.delete_batch(bid)
+
     @app.post("/chat/code/revert")
     async def chat_code_revert(request: Request, _=Depends(_auth)):
         """Revert the repo to a checkpoint (UI Revert button)."""
