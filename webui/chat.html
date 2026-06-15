@@ -3835,7 +3835,7 @@ async function memPreview() {
   const path = $('#mem-path').value.trim();
   const source = $('#mem-source').value.trim();
   if (!text && !path && !_memFile) { hint.textContent = 'Drop a file, paste a path, or paste some text first.'; return; }
-  hint.textContent = ''; status.textContent = 'Reading and analyzing…';
+  hint.textContent = ''; status.textContent = 'Reading and analyzing… (a large history is scanned in several passes, give it a moment)';
   const body = { source };
   if (text) body.text = text;
   else if (path) body.path = path;
@@ -3846,7 +3846,7 @@ async function memPreview() {
   if (data.error) { status.textContent = data.error; return; }
   _memPreview = data;
   renderMemReview(data);
-  status.textContent = '';
+  status.textContent = (data.passes > 1) ? ('Scanned ' + data.passes + ' sections of your history.') : '';
 }
 
 function renderMemReview(data) {

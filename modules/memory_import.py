@@ -38,6 +38,10 @@ _INPUT_BUDGET = 80000      # chars of extracted text handed to the model
 _PER_FILE_CAP = 300000     # don't read absurdly large single entries
 _DIR_TOTAL_BUDGET = 2000000  # cap when walking an extracted Takeout folder
 _DIR_MAX_FILES = 400
+# A Takeout export is a long chat history; durable facts are scattered through it,
+# so sample across the whole text in several passes rather than reading only the top.
+_PASS_CHARS = 80000        # chars analysed per pass
+_MAX_PASSES = 8            # cap LLM calls for one import
 
 TOOL_DECLARATIONS = [
     {
@@ -212,25 +216,67 @@ _NORMALIZE_SYS = (
 )
 
 
-def normalize(raw_text: str, source: str = "") -> dict:
-    """raw_text → {facts:[{category,key,value}], notes:[str], source, chars}. No write."""
-    text = (raw_text or "").strip()
-    if not text:
-        return {"facts": [], "notes": [], "source": source, "chars": 0}
-    from config import CONFIG
-    from chat_backend import complete_text
-    user = text[:_INPUT_BUDGET]
-    if len(text) > _INPUT_BUDGET:
-        user += "\n\n(…export truncated for length.)"
+def _windows(text: str) -> list:
+    """Slices of `text` to analyse. Short text → one pass. Longer text is split into
+    contiguous windows; very long text is sampled with evenly-spaced windows so the
+    whole history is covered rather than just the front."""
+    n = len(text)
+    if n <= _PASS_CHARS:
+        return [text]
+    full = -(-n // _PASS_CHARS)   # ceil
+    if full <= _MAX_PASSES:
+        return [text[i * _PASS_CHARS:(i + 1) * _PASS_CHARS] for i in range(full)]
+    step = (n - _PASS_CHARS) / (_MAX_PASSES - 1)
+    return [text[int(i * step):int(i * step) + _PASS_CHARS] for i in range(_MAX_PASSES)]
+
+
+def _normalize_chunk(chunk: str, complete_text, gemini_key: str) -> tuple:
     raw = complete_text(
-        "gemini", "gemini-2.5-flash", api_key=getattr(CONFIG, "gemini_api_key", ""),
-        system=_NORMALIZE_SYS, user=user, max_tokens=2200,
+        "gemini", "gemini-2.5-flash", api_key=gemini_key,
+        system=_NORMALIZE_SYS, user=chunk, max_tokens=2200,
     )
     data = _parse_json_obj(raw)
-    facts = _clean_facts(data.get("facts"))
-    notes = [str(n).strip() for n in (data.get("notes") or []) if str(n).strip()][:60]
-    return {"facts": facts, "notes": notes, "source": (source or "").strip(),
-            "chars": len(text)}
+    facts = data.get("facts") if isinstance(data.get("facts"), list) else []
+    notes = [str(n).strip() for n in (data.get("notes") or []) if str(n).strip()]
+    return facts, notes
+
+
+def _dedup_notes(notes: list) -> list:
+    out, seen = [], set()
+    for n in notes:
+        key = re.sub(r"\s+", " ", n.lower()).strip()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(n)
+    return out[:80]
+
+
+def normalize(raw_text: str, source: str = "") -> dict:
+    """raw_text → {facts, notes, source, chars, passes}. Samples across the whole text
+    in several passes (a long Takeout history isn't all near the top), then merges and
+    deduplicates. No write."""
+    text = (raw_text or "").strip()
+    if not text:
+        return {"facts": [], "notes": [], "source": source, "chars": 0, "passes": 0}
+    from config import CONFIG
+    from chat_backend import complete_text
+    gemini_key = getattr(CONFIG, "gemini_api_key", "")
+
+    windows = _windows(text)
+    all_facts, all_notes = [], []
+    passes = 0
+    for w in windows:
+        try:
+            f, n = _normalize_chunk(w, complete_text, gemini_key)
+        except Exception as e:
+            logger.warning(f"import pass failed: {e}")
+            continue
+        all_facts.extend(f)
+        all_notes.extend(n)
+        passes += 1
+
+    return {"facts": _clean_facts(all_facts), "notes": _dedup_notes(all_notes),
+            "source": (source or "").strip(), "chars": len(text), "passes": passes}
 
 
 def _parse_json_obj(raw: str) -> dict:
