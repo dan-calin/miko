@@ -244,10 +244,16 @@ def add_project(path: str, name: str = "") -> str:
     note = folder / f"{slug}.md"
     now = datetime.now()
 
-    # Connect to related vault notes (semantic) + the Projects hub, so the graph links up.
+    # Connect to genuinely related vault notes (semantic) + the Projects hub. Exclude
+    # OTHER project notes + the index: every project looks alike to a semantic search
+    # (they're all code repos), so they'd cross-link as "related" when their only real
+    # connection is being projects — which the "Part of [[Projects]]" hub already says.
     try:
         import vault
-        related = vault.related_links(f"{name}\n{profile}", exclude_path=str(note), k=4)
+        related = vault.related_links(f"{name}\n{profile}", exclude_path=str(note), k=6)
+        proj_stems = {Path(d.get("note", "")).stem for d in _load().values()}
+        proj_stems.add(_INDEX_NAME)
+        related = [r for r in related if r not in proj_stems][:4]
         related_block = vault.related_section(related)
     except Exception:
         related_block = ""
