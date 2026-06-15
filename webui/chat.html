@@ -536,10 +536,19 @@
   .att-chip .att-x:hover { color: var(--red, #e06c75); }
   .inputbar.dragover { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
   /* attachments shown inside a sent user bubble */
-  .ub-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+  .ub-atts { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; }
+  .ub-atts-row { display: flex; flex-wrap: wrap; gap: 6px; }
   .ub-atts img { max-width: 160px; max-height: 120px; border-radius: 4px; display: block; }
-  .ub-att-file { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text3);
+  .ub-att-file { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text2);
     border: 1px solid var(--border); border-radius: 4px; padding: 3px 7px; font-family: var(--mono); }
+  .ub-att-file.clickable { cursor: pointer; }
+  .ub-att-file.clickable:hover { color: var(--amber); border-color: var(--amber); }
+  .ub-att-file .ub-att-chev { font-size: 8px; opacity: .7; transition: transform .15s; }
+  .ub-att-file.open .ub-att-chev { transform: rotate(90deg); }
+  .ub-att-text { display: none; white-space: pre-wrap; font-family: var(--mono); font-size: 11px;
+    color: var(--text2); background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+    padding: 8px 10px; margin-top: 2px; max-height: 260px; overflow: auto; }
+  .ub-att-text.show { display: block; }
   .ptt-key { margin-left: -2px; font-family: var(--mono); }
   /* full-width input on top; mic + approve flow inline on the next line */
   .pc-next { flex-direction: row; flex-wrap: wrap; align-items: center; }
@@ -1336,6 +1345,7 @@ const $ = s => document.querySelector(s);
 const escHtml = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const messagesEl = $('#messages'), chatEl = $('#chat');
 let MODELS = {}, ENV = {};   // ENV: { ENV_VAR_NAME: value } loaded from .env
+let _lastUser = null;        // handle to the most recent user bubble (to fill attachment overviews)
 
 const PCODE = { gemini:'GEM', openai:'OAI', anthropic:'CLD', minimax:'MMX', deepseek:'DSK', kimi:'KMI', grok:'GRK', custom:'CST' };
 const codeFor = id => PCODE[id] || id.slice(0,3).toUpperCase();
@@ -1523,26 +1533,66 @@ function renderBotText(host, content) {
 
 function stampFrom(ts) { const d = ts ? new Date(ts) : new Date(); return isNaN(d) ? new Date() : d; }
 
+const _FILE_IC = { document: '📄', pdf: '📄', text: '📄', image: '🖼', unreadable: '📎' };
+
+// Build one attachment chip. Non-image files become a chip you click to expand an
+// overview of the extracted text (so a long CV shows as a chip, not a wall of text).
+function buildAttChip(a) {
+  const isImg = (a.mime || '').startsWith('image/');
+  if (isImg && a.data) {   // freshly sent image — show the thumbnail
+    const im = document.createElement('img');
+    im.src = 'data:' + a.mime + ';base64,' + a.data; im.title = a.name;
+    return { el: im };
+  }
+  const wrap = document.createElement('span');
+  const chip = document.createElement('span'); chip.className = 'ub-att-file';
+  const ic = document.createElement('span'); ic.textContent = _FILE_IC[a.kind] || '📎';
+  const nm = document.createElement('span'); nm.textContent = a.name || 'file';
+  chip.append(ic, nm);
+  const text = document.createElement('div'); text.className = 'ub-att-text';
+  const setOverview = ov => {
+    ov = (ov || '').trim();
+    if (!ov) return;
+    text.textContent = ov;
+    chip.classList.add('clickable');
+    const chev = document.createElement('span'); chev.className = 'ub-att-chev'; chev.textContent = '▶';
+    chip.appendChild(chev);
+    chip.onclick = () => { const open = text.classList.toggle('show'); chip.classList.toggle('open', open); };
+  };
+  setOverview(a.overview);
+  wrap.append(chip, text);
+  return { el: wrap, setOverview };
+}
+
 function addUser(text, ts, atts) {
   const row = document.createElement('div'); row.className = 'row user';
   const c = document.createElement('div'); c.className = 'content';
   const wrap = document.createElement('div'); wrap.className = 'user-bubble-wrap';
   const b = document.createElement('div'); b.className = 'user-bubble'; b.textContent = text;
+  let attCtl = null;
   if (atts && atts.length) {
     const box = document.createElement('div'); box.className = 'ub-atts';
-    atts.forEach(a => {
-      if ((a.mime || '').startsWith('image/')) {
-        const im = document.createElement('img'); im.src = 'data:' + a.mime + ';base64,' + a.data; im.title = a.name; box.appendChild(im);
-      } else {
-        const f = document.createElement('span'); f.className = 'ub-att-file'; f.textContent = '📎 ' + a.name; box.appendChild(f);
-      }
+    const rowEl = document.createElement('div'); rowEl.className = 'ub-atts-row';
+    const expanders = document.createElement('div');
+    const chips = atts.map(a => {
+      const ch = buildAttChip(a); rowEl.appendChild(ch.el); return ch;
     });
+    box.append(rowEl);
     b.appendChild(box);
+    // Live sends have no extracted overview yet (it's server-side); expose a hook so
+    // the reply event can fill the overviews in once Miko has read the files.
+    attCtl = (meta) => {
+      (meta || []).forEach((m, i) => {
+        const ch = chips[i];
+        if (ch && ch.setOverview) ch.setOverview(m.overview);
+      });
+    };
   }
   wrap.appendChild(b); c.appendChild(wrap);
   const st = document.createElement('div'); st.className = 'stamp'; st.textContent = fmtTime(stampFrom(ts));
   c.appendChild(st); row.appendChild(c);
   messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
+  return { row, setAttMeta: attCtl };
 }
 
 function addBot() {
@@ -1737,6 +1787,8 @@ function handleChatEvent(c, ev) {
       c.tl.innerHTML = ev.tools_used.map(t => `<span class="chip"><span class="di">◈</span>${t}</span>`).join('');
     renderFileChips(c.fl, ev.files);
     if (ev.pending && ev.pending.length) renderPending(c.pn, ev.pending);
+    if (ev.attachments && _lastUser && _lastUser.setAttMeta) _lastUser.setAttMeta(ev.attachments);
+    _lastUser = null;
     updateMonitor((ev.usage && ev.usage.total_tokens) || 0);
     c.st.textContent = fmtTime(new Date());
   } else if (ev.type === 'cancelled') {
@@ -1767,7 +1819,7 @@ async function send() {
   input.value = ''; input.style.height = 'auto';
   const atts = _attach.slice();          // snapshot, then clear the composer
   _attach = []; renderAttach(); refreshSend();
-  addUser(text, null, atts);
+  _lastUser = addUser(text, null, atts); // keep a handle to fill in file overviews on reply
   if (pairMode) { sendCode(text); return; }
   if (asSkills.includes('deep-research')) { sendResearch(text); return; }
   const c = addActivityCard();
@@ -2573,7 +2625,7 @@ async function openConversation(id) {
   sessionId = id; localStorage.setItem('miko_session', sessionId);
   messagesEl.innerHTML = '';
   (conv.messages || []).forEach(m => {
-    if (m.role === 'user') addUser(m.content, m.ts);
+    if (m.role === 'user') addUser(m.content, m.ts, m.attachments);
     else {
       const { tx, tl, fl, st } = addBot();
       renderBotText(tx, m.content || '');

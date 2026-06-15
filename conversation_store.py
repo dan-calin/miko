@@ -56,15 +56,24 @@ def _write(conv: dict) -> None:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 def append_turn(cid: str, user_msg: str, assistant_msg: str,
-                tools: list | None = None, files: list | None = None) -> None:
-    """Record one user→assistant exchange, creating the conversation if needed."""
+                tools: list | None = None, files: list | None = None,
+                attachments: list | None = None) -> None:
+    """Record one user→assistant exchange, creating the conversation if needed.
+
+    `attachments` is per-file display metadata ({name, mime, kind, overview}); the
+    user `content` stays the typed message, so a long extracted document shows as a
+    chip rather than filling the transcript.
+    """
     with _lock:
         conv = _load(cid) or {
             "id": _safe_id(cid), "title": "", "created": _now(), "messages": [],
         }
         if not conv.get("title"):
             conv["title"] = _title_from(user_msg)
-        conv["messages"].append({"role": "user", "content": user_msg, "ts": _now()})
+        user_turn = {"role": "user", "content": user_msg, "ts": _now()}
+        if attachments:
+            user_turn["attachments"] = attachments
+        conv["messages"].append(user_turn)
         conv["messages"].append({
             "role": "assistant", "content": assistant_msg, "ts": _now(),
             "tools": tools or [], "files": files or [],
@@ -91,6 +100,14 @@ def history_for_model(cid: str, limit: int = _MAX_MODEL_HISTORY) -> list:
             names = list(dict.fromkeys(t for t in (m.get("tools") or []) if isinstance(t, str)))
             if names:
                 content = f"{content}\n[Done by calling: {', '.join(names)}]"
+        elif m.get("role") == "user" and m.get("attachments"):
+            # The visible content omits extracted file text; fold the overviews back in
+            # so the model keeps the document context on follow-up turns.
+            for a in m["attachments"]:
+                ov = (a.get("overview") or "").strip()
+                if ov:
+                    content += (f"\n\n[Attached {a.get('kind') or 'file'} "
+                                f"'{a.get('name') or 'file'}']\n```\n{ov}\n```")
         msgs.append({"role": m["role"], "content": content})
     return msgs[-limit:]
 

@@ -467,9 +467,9 @@ def _get_history(session_id: str) -> list:
 
 
 def _save_turn(session_id: str, user_msg: str, assistant_msg: str,
-               tools: list, files: list) -> None:
+               tools: list, files: list, attachments: list | None = None) -> None:
     import conversation_store as convo
-    convo.append_turn(session_id, user_msg, assistant_msg, tools, files)
+    convo.append_turn(session_id, user_msg, assistant_msg, tools, files, attachments)
 
 
 def reset_session(session_id: str) -> None:
@@ -838,12 +838,23 @@ def _describe_image(raw: bytes, mime: str) -> str:
         return ""
 
 
+_ATT_OVERVIEW = 8000   # chars of extracted text kept per attachment for display + history
+
+
 def _prepare_attachments(attachments, provider, model, base_url, message):
     """Split user attachments into native `media` (for vision models) and text the
-    model can read. Returns (media, augmented_message). Images on a non-vision model
-    are captioned via Gemini; text files are inlined; unreadable types get a note."""
-    media, extra = [], []
+    model can read. Returns (media, augmented_message, meta). `meta` is a per-file
+    list of {name, mime, kind, overview} for the UI (chip + click-to-expand) and for
+    re-folding context into history — so the visible bubble stays a clean chip rather
+    than the whole extracted document. Images on a non-vision model are captioned via
+    Gemini; text files are inlined; unreadable types get a note."""
+    media, extra, meta = [], [], []
     can_see = _supports_vision(provider, model, base_url)
+
+    def record(name, mime, kind, overview=""):
+        meta.append({"name": name, "mime": mime, "kind": kind,
+                     "overview": (overview or "")[:_ATT_OVERVIEW]})
+
     for att in (attachments or []):
         name = att.get("name") or "file"
         mime = (att.get("mime") or "").lower()
@@ -856,6 +867,7 @@ def _prepare_attachments(attachments, provider, model, base_url, message):
         if mime.startswith("image/"):
             if can_see:
                 media.append({"mime": mime, "data": raw})
+                record(name, mime, "image", "")   # the model sees the image directly
             else:
                 desc = _describe_image(raw, mime)
                 extra.append(
@@ -863,31 +875,39 @@ def _prepare_attachments(attachments, provider, model, base_url, message):
                     f"is a description:\n{desc}]" if desc else
                     f"[User attached image '{name}', but this model can't view images "
                     f"and no image reader is configured.]")
+                record(name, mime, "image", desc)
         elif mime == "application/pdf":
             if provider == "gemini" and can_see:
                 media.append({"mime": mime, "data": raw})     # Gemini reads PDFs natively
+                record(name, mime, "pdf", "")
             else:
                 txt = _extract_pdf_text(raw)
                 extra.append(f"[Attached PDF '{name}']\n```\n{txt[:20000]}\n```" if txt else
                              f"[User attached PDF '{name}', but no PDF reader is available "
                              f"(pip install pypdf) and this model can't read PDFs.]")
+                record(name, mime, "pdf", txt)
         elif _is_textual(mime, name):
             txt = raw.decode("utf-8", errors="replace")
+            full = txt
             if len(txt) > 20000:
                 txt = txt[:20000] + "\n… (truncated)"
             extra.append(f"[Attached file '{name}']\n```\n{txt}\n```")
+            record(name, mime, "text", full)
         else:
             doc = _extract_document_text(raw, name, mime)
             if doc:
+                full = doc
                 if len(doc) > 20000:
                     doc = doc[:20000] + "\n… (truncated)"
                 extra.append(f"[Attached document '{name}' — extracted text]\n```\n{doc}\n```")
+                record(name, mime, "document", full)
             else:
                 extra.append(f"[User attached '{name}' ({mime or 'unknown type'}); this model "
                              f"can't read this file type.]")
+                record(name, mime, "unreadable", "")
     if extra:
         message = (message + "\n\n" + "\n\n".join(extra)).strip()
-    return media, message
+    return media, message, meta
 
 
 def chat(router, session_id: str, message: str, provider: str, model: str,
@@ -970,10 +990,14 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
     pending: list = []                                 # actions awaiting approval
 
     # Fold user attachments into native image input + readable text (capability-aware).
-    media = []
+    # Keep the user's ORIGINAL message for the visible transcript; the extracted text
+    # only goes to the model + is stored as a per-file overview (shown on click), so a
+    # long CV doesn't fill the conversation bubble.
+    orig_message = message
+    media, att_meta = [], []
     if attachments:
         try:
-            media, message = _prepare_attachments(attachments, provider, model, base, message)
+            media, message, att_meta = _prepare_attachments(attachments, provider, model, base, message)
         except Exception as e:
             logger.warning(f"attachment processing failed: {e}")
 
@@ -994,10 +1018,10 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
     # clutter the sidebar) and don't learn from them.
     ephemeral = session_id.startswith("subagent-")
     if not cancelled and not ephemeral:        # don't persist a half-finished turn
-        _save_turn(session_id, message, reply, used, files)
+        _save_turn(session_id, orig_message, reply, used, files, att_meta)
         _learn_async(message, reply, session_id)   # learn facts + episode (throttled)
     return {"reply": reply, "tools_used": used, "files": files, "usage": usage,
-            "pending": pending, "cancelled": cancelled, "error": None}
+            "pending": pending, "attachments": att_meta, "cancelled": cancelled, "error": None}
 
 
 def _cancelled(should_cancel) -> bool:
@@ -1054,7 +1078,7 @@ def chat_stream(*args, should_cancel=None, **kwargs):
     yield {"type": "reply", "reply": res.get("reply", ""),
            "tools_used": res.get("tools_used", []), "files": res.get("files", []),
            "usage": res.get("usage", {}), "pending": res.get("pending", []),
-           "error": res.get("error")}
+           "attachments": res.get("attachments", []), "error": res.get("error")}
 
 
 def _accum_usage(usage: dict, resp, proto: str) -> None:
