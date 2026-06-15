@@ -1822,6 +1822,7 @@ async function send() {
   saveCfg();
   if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
   input.value = ''; input.style.height = 'auto';
+  const turnSession = sessionId;         // the conversation this turn belongs to
   const atts = _attach.slice();          // snapshot, then clear the composer
   _attach = []; renderAttach(); refreshSend();
   _lastUser = addUser(text, null, atts); // keep a handle to fill in file overviews on reply
@@ -1872,6 +1873,10 @@ async function send() {
     curAbort = null; setBusy(false); chatEl.scrollTop = chatEl.scrollHeight; input.focus();
     loadConversations();   // refresh titles / order after the turn is saved
     loadAgentPanel(false); // surface any sub-agents Miko spawned during the turn
+    // If the user switched away and back during this turn, the live card was detached
+    // and the reply landed in orphaned nodes — re-render this conversation from the
+    // server so the reply actually shows (no manual refresh needed).
+    if (turnSession === sessionId && !document.body.contains(c.card)) openConversation(sessionId, true);
   }
 }
 
@@ -2655,8 +2660,8 @@ async function loadConversations() {
   });
 }
 
-async function openConversation(id) {
-  if (id === sessionId && messagesEl.querySelector('.row')) return;  // already open
+async function openConversation(id, force) {
+  if (!force && id === sessionId && messagesEl.querySelector('.row')) return;  // already open
   let conv;
   try { conv = await (await fetch('/chat/conversation?id=' + encodeURIComponent(id))).json(); }
   catch (e) { return; }
