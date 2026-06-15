@@ -1830,7 +1830,7 @@ async function send() {
   const c = addActivityCard();
   setBusy(true);
   curAbort = new AbortController();
-  let gotFinal = false;
+  let gotFinal = false, gotFirst = false;
   try {
     const resp = await fetch('/chat/message/stream', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1859,6 +1859,7 @@ async function send() {
         try {
           const ev = JSON.parse(line);
           if (ev.type === 'reply' || ev.type === 'cancelled' || ev.type === 'error') gotFinal = true;
+          if (!gotFirst) { gotFirst = true; loadConversations(); }  // user turn is saved → show it now
           handleChatEvent(c, ev);
         } catch (e) { /* skip partial */ }
       }

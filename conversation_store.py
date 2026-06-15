@@ -55,6 +55,40 @@ def _write(conv: dict) -> None:
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+def append_user(cid: str, user_msg: str, attachments: list | None = None) -> None:
+    """Persist the user's message at the START of a turn, creating the conversation
+    if needed. This makes the conversation appear (and survive) immediately, even if
+    the turn runs long (e.g. a pair-programming session) or errors before finishing."""
+    with _lock:
+        conv = _load(cid) or {
+            "id": _safe_id(cid), "title": "", "created": _now(), "messages": [],
+        }
+        if not conv.get("title"):
+            conv["title"] = _title_from(user_msg)
+        turn = {"role": "user", "content": user_msg, "ts": _now()}
+        if attachments:
+            turn["attachments"] = attachments
+        conv["messages"].append(turn)
+        conv["updated"] = _now()
+        _write(conv)
+
+
+def append_assistant(cid: str, assistant_msg: str,
+                     tools: list | None = None, files: list | None = None) -> None:
+    """Attach the assistant's reply to the conversation when the turn completes."""
+    with _lock:
+        conv = _load(cid) or {
+            "id": _safe_id(cid), "title": _title_from(assistant_msg),
+            "created": _now(), "messages": [],
+        }
+        conv["messages"].append({
+            "role": "assistant", "content": assistant_msg, "ts": _now(),
+            "tools": tools or [], "files": files or [],
+        })
+        conv["updated"] = _now()
+        _write(conv)
+
+
 def append_turn(cid: str, user_msg: str, assistant_msg: str,
                 tools: list | None = None, files: list | None = None,
                 attachments: list | None = None) -> None:

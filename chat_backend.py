@@ -476,12 +476,6 @@ def _get_history(session_id: str) -> list:
     return convo.history_for_model(session_id, _MAX_HISTORY)
 
 
-def _save_turn(session_id: str, user_msg: str, assistant_msg: str,
-               tools: list, files: list, attachments: list | None = None) -> None:
-    import conversation_store as convo
-    convo.append_turn(session_id, user_msg, assistant_msg, tools, files, attachments)
-
-
 def reset_session(session_id: str) -> None:
     import conversation_store as convo
     convo.clear(session_id)
@@ -1011,6 +1005,17 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
         except Exception as e:
             logger.warning(f"attachment processing failed: {e}")
 
+    # Persist the user's message NOW (history was already captured above, so the model
+    # doesn't see a duplicate). This makes the conversation appear + survive immediately,
+    # even when the turn runs long (a pair session) or errors before finishing.
+    ephemeral = session_id.startswith("subagent-")
+    if not ephemeral:
+        try:
+            import conversation_store as _convo
+            _convo.append_user(session_id, orig_message, att_meta)
+        except Exception as e:
+            logger.warning(f"persist user turn failed: {e}")
+
     try:
         if preset["protocol"] == "gemini":
             reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, thinking, media=media)
@@ -1020,16 +1025,28 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
             reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, media=media)
     except Exception as e:
         logger.error(f"chat() error ({provider}/{model}): {e}", exc_info=True)
+        # The user turn is already saved; record the failure so the conversation isn't
+        # left as a lone user message.
+        if not ephemeral:
+            try:
+                import conversation_store as _convo
+                _convo.append_assistant(session_id, f"⚠ {e}", used, files)
+            except Exception:
+                pass
         return {"reply": "", "tools_used": used, "files": files, "usage": usage,
                 "pending": pending, "error": str(e)}
 
     cancelled = _cancelled(should_cancel) or reply == "(cancelled)"
-    # Sub-agent sessions are internal — don't persist them as conversations (they'd
-    # clutter the sidebar) and don't learn from them.
-    ephemeral = session_id.startswith("subagent-")
-    if not cancelled and not ephemeral:        # don't persist a half-finished turn
-        _save_turn(session_id, orig_message, reply, used, files, att_meta)
-        _learn_async(message, reply, session_id)   # learn facts + episode (throttled)
+    # The user message was persisted at the start of the turn; now attach the reply.
+    # Sub-agent sessions are internal — never persisted or learned from.
+    if not ephemeral:
+        try:
+            import conversation_store as _convo
+            _convo.append_assistant(session_id, reply or "(stopped)", used, files)
+        except Exception as e:
+            logger.warning(f"persist assistant turn failed: {e}")
+        if not cancelled:
+            _learn_async(message, reply, session_id)   # learn facts + episode (throttled)
     return {"reply": reply, "tools_used": used, "files": files, "usage": usage,
             "pending": pending, "attachments": att_meta, "cancelled": cancelled, "error": None}
 
