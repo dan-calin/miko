@@ -348,7 +348,12 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
         if workspace:
             base += (
                 f" Lucrezi acum în folderul ales de user (workspace-ul curent): {workspace}. "
-                "Când creezi, citești sau rulezi fișiere fără o cale completă, folosește acest folder."
+                "Acesta E directorul tău curent de lucru: comenzile din shell (inclusiv git) rulează "
+                "deja AICI, iar căile relative se rezolvă tot aici — nu prefixa C:\\ și nu da 'cd' "
+                "în altă parte. Când userul pomenește un fișier doar pe nume (ex. 'demo.cast'), "
+                "presupune că e în workspace și caută-l ACOLO întâi (file_op list pe workspace sau "
+                "calea directă), NU porni o căutare prin tot sistemul (Desktop, Documents, find_file) "
+                "decât dacă chiar lipsește din workspace."
             )
         return base
     base = (
@@ -403,7 +408,12 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
     if workspace:
         base += (
             f" You are currently working in the user's selected workspace folder: {workspace}. "
-            "When creating, reading, or running files without an explicit full path, use this folder."
+            "This IS your current working directory: shell commands (including git) already run "
+            "HERE, and relative paths resolve here too — don't prefix C:\\ or 'cd' somewhere else. "
+            "When the user mentions a file by bare name (e.g. 'demo.cast'), assume it lives in this "
+            "workspace and look THERE first (file_op list on the workspace, or the direct path) — "
+            "do NOT launch a system-wide hunt (Desktop, Documents, find_file) unless it's genuinely "
+            "absent from the workspace."
         )
     return base
 
