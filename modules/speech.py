@@ -1,14 +1,26 @@
 """
 modules/speech.py — speech-to-text for Miko (multilingual dictation).
 
-Used by the chat UI's dictation mic and reusable elsewhere. Transcription goes
-through Gemini's multimodal model (the same proven path as Discord voice notes):
-it auto-detects the spoken language and handles English + many others well, with
-no local model download. Browser audio (webm/opus, mp4) is transcoded to WAV via
-ffmpeg first — Gemini accepts ogg/wav/mp3/flac/aac/aiff directly, so those skip it.
+Used by the chat UI's dictation mic and the voice engine (core/voice_chat.py).
+
+Two engines, selected by env:
+  • Cloud (default): Gemini's multimodal model — auto-detects language, no local
+    model download. Browser audio (webm/opus, mp4) is transcoded to WAV via ffmpeg
+    first; Gemini accepts ogg/wav/mp3/flac/aac/aiff directly, so those skip it.
+  • Local: a parakeet-rs / NVIDIA Nemotron ASR HTTP sidecar on this machine
+    (MIKO_STT_URL) — keeps audio on-device and is low-latency once warm. Falls back
+    to cloud on failure unless MIKO_STT_STRICT is set. See _local_stt for the contract.
+
+Env knobs:
+  MIKO_STT_URL       local ASR sidecar endpoint (enables the local engine)
+  MIKO_STT_PROVIDER  'local'/'parakeet'/'nemotron' also force the local engine
+  MIKO_STT_LANG      target language for the local model ('auto' or e.g. 'ro-RO')
+  MIKO_STT_STRICT    truthy → local-only (never fall back to the cloud)
+  MIKO_STT_TIMEOUT   seconds to wait on the sidecar (default 30)
 """
 
 import logging
+import os
 import subprocess
 
 logger = logging.getLogger("miko.speech")
@@ -50,12 +62,64 @@ def _ffmpeg_to_wav(audio_bytes: bytes) -> bytes:
     return proc.stdout
 
 
+def _local_stt(audio_bytes: bytes, mime_type: str, language: str) -> str:
+    """Transcribe via a LOCAL ASR HTTP sidecar (e.g. a parakeet-rs / NVIDIA Nemotron
+    server running on this machine) instead of the cloud. Keeps audio on-device and
+    cuts latency once the model is warm.
+
+    Contract — the sidecar accepts `POST <MIKO_STT_URL>` with a 16 kHz mono WAV body
+    (Content-Type: audio/wav) and an optional `X-Language` header ('auto' or a locale
+    like 'en-US'/'ro-RO'), and replies with either the raw transcript text or JSON
+    `{"text": "..."}`. Returns '' on any failure so the caller can fall back to cloud.
+    """
+    url = os.getenv("MIKO_STT_URL", "").strip()
+    if not url:
+        return ""
+    data, mime = audio_bytes, (mime_type or "").split(";")[0].strip().lower()
+    if mime not in ("audio/wav", "audio/x-wav"):
+        try:
+            data = _ffmpeg_to_wav(audio_bytes)
+        except Exception as e:
+            logger.error(f"local STT transcode failed: {e}")
+            return ""
+    lang = (language or os.getenv("MIKO_STT_LANG", "").strip() or "auto")
+    try:
+        import json
+        import urllib.request
+        req = urllib.request.Request(
+            url, data=data, method="POST",
+            headers={"Content-Type": "audio/wav", "X-Language": lang})
+        timeout = float(os.getenv("MIKO_STT_TIMEOUT", "30") or "30")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read().decode("utf-8", "replace").strip()
+        if body.startswith("{"):
+            return (json.loads(body).get("text") or "").strip()
+        return body
+    except Exception as e:
+        logger.warning(f"local STT ({url}) failed: {e}")
+        return ""
+
+
 def transcribe(audio_bytes: bytes, mime_type: str = "", api_key: str = "",
                model: str = "", language: str = "") -> str:
     """Transcribe audio to text. Auto-detects language unless `language` is given.
-    Returns '' on any failure (caller surfaces a friendly message)."""
+    Returns '' on any failure (caller surfaces a friendly message).
+
+    Engine: a local ASR sidecar when MIKO_STT_URL (or MIKO_STT_PROVIDER=local) is set,
+    otherwise cloud Gemini. The local path falls back to Gemini on failure unless
+    MIKO_STT_STRICT is truthy (then local-only)."""
     if not audio_bytes:
         return ""
+
+    provider = os.getenv("MIKO_STT_PROVIDER", "").strip().lower()
+    if os.getenv("MIKO_STT_URL", "").strip() or provider in ("local", "parakeet", "nemotron"):
+        text = _local_stt(audio_bytes, mime_type, language)
+        if text:
+            return text
+        if os.getenv("MIKO_STT_STRICT", "").strip().lower() in ("1", "true", "yes"):
+            return ""   # local-only: don't leak audio to the cloud on failure
+        # else fall through to the cloud path below
+
     mime = (mime_type or "").split(";")[0].strip().lower() or "audio/webm"
 
     data, send_mime = audio_bytes, mime
@@ -70,7 +134,6 @@ def transcribe(audio_bytes: bytes, mime_type: str = "", api_key: str = "",
             logger.error(f"audio transcode failed: {e}")
             return ""
 
-    import os
     from config import CONFIG
     key = (api_key or "").strip() or getattr(CONFIG, "gemini_api_key", "")
     if not key:

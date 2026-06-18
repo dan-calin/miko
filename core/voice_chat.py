@@ -8,7 +8,8 @@ recipient resolution, scheduling, memory. One brain, two interfaces.
 
 Pipeline (three worker threads + the asyncio keep-alive):
   mic (sounddevice, 16 kHz mono) → energy VAD segments an utterance →
-  WAV → modules.speech.transcribe (Gemini, auto language) →
+  WAV → modules.speech.transcribe (cloud Gemini, or a LOCAL parakeet-rs/Nemotron
+        ASR sidecar when MIKO_STT_URL is set — fully on-device, low latency) →
   ModeManager gate (wake word / standby / mode commands) →
   chat_backend.chat(session "voice", allow_actions on) →
   edge-tts synth → ffmpeg decode → sounddevice playback.
