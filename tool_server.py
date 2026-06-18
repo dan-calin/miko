@@ -254,6 +254,14 @@ def _build_app():
         import file_browser
         workspace = (body.get("workspace") or "").strip() or file_browser.get_workspace()
 
+        # Remember the UI model so the Discord/phone path can borrow it if MiniMax fails.
+        try:
+            from modules import runtime_model
+            runtime_model.remember(body.get("provider", ""), body.get("model", ""),
+                                   body.get("api_key", ""), body.get("base_url", ""))
+        except Exception:
+            pass
+
         skills = body.get("skills") or []
         if not isinstance(skills, list):
             skills = []
@@ -297,6 +305,14 @@ def _build_app():
 
         import file_browser
         workspace = (body.get("workspace") or "").strip() or file_browser.get_workspace()
+
+        try:
+            from modules import runtime_model
+            runtime_model.remember(body.get("provider", ""), body.get("model", ""),
+                                   body.get("api_key", ""), body.get("base_url", ""))
+        except Exception:
+            pass
+
         skills = body.get("skills") or []
         if not isinstance(skills, list):
             skills = []
