@@ -301,8 +301,18 @@ def _build_app():
         if not isinstance(skills, list):
             skills = []
 
+        # Checkpoint the workspace (if it's a git repo) before the turn, so any file
+        # changes Miko makes are revertible from the chat card afterwards.
+        import modules.claude_code as CC
+        snap = ""
+        try:
+            if workspace and CC.is_git_repo(workspace):
+                snap = CC.checkpoint(workspace)
+        except Exception:
+            snap = ""
+
         def factory(should_cancel):
-            return chat_stream(
+            gen = chat_stream(
                 _router,
                 body.get("session_id", "default"),
                 message,
@@ -322,6 +332,17 @@ def _build_app():
                 body.get("attachments") or [],
                 should_cancel=should_cancel,
             )
+            for ev in gen:
+                # On the final event, attach a revert handle if the turn touched files.
+                if snap and ev.get("type") in ("reply", "cancelled"):
+                    try:
+                        changed = CC.changed_since(workspace, snap)
+                    except Exception:
+                        changed = []
+                    if changed:
+                        ev = {**ev, "revert": {"repo": workspace, "snap": snap,
+                                               "changed": changed}}
+                yield ev
 
         # Chat turns cancel only on an explicit Stop (POST /chat/cancel), never on a
         # connection blip — so switching conversations mid-turn doesn't abort it.
@@ -641,6 +662,22 @@ def _build_app():
         if not token:
             return JSONResponse({"error": "Missing token."}, status_code=400)
         return {"message": CC.revert_round(token, snap)}
+
+    @app.post("/chat/workspace/revert")
+    async def chat_workspace_revert(request: Request, _=Depends(_auth)):
+        """Undo the file changes a normal chat turn made in the workspace (Revert button)."""
+        import modules.claude_code as CC
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        repo = (body.get("repo") or "").strip()
+        snap = (body.get("snap") or "").strip()
+        if not repo or not snap:
+            return JSONResponse({"error": "Missing repo or snap."}, status_code=400)
+        ok = CC.revert_to(repo, snap)
+        return {"ok": ok, "message": "Reverted the workspace to before this turn."
+                if ok else "Revert failed."}
 
     @app.get("/chat/code/active")
     def chat_code_active(_=Depends(_auth)):

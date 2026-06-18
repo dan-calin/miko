@@ -1837,6 +1837,30 @@ function addActivityCard() {
     status: card.querySelector('.rs-status'), log: card.querySelector('.rs-log') };
 }
 
+// "Revert to here" for a normal chat turn that changed files in the workspace.
+function addWorkspaceRevert(host, info) {
+  if (!host || !info || !info.snap || !info.repo) return;
+  const n = (info.changed || []).length;
+  const el = document.createElement('div'); el.className = 'pc-ckpt';
+  el.innerHTML = '<span>↩ this turn changed ' + n + (n === 1 ? ' file' : ' files') +
+                 ' in ' + baseName(info.repo) + '</span>';
+  const b = document.createElement('button'); b.className = 'pc-revert'; b.textContent = 'Revert to here';
+  if (n) b.title = info.changed.join('\n');
+  b.addEventListener('click', async () => {
+    b.textContent = 'reverting…'; b.disabled = true;
+    try {
+      const r = await (await fetch('/chat/workspace/revert', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo: info.repo, snap: info.snap }),
+      })).json();
+      b.textContent = r.ok ? '✓ reverted' : 'revert failed';
+      if (r.ok) b.classList.add('done');
+    } catch (e) { b.textContent = 'revert failed'; }
+  });
+  el.appendChild(b); host.appendChild(el);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
 function finishActivity(c, label) {
   if (c.log.children.length === 0) c.card.classList.add('rs-collapsed');  // plain reply → hide chrome
   else { c.status.textContent = label; c.card.classList.add('done'); }
@@ -1868,11 +1892,13 @@ function handleChatEvent(c, ev) {
     if (ev.attachments && _lastUser && _lastUser.setAttMeta) _lastUser.setAttMeta(ev.attachments);
     _lastUser = null;
     if ((ev.tools_used || []).includes('code_with_claude')) addViewSessionButton(c.pn);
+    if (ev.revert) addWorkspaceRevert(c.pn, ev.revert);
     updateMonitor((ev.usage && ev.usage.total_tokens) || 0);
     c.st.textContent = fmtTime(new Date());
   } else if (ev.type === 'cancelled') {
     finishActivity(c, 'stopped');
     if (!c.tx.textContent) renderBotText(c.tx, '⏹ Stopped.');
+    if (ev.revert) addWorkspaceRevert(c.pn, ev.revert);
     c.st.textContent = fmtTime(new Date());
   } else if (ev.type === 'error') {
     finishActivity(c, 'failed');
