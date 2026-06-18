@@ -161,6 +161,13 @@ def _run_coder(state, prompt, resume, timeout=1200) -> dict:
 # ── Git checkpoints / revert ────────────────────────────────────────────────────
 
 def _git(repo: str, *args, check: bool = False) -> subprocess.CompletedProcess:
+    # A WSL workspace's repo is a Linux git repo; Windows git on the \\wsl.localhost
+    # share trips dubious-ownership/locking, so run git inside the distro instead.
+    from modules.wsl_util import wsl_parts, wsl_git
+    distro, lpath = wsl_parts(repo)
+    if distro:
+        return subprocess.run(wsl_git(distro, lpath, list(args)), capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", check=check)
     return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True,
                           encoding="utf-8", errors="replace",
                           shell=(os.name == "nt"), check=check)

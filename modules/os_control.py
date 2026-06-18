@@ -706,19 +706,49 @@ def run_command(task: str, visible: bool = False) -> str:
     _ws = os.getenv("MIKO_WORKSPACE", "").strip()
     _cwd = _ws if (_ws and os.path.isdir(_ws)) else None
 
+    # A WSL workspace is a Linux folder: run the command as bash inside the distro
+    # (cd'd to the workspace) so git/ls/etc. behave natively instead of via the flaky
+    # \\wsl.localhost share.
+    from modules.wsl_util import wsl_parts, wsl_bash
+    _distro, _lpath = wsl_parts(_ws)
+
+    # Network/build commands (git push, npm/pip install, …) need longer than the
+    # snappy default before we give up on them.
+    _low = task.lower()
+    _timeout = 120 if any(k in _low for k in (
+        "git push", "git pull", "git fetch", "git clone", "npm install", "npm i ",
+        "pip install", "apt ", "cargo build", "cargo run", "make")) else 15
+
     # When we translated prose → command, tell the user what actually ran.
     _ran = f"`{task}`" if translated else "comanda"
     try:
         if visible:
-            subprocess.Popen(["cmd", "/k", task], cwd=_cwd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            if _distro:
+                import shlex as _shlex
+                cd = f"cd {_shlex.quote(_lpath)} && " if _lpath != "/" else ""
+                subprocess.Popen(["wsl.exe", "-d", _distro, "bash", "-lc",
+                                  f"{cd}{task}; exec bash"],
+                                 creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                subprocess.Popen(["cmd", "/k", task], cwd=_cwd,
+                                 creationflags=subprocess.CREATE_NEW_CONSOLE)
             return f"Am deschis un terminal nou cu comanda: {task}"
+        elif _distro:
+            result = subprocess.run(
+                wsl_bash(_distro, _lpath, task),
+                capture_output=True,
+                text=True,
+                timeout=_timeout,
+                encoding="utf-8",
+                errors="replace",
+            )
         else:
             result = subprocess.run(
                 task,
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=_timeout,
                 encoding="utf-8",
                 errors="replace",
                 cwd=_cwd,

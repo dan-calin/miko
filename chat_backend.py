@@ -355,6 +355,14 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
                 "calea directă), NU porni o căutare prin tot sistemul (Desktop, Documents, find_file) "
                 "decât dacă chiar lipsește din workspace."
             )
+            from modules.wsl_util import is_wsl_path
+            if is_wsl_path(workspace):
+                base += (
+                    " Workspace-ul ăsta e în WSL (Linux), deci run_command rulează comanda în bash "
+                    "în distro, deja cu cd aici. Scrie comenzi Linux/bash (ls, cat, git, rm — nu "
+                    "dir/copy/PowerShell) și căi POSIX; git merge nativ, deci doar "
+                    "'git add … && git commit -m … && git push'."
+                )
         return base
     base = (
         f"You are Miko, {owner_name}'s personal assistant, reachable through a text chat. "
@@ -415,6 +423,14 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
             "do NOT launch a system-wide hunt (Desktop, Documents, find_file) unless it's genuinely "
             "absent from the workspace."
         )
+        from modules.wsl_util import is_wsl_path
+        if is_wsl_path(workspace):
+            base += (
+                " This workspace lives inside WSL (Linux), so run_command executes your command "
+                "in bash inside the distro, already cd'd here. Write Linux/bash commands (ls, cat, "
+                "git, rm — not dir/copy/PowerShell) and use POSIX paths; git works natively, so just "
+                "'git add … && git commit -m … && git push'."
+            )
     return base
 
 
