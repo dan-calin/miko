@@ -94,8 +94,10 @@ def load_config() -> MikoConfig:
         discord_guild_id=guild_id,
         trusted_voice_users=trusted,
         minimax_api_key=os.getenv("MINIMAX_API_KEY", ""),
-        minimax_base_url=os.getenv("MINIMAX_BASE_URL", "https://api.minimax.chat/v1"),
-        minimax_model=os.getenv("MINIMAX_MODEL", "MiniMax-Text-01"),
+        # MiniMax speaks the Anthropic wire protocol — the anthropic SDK appends
+        # /v1/messages to this base, so it must be the bare /anthropic endpoint.
+        minimax_base_url=os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic"),
+        minimax_model=os.getenv("MINIMAX_MODEL", "MiniMax-M3"),
         live_model=os.getenv(
             "LIVE_MODEL",
             "models/gemini-3.1-flash-live-preview"

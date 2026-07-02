@@ -111,7 +111,16 @@ def start(command_router) -> None:
     _router = command_router
 
     port = int(os.getenv("TOOL_SERVER_PORT", "7832"))
-    host = os.getenv("TOOL_SERVER_HOST", "0.0.0.0")
+    # Loopback by default: the server exposes shell execution, file I/O and API
+    # keys, so it must not be LAN-reachable unless explicitly opted into.
+    host = os.getenv("TOOL_SERVER_HOST", "127.0.0.1")
+    if host not in ("127.0.0.1", "localhost", "::1") and not os.getenv("TOOL_SERVER_KEY", ""):
+        logger.error(
+            f"TOOL_SERVER_HOST={host} exposes run_command / file read-write / API keys "
+            "to the network WITHOUT auth. Set TOOL_SERVER_KEY, or leave the host unset "
+            "for loopback-only. Falling back to 127.0.0.1."
+        )
+        host = "127.0.0.1"
 
     threading.Thread(
         target=_run,
@@ -395,6 +404,11 @@ def _build_app():
             args = {}
         if not name or not _needs_approval(name, args):
             return JSONResponse({"error": "Not an approvable action."}, status_code=400)
+        # Approval clears the confirmation gate, not the safety layer — blocked
+        # paths / permanently-blocked tools must still be rejected here.
+        safe, reason = _router._safety_check(name, args)
+        if not safe:
+            return JSONResponse({"error": f"Blocked for safety: {reason}"}, status_code=403)
         try:
             result = str(_router._dispatch_module(name, args))
         except Exception as e:
@@ -438,7 +452,7 @@ def _build_app():
         if rm == "minimax":
             # High rate limit → deep research runs wider (see _EFFORT_HIGH).
             r_provider = "minimax"
-            r_model = getattr(CONFIG, "minimax_model", "") or "MiniMax-Text-01"
+            r_model = getattr(CONFIG, "minimax_model", "") or "MiniMax-M3"
             r_key = getattr(CONFIG, "minimax_api_key", "")
             r_base = getattr(CONFIG, "minimax_base_url", "")
         elif rm and rm != "chat":
@@ -490,7 +504,7 @@ def _build_app():
         base = ""
         if rm == "minimax":
             provider = "minimax"
-            model = getattr(CONFIG, "minimax_model", "") or "MiniMax-Text-01"
+            model = getattr(CONFIG, "minimax_model", "") or "MiniMax-M3"
             key = getattr(CONFIG, "minimax_api_key", "")
             base = getattr(CONFIG, "minimax_base_url", "")
         elif rm == "chat":
@@ -1165,7 +1179,12 @@ def _build_app():
         logger.info(f"[ToolServer] {tool_name}({list(args.keys())}) bypass={bypass}")
 
         if bypass:
-            # Skip confirmation gate — dispatch directly to the module
+            # Skip the confirmation gate only — the safety layer (blocked paths,
+            # permanently-blocked tools) still applies to trusted agents.
+            safe, reason = _router._safety_check(tool_name, args)
+            if not safe:
+                logger.warning(f"[ToolServer] safety block on bypass: {tool_name} — {reason}")
+                return JSONResponse({"error": f"Blocked for safety: {reason}"}, status_code=403)
             try:
                 result = _router._dispatch_module(tool_name, args)
             except Exception as e:

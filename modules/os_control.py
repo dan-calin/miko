@@ -753,15 +753,15 @@ def run_command(task: str, visible: bool = False) -> str:
                 errors="replace",
                 cwd=_cwd,
             )
-            out = (result.stdout or "").strip()
-            err = (result.stderr or "").strip()
-            if result.returncode == 0:
-                if out:
-                    return f"({_ran})\n{out}" if translated else out
-                return f"Am rulat {_ran} cu succes (exit 0)."
-            return f"Eroare la {_ran} (exit {result.returncode}): {err or out}"
+        out = (result.stdout or "").strip()
+        err = (result.stderr or "").strip()
+        if result.returncode == 0:
+            if out:
+                return f"({_ran})\n{out}" if translated else out
+            return f"Am rulat {_ran} cu succes (exit 0)."
+        return f"Eroare la {_ran} (exit {result.returncode}): {err or out}"
     except subprocess.TimeoutExpired:
-        return "Comanda a depășit limita de timp (15s), sefu."
+        return f"Comanda a depășit limita de timp ({_timeout}s), sefu."
     except Exception as e:
         return f"N-am putut executa comanda: {e}"
 

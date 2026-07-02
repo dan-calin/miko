@@ -149,7 +149,7 @@ class AudioHandler:
                            "utilizatorului, notițele, proiectele lui sau 'îți amintești…', "
                            "folosește întâi unealta `recall`, apoi răspunde din ce găsești.")
         try:
-            import schedule_briefs
+            from modules import schedule_briefs
             brief = schedule_briefs.get_today_brief()
             if brief:
                 label = "TODAY'S SCHEDULE" if is_en else "PROGRAMUL DE AZI"

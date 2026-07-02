@@ -469,7 +469,7 @@ def _memory_context(message: str) -> str:
         logger.warning(f"recall failed: {e}")
 
     try:   # today's schedule (cached by the briefs daemon — no live calendar call)
-        import schedule_briefs
+        from modules import schedule_briefs
         brief = schedule_briefs.get_today_brief()
         if brief:
             parts.append("[TODAY'S SCHEDULE]\n" + brief)

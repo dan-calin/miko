@@ -4,6 +4,7 @@ Stores user facts (identity, preferences, relationships, notes) across sessions.
 Auto-extracts facts from conversation transcripts via Gemini.
 """
 
+import hashlib
 import json
 import re
 import threading
@@ -279,8 +280,8 @@ def update_from_conversation_async(
 
 
 def _store_episode(summary: str, session_id: str) -> None:
-    """Store a one-line episodic memory, bucketed per session+hour (so it refreshes
-    rather than proliferating)."""
+    """Store a one-line episodic memory. Every episode is a new row; prune()
+    caps the log at the newest 40."""
     try:
         from memory import knowledge_store as KS
         sid = session_id or "voice"
@@ -322,10 +323,14 @@ def _reflect(complete_fn, memory_file: Path) -> None:
         for line in (raw or "").splitlines():
             line = line.strip().lstrip("-*0123456789. ").strip()
             if len(line) > 12 and n < 3:
-                KS.upsert("insight", f"insight/{abs(hash(line)) % (10 ** 9)}",
+                # Stable content hash — builtin hash() is salted per process, which
+                # would defeat the UNIQUE(kind, ref) dedup on every restart.
+                digest = hashlib.sha1(line.encode("utf-8")).hexdigest()[:16]
+                KS.upsert("insight", f"insight/{digest}",
                           "insight", line, importance=4, source="reflection")
                 n += 1
         KS.prune("episode", keep=40)
+        KS.prune("insight", keep=60)
         if n:
             logger.info(f"reflection stored {n} insight(s)")
     except Exception as e:

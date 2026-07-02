@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Tool server is loopback-only by default** (`tool_server.py`). It previously bound to
+  `0.0.0.0` with auth disabled unless `TOOL_SERVER_KEY` was set — exposing shell
+  execution, file read/write, and API keys to the local network. The default host is now
+  `127.0.0.1`; binding a network address without `TOOL_SERVER_KEY` logs an error and
+  falls back to loopback. External agents (e.g. Hermes on WSL2) must now set both
+  `TOOL_SERVER_HOST` and `TOOL_SERVER_KEY`.
+- **Safety layer enforced on every dispatch path.** `/chat/approve` and the
+  `X-Bypass-Confirmation` branch dispatched tools directly, skipping the blocked-paths /
+  blocked-tools checks. Both now run the safety check first and return 403 when blocked.
+
+### Fixed
+
+- **WSL workspace commands returned no output** (`modules/os_control.py`): the result
+  handling only ran for the Windows branch, so commands in a `\\wsl.localhost\...`
+  workspace executed but reported nothing. Timeout errors also always claimed "15s"
+  even when the limit was 120s.
+- **Today's-schedule context never reached chat or voice**: `chat_backend.py` and
+  `core/audio_handler.py` imported `schedule_briefs` with a stale bare import that
+  always failed silently; the `[TODAY'S SCHEDULE]` block is now injected again.
+- **"Ieși din stand-by" / "exit standby" left the user stuck in standby**
+  (`core/wake_word.py`, `core/mode_manager.py`): the phrase matched the bare "stand-by"
+  token and STANDBY was checked before ACTIVE. Exit phrases now win and land in ACTIVE.
+- **MiniMax defaults were stale** (`config.py`, `.env.example`): base URL now
+  `https://api.minimax.io/anthropic` (the Anthropic-protocol endpoint the client
+  actually speaks) and default model `MiniMax-M3`, so MiniMax works without manual env
+  overrides.
+- **Insight memory no longer grows unbounded** (`memory/memory_manager.py`): insight
+  dedup refs used Python's per-process-salted `hash()`, storing duplicates after every
+  restart, and insights were never pruned. Refs now use a stable SHA-1 content hash and
+  the insight log is capped at the newest 60.
+
 ## [0.3.0] - 2026-06-07
 
 ### Added

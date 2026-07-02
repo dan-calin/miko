@@ -24,7 +24,7 @@ _WAKE_PATTERNS = re.compile(
 
 # Romanian mode-change phrases
 _MODE_STANDBY = re.compile(
-    r"\b(taci|standby|stand[\s\-]?by|pauza|pauza|intr[aă]\s+[îi]n\s+stand[\s\-]?by|"
+    r"\b(taci|standby|stand[\s\-]?by|pauza|intr[aă]\s+[îi]n\s+stand[\s\-]?by|"
     r"shut\s+up|be\s+quiet)\b",
     re.IGNORECASE,
 )
@@ -33,9 +33,11 @@ _MODE_ACTIVE = re.compile(
     r"activeaz[aă]|intr[aă]\s+[îi]n\s+mod\s+activ|wake\s+up)\b",
     re.IGNORECASE,
 )
+# "ieși din stand-by" belongs to _MODE_ACTIVE only (its ack is "Ascult tot") —
+# keeping it here too made the target mode depend on check order.
 _MODE_AUTO = re.compile(
     r"\b(intr[aă]\s+[îi]n\s+mod\s+(auto|conversa[tț]ie)|"
-    r"activeaz[aă]\s+modul\s+conversa[tț]ie|ie[șs]i\s+din\s+stand[\s\-]?by)\b",
+    r"activeaz[aă]\s+modul\s+conversa[tț]ie)\b",
     re.IGNORECASE,
 )
 _MODE_EXIT_AUTO = re.compile(

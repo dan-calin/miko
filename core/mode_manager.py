@@ -35,10 +35,6 @@ class Mode(Enum):
     MUTE    = "mute"     # Hardest quiet — wake word ONLY, no follow-up window
 
 
-_MODE_TRANSITIONS = {
-    # (current_mode, trigger_fn) -> new_mode
-}
-
 # Verbal acknowledgements for each transition (per language)
 _TRANSITION_ACK_EN = {
     (Mode.ACTIVE,  Mode.STANDBY): "Going to standby. Call my name when you need me.",
@@ -144,11 +140,6 @@ class ModeManager:
                 self.set_mode(Mode.MUTE)
             return True
 
-        if detect_standby(text):
-            if mode != Mode.STANDBY:
-                self.set_mode(Mode.STANDBY)
-            return True
-
         if detect_exit_auto(text) and mode == Mode.AUTO:
             self.set_mode(Mode.ACTIVE)
             return True
@@ -158,9 +149,16 @@ class ModeManager:
                 self.set_mode(Mode.AUTO)
             return True
 
+        # ACTIVE before STANDBY: "ieși din stand-by" / "exit standby" contains the
+        # bare "stand-by" token, so checking STANDBY first would trap the user there.
         if detect_active(text):
             if mode != Mode.ACTIVE:
                 self.set_mode(Mode.ACTIVE)
+            return True
+
+        if detect_standby(text):
+            if mode != Mode.STANDBY:
+                self.set_mode(Mode.STANDBY)
             return True
 
         return False

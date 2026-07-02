@@ -258,8 +258,21 @@ python start_tools_server.py
 This starts the HTTP tool server (default port `7832`), the Discord bot, and the file
 indexer — but no microphone or Gemini Live session, so the agent can use Miko's tools
 without Miko listening. Tool schemas are served at `GET /tools?format=openai|anthropic|gemini`.
-Set `TOOL_SERVER_KEY` to require a bearer token. Trusted local agents may send
-`X-Bypass-Confirmation: true` to skip the voice-confirmation gate on destructive tools.
+
+**The server binds to `127.0.0.1` (loopback) by default** — it exposes shell execution,
+file read/write, and your API keys, so it is not reachable from the network unless you
+opt in. To let another machine (or Hermes on WSL2, which reaches Windows via the vEthernet
+gateway IP, not loopback) call it, set **both**:
+
+```
+TOOL_SERVER_HOST=0.0.0.0        # or a specific interface
+TOOL_SERVER_KEY=<random-secret> # required — callers send Authorization: Bearer <key>
+```
+
+If `TOOL_SERVER_HOST` is set to a network address without `TOOL_SERVER_KEY`, Miko refuses
+and falls back to loopback. Trusted agents may send `X-Bypass-Confirmation: true` to skip
+the voice-confirmation gate on destructive tools — the safety layer (blocked paths,
+permanently blocked tools) still applies even then.
 
 ## Chat UI
 
@@ -689,8 +702,10 @@ Anthropic-compatible (e.g. MiniMax `…/anthropic`), OpenAI-compatible, or Gemin
 
 **Tool server** (`tool_server.py`) exposes all of Miko's tools over HTTP so external
 agents (e.g. Hermes) can call them. It serves tool schemas in OpenAI / Anthropic / Gemini
-formats and guards execution with an optional bearer token (`TOOL_SERVER_KEY`) and a
-confirmation gate for destructive actions. Run it standalone (no voice) with
+formats and binds to loopback by default; exposing it to the network requires both
+`TOOL_SERVER_HOST` and a `TOOL_SERVER_KEY` bearer token. Execution is guarded by a
+safety layer (blocked paths / blocked tools, enforced on every path, including approvals
+and bypass) and a confirmation gate for destructive actions. Run it standalone (no voice) with
 `python start_tools_server.py`. The same server hosts the **web Chat UI** at `/chat`
 (`webui/chat.html`), backed by `chat_backend.py` (model-agnostic chat that runs Miko's
 tools) and `file_browser.py` (the workspace file explorer/editor + folder picker).
