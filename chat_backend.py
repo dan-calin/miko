@@ -170,7 +170,8 @@ def complete_text(provider: str, model: str = "", api_key: str = "", base_url: s
         msgs.append({"role": "system", "content": system})
     msgs.append({"role": "user", "content": user})
     resp = client.chat.completions.create(model=model, messages=msgs)
-    return (resp.choices[0].message.content or "").strip()
+    msg = _openai_first_message(resp, provider, model)
+    return _openai_msg_content(msg).strip()
 
 
 # ── .env read/write (settings panel) ──────────────────────────────────────────
@@ -853,6 +854,66 @@ def _is_tool_support_error(exc: Exception) -> bool:
     )
 
 
+def _openai_response_detail(resp) -> str:
+    """Best-effort detail from OpenAI-compatible responses that lack choices."""
+    if resp is None:
+        return "empty response"
+    data = {}
+    try:
+        if isinstance(resp, dict):
+            data = resp
+        elif hasattr(resp, "model_dump"):
+            data = resp.model_dump(exclude_none=True)
+        elif hasattr(resp, "__dict__"):
+            data = dict(resp.__dict__)
+    except Exception:
+        data = {}
+
+    err = data.get("error") if isinstance(data, dict) else None
+    if err:
+        if isinstance(err, dict):
+            return str(err.get("message") or err.get("detail") or err)
+        return str(err)
+    for key in ("message", "detail", "warning"):
+        val = data.get(key) if isinstance(data, dict) else None
+        if val:
+            return str(val)
+    return f"response type {type(resp).__name__}"
+
+
+def _openai_first_message(resp, provider: str, model: str):
+    choices = getattr(resp, "choices", None)
+    if choices is None and isinstance(resp, dict):
+        choices = resp.get("choices")
+    if not choices:
+        detail = _openai_response_detail(resp)
+        raise RuntimeError(
+            f"{provider or 'OpenAI-compatible provider'}/{model or '(default)'} "
+            f"returned no choices: {detail}"
+        )
+    msg = getattr(choices[0], "message", None)
+    if msg is None and isinstance(choices[0], dict):
+        msg = choices[0].get("message")
+    if msg is None:
+        raise RuntimeError(
+            f"{provider or 'OpenAI-compatible provider'}/{model or '(default)'} "
+            "returned a choice without a message."
+        )
+    return msg
+
+
+def _openai_msg_content(msg) -> str:
+    if isinstance(msg, dict):
+        return msg.get("content") or ""
+    return getattr(msg, "content", "") or ""
+
+
+def _openai_msg_tool_calls(msg) -> list:
+    if isinstance(msg, dict):
+        return msg.get("tool_calls") or []
+    return getattr(msg, "tool_calls", None) or []
+
+
 def _is_rate_limit_error(exc: Exception) -> bool:
     """Provider quota/rate-limit failure that can be safely retried elsewhere."""
     msg = str(exc).lower()
@@ -1392,6 +1453,23 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
     rk = _reasoning_kwargs("openai", model, effort)   # native reasoning_effort (if supported)
     extra_body = _openai_extra_body(base, model)
 
+    def _run_plain_no_tools() -> str:
+        messages[0]["content"] += (
+            "\n\n[NO TOOLS AVAILABLE]\n"
+            "The selected model endpoint does not support tool/function calls. "
+            "Answer conversationally only. Do not claim to run actions, change "
+            "settings, send messages, read files, or use external tools."
+        )
+        plain = _create_safe(
+            client.chat.completions.create,
+            {"model": model, "messages": messages, **({"extra_body": extra_body} if extra_body else {})},
+            rk,
+        )
+        plain_msg = _openai_first_message(plain, base or "openai", model)
+        if usage is not None:
+            _accum_usage(usage, plain, "openai")
+        return _openai_msg_content(plain_msg).strip() or "(no response)"
+
     for _r in range(rounds):
         if _cancelled(should_cancel):
             return "(cancelled)"
@@ -1410,32 +1488,28 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
                     "model rejected tool declarations; retrying this turn without tools "
                     f"({model})"
                 )
-                messages[0]["content"] += (
-                    "\n\n[NO TOOLS AVAILABLE]\n"
-                    "The selected model endpoint does not support tool/function calls. "
-                    "Answer conversationally only. Do not claim to run actions, change "
-                    "settings, send messages, read files, or use external tools."
+                return _run_plain_no_tools()
+            raise
+        try:
+            msg = _openai_first_message(resp, base or "openai", model)
+        except RuntimeError as e:
+            if tools and _is_tool_support_error(e):
+                logger.warning(
+                    "model returned a tool-support error without choices; retrying "
+                    f"this turn without tools ({model})"
                 )
-                plain = _create_safe(
-                    client.chat.completions.create,
-                    {"model": model, "messages": messages, **({"extra_body": extra_body} if extra_body else {})},
-                    rk,
-                )
-                if usage is not None:
-                    _accum_usage(usage, plain, "openai")
-                return (plain.choices[0].message.content or "").strip() or "(no response)"
+                return _run_plain_no_tools()
             raise
         if usage is not None:
             _accum_usage(usage, resp, "openai")
-        msg = resp.choices[0].message
-        tool_calls = msg.tool_calls or []
+        tool_calls = _openai_msg_tool_calls(msg)
 
         if not tool_calls:
-            return (msg.content or "").strip() or "(no response)"
+            return _openai_msg_content(msg).strip() or "(no response)"
 
         messages.append({
             "role": "assistant",
-            "content": msg.content or "",
+            "content": _openai_msg_content(msg),
             "tool_calls": [
                 {"id": tc.id, "type": "function",
                  "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
@@ -1451,9 +1525,10 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     final = _create_safe(client.chat.completions.create, {"model": model, "messages": messages}, rk)
+    final_msg = _openai_first_message(final, base or "openai", model)
     if usage is not None:
         _accum_usage(usage, final, "openai")
-    return (final.choices[0].message.content or "").strip() or "(done)"
+    return _openai_msg_content(final_msg).strip() or "(done)"
 
 
 # ── Anthropic-compatible (MiniMax /anthropic) ────────────────────────────────
