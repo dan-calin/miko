@@ -94,6 +94,8 @@ def _batch_view(batch: dict) -> dict:
         "batch_id": batch["id"], "created": batch["created"], "context": batch["context"],
         "provider": batch["provider"], "model": batch["model"], "cap": batch["cap"],
         "session_id": batch.get("session_id", ""), "status": batch_status(batch),
+        "source": batch.get("source", "user"),
+        "source_label": batch.get("source_label", "Agents tab"),
         "agents": [{
             "id": a["id"], "task": a["task"], "status": a["status"],
             "steps": list(a["steps"]), "result": a["result"], "error": a["error"],
@@ -160,6 +162,8 @@ def _load() -> None:
                 "context": v.get("context", ""), "provider": v.get("provider", ""),
                 "model": v.get("model", ""), "key": "", "base": "",
                 "cap": v.get("cap", _DEFAULT_CAP), "session_id": v.get("session_id", ""),
+                "source": v.get("source", "user"),
+                "source_label": v.get("source_label", "Agents tab"),
                 "agents": agents,
             }
         _prune_locked()
@@ -245,7 +249,7 @@ def _run_agent(batch: dict, agent: dict) -> None:
 
 
 def launch(tasks, context: str, provider: str, model: str, key: str, base: str = "",
-           session_id: str = "") -> dict:
+           session_id: str = "", source: str = "user", source_label: str = "") -> dict:
     """Create a batch and run its agents in the background (non-blocking).
     Returns the batch view immediately. Respects the per-provider concurrency cap.
     The batch is tied to session_id (or the active chat session) so the UI panel can
@@ -254,10 +258,14 @@ def launch(tasks, context: str, provider: str, model: str, key: str, base: str =
     if not tasks:
         return {"error": "No tasks to run."}
     cap = provider_cap(provider)
+    source = (source or "user").strip() or "user"
+    source_label = (source_label or ("Summoned by Miko" if source == "miko" else "Agents tab")).strip()
     batch = {
         "id": "batch-" + uuid.uuid4().hex[:8], "created": _now(), "context": (context or "").strip(),
         "provider": provider, "model": model, "key": key, "base": base, "cap": cap,
         "session_id": (session_id or "").strip() or current_session(),
+        "source": source,
+        "source_label": source_label,
         "agents": [_new_agent(t) for t in tasks],
     }
     with _LOCK:
@@ -276,10 +284,12 @@ def in_subagent() -> bool:
 
 
 def run_and_wait(tasks, context: str, provider: str, model: str, key: str,
-                 base: str = "", timeout: float = 600) -> dict:
+                 base: str = "", timeout: float = 600, source: str = "miko",
+                 source_label: str = "Summoned by Miko") -> dict:
     """Launch a batch and block until every agent is terminal; return the batch view.
     Used by the blocking spawn_agents tool so Miko's own spawns are observable too."""
-    view = launch(tasks, context, provider, model, key, base)
+    view = launch(tasks, context, provider, model, key, base,
+                  source=source, source_label=source_label)
     if view.get("error"):
         return view
     bid = view["batch_id"]

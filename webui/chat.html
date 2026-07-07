@@ -324,6 +324,9 @@
     padding: 8px 10px; margin: 6px 0; }
   .agent-batch-head { display: flex; align-items: center; gap: 8px; font-size: 12px;
     color: var(--text2); margin-bottom: 6px; }
+  .agent-batch-head .ab-source { font-family: var(--mono); font-size: 10px; color: var(--amber);
+    border: 1px solid var(--amberDim, var(--border)); border-radius: 999px; padding: 1px 7px;
+    white-space: nowrap; }
   .agent-batch-head .ab-cap { font-family: var(--mono); font-size: 10px; color: var(--text3); }
   .agent-batch-head .ab-cancel { margin-left: auto; background: none; border: 1px solid var(--border);
     color: var(--text3); border-radius: 4px; font-size: 10px; padding: 2px 8px; cursor: pointer; }
@@ -1875,6 +1878,7 @@ function handleChatEvent(c, ev) {
     el.querySelector('.rs-lb').textContent = ev.name;
     el.querySelector('.rs-dt').textContent = ev.args ? ' — ' + ev.args : '';
     c.log.appendChild(el); c._last = el;
+    if (ev.name === 'spawn_agents') watchMikoAgents();
     c.status.textContent = ev.note || ('using ' + ev.name + '…');
   } else if (ev.type === 'tool_end') {
     if (c._last) {
@@ -2324,6 +2328,8 @@ function renderPanelBatch(view, prepend) {
   const lbl = document.createElement('span');
   lbl.innerHTML = '<span class="rs-ic mk-dot">⛬</span> ' + view.agents.length +
     ' agent' + (view.agents.length === 1 ? '' : 's');
+  const source = document.createElement('span'); source.className = 'ab-source';
+  source.textContent = view.source_label || (view.source === 'miko' ? 'Summoned by Miko' : 'Agents tab');
   const cap = document.createElement('span'); cap.className = 'ab-cap';
   cap.textContent = (view.provider || '') + ' · max ' + (view.cap || '?');
   const time = document.createElement('span'); time.className = 'ap-batch-time';
@@ -2335,7 +2341,7 @@ function renderPanelBatch(view, prepend) {
   const del = document.createElement('button'); del.className = 'ap-del';
   del.textContent = '✕'; del.title = 'Remove this run';
   del.addEventListener('click', () => deleteBatch(view.batch_id));
-  head.append(lbl, cap, time, cancelAll, del);
+  head.append(lbl, source, cap, time, cancelAll, del);
   batch.appendChild(head);
   const refs = { batch, agents: {}, cancelAll };
   view.agents.forEach(a => {
@@ -2375,6 +2381,23 @@ async function loadAgentPanel(rebuild) {
   const empty = $('#agents-panel-empty');
   if (empty) empty.style.display = batches.length ? 'none' : 'block';
   updateAgentRail();
+}
+
+let _mikoAgentWatch = null;
+function watchMikoAgents() {
+  openAgentPanel();
+  if (_mikoAgentWatch) clearInterval(_mikoAgentWatch);
+  let ticks = 0;
+  const tick = () => {
+    ticks += 1;
+    loadAgentPanel(false);
+    if (ticks >= 12 && _mikoAgentWatch) {
+      clearInterval(_mikoAgentWatch);
+      _mikoAgentWatch = null;
+    }
+  };
+  setTimeout(tick, 350);
+  _mikoAgentWatch = setInterval(tick, 1200);
 }
 
 function updateAgentRail() {
