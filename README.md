@@ -567,7 +567,10 @@ sub-agents** (`spawn_agents`): up to five focused, read-only agents that run **i
 each searches/reads/recalls on its own and reports back — so big jobs (research several angles,
 inspect many files) finish faster. Sub-agents can't make changes or spawn their own sub-agents.
 A dockable **side panel** lists your sub-agent runs and their steps so they don't scroll away or
-vanish on refresh.
+vanish on refresh. Miko-launched sub-agents default to the **main chat/voice model** that
+summoned them; in Settings -> Sub-agents, set `MIKO_SUBAGENT_MODEL_MODE=custom` plus
+`MIKO_SUBAGENT_PROVIDER` / `MIKO_SUBAGENT_MODEL` if you want delegated work to run on a
+different model.
 
 ### Agents, skills & per-model settings
 

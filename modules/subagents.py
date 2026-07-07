@@ -16,6 +16,7 @@ Safety:
 """
 
 import logging
+import os
 
 logger = logging.getLogger("miko.subagents")
 
@@ -65,6 +66,59 @@ def _get_router():
     return CommandRouter(CONFIG)
 
 
+def _provider_config(provider: str, model: str = "", key: str = "", base: str = "") -> tuple[dict | None, str]:
+    try:
+        import chat_backend
+        preset = chat_backend.PROVIDERS.get((provider or "").strip().lower())
+    except Exception:
+        preset = None
+    if not preset:
+        return None, f"Unknown sub-agent provider '{provider}'."
+    key = (key or "").strip()
+    if not key and preset.get("env_key"):
+        key = os.getenv(preset["env_key"], "").strip()
+    model = (model or "").strip() or ((preset.get("models") or [""])[0] if preset.get("models") else "")
+    base = (base or "").strip() or preset.get("base_url", "")
+    if not key:
+        return None, (
+            f"Sub-agents need an API key for {preset.get('label', provider)}. "
+            "Set the provider key in Settings, or set MIKO_SUBAGENT_API_KEY for a custom sub-agent model."
+        )
+    if not model:
+        return None, f"Sub-agents need a model for {preset.get('label', provider)}."
+    return {"provider": provider, "model": model, "key": key, "base": base}, ""
+
+
+def _resolve_subagent_model(agent_jobs) -> tuple[dict | None, str]:
+    """Choose the model for Miko-launched sub-agents.
+
+    MIKO_SUBAGENT_MODEL_MODE=main (default) inherits the chat/voice model that
+    called spawn_agents. MIKO_SUBAGENT_MODEL_MODE=custom uses the dedicated
+    MIKO_SUBAGENT_* fields from Settings.
+    """
+    mode = (os.getenv("MIKO_SUBAGENT_MODEL_MODE", "main") or "main").strip().lower()
+    if mode in ("custom", "dedicated", "override", "fixed"):
+        provider = os.getenv("MIKO_SUBAGENT_PROVIDER", "").strip().lower()
+        model = os.getenv("MIKO_SUBAGENT_MODEL", "").strip()
+        key = os.getenv("MIKO_SUBAGENT_API_KEY", "").strip()
+        base = os.getenv("MIKO_SUBAGENT_BASE_URL", "").strip()
+        if not provider:
+            return None, "Set MIKO_SUBAGENT_PROVIDER in Settings, or switch sub-agent model mode back to 'main'."
+        return _provider_config(provider, model, key, base)
+
+    active = agent_jobs.current_model()
+    provider = (active.get("provider") or "").strip().lower()
+    model = (active.get("model") or "").strip()
+    key = (active.get("api_key") or "").strip()
+    base = (active.get("base_url") or "").strip()
+    if provider:
+        return _provider_config(provider, model, key, base)
+
+    # If spawn_agents is called outside a chat turn, fall back to the old safe default.
+    from config import CONFIG
+    return _provider_config("gemini", "gemini-2.5-flash", getattr(CONFIG, "gemini_api_key", ""), "")
+
+
 def spawn_agents(tasks, context: str = "") -> str:
     """Run up to _MAX focused sub-agents in parallel; return their combined findings.
 
@@ -81,13 +135,13 @@ def spawn_agents(tasks, context: str = "") -> str:
     if not tasks:
         return "No tasks were given to delegate."
 
-    from config import CONFIG
-    key = getattr(CONFIG, "gemini_api_key", "")
-    if not key:
-        return "Sub-agents need the Gemini key (LLM_API_KEY) configured."
+    chosen, err = _resolve_subagent_model(agent_jobs)
+    if err:
+        return err
 
     batch = agent_jobs.run_and_wait(tasks, (context or "").strip(),
-                                    "gemini", "gemini-2.5-flash", key)
+                                    chosen["provider"], chosen["model"], chosen["key"],
+                                    chosen["base"])
     if batch.get("error"):
         return batch["error"]
     out = [f"Delegated to {len(batch['agents'])} sub-agent(s):"]

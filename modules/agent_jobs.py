@@ -37,6 +37,7 @@ _SEMAPHORES = {}           # provider -> BoundedSemaphore(cap)
 _POOL = ThreadPoolExecutor(max_workers=16, thread_name_prefix="subagent")
 _local = threading.local()
 _session_local = threading.local()   # the conversation a spawn belongs to (per thread)
+_model_local = threading.local()     # the chat model a spawn should inherit (per thread)
 
 
 # ── Session attribution ───────────────────────────────────────────────────────
@@ -51,6 +52,23 @@ def set_current_session(session_id: str) -> None:
 
 def current_session() -> str:
     return getattr(_session_local, "sid", "") or ""
+
+
+def set_current_model(provider: str = "", model: str = "",
+                      key: str = "", base: str = "") -> None:
+    _model_local.provider = (provider or "").strip()
+    _model_local.model = (model or "").strip()
+    _model_local.key = (key or "").strip()
+    _model_local.base = (base or "").strip()
+
+
+def current_model() -> dict:
+    return {
+        "provider": getattr(_model_local, "provider", "") or "",
+        "model": getattr(_model_local, "model", "") or "",
+        "api_key": getattr(_model_local, "key", "") or "",
+        "base_url": getattr(_model_local, "base", "") or "",
+    }
 
 
 def provider_cap(provider: str) -> int:

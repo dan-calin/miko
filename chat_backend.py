@@ -199,6 +199,16 @@ SETTINGS_GROUPS = [
         {"key": "MOONSHOT_API_KEY", "label": "Kimi / Moonshot API key", "secret": True},
         {"key": "XAI_API_KEY", "label": "xAI (Grok) API key", "secret": True},
     ]},
+    {"category": "Sub-agents", "fields": [
+        {"key": "MIKO_SUBAGENT_MODEL_MODE", "label": "Model mode", "placeholder": "main",
+         "options": ["main", "custom"],
+         "help": "'main' inherits the current chat/voice model; 'custom' uses the fields below."},
+        {"key": "MIKO_SUBAGENT_PROVIDER", "label": "Custom provider", "placeholder": "openrouter"},
+        {"key": "MIKO_SUBAGENT_MODEL", "label": "Custom model", "placeholder": "openrouter/free"},
+        {"key": "MIKO_SUBAGENT_BASE_URL", "label": "Custom base URL", "placeholder": "https://host/v1"},
+        {"key": "MIKO_SUBAGENT_API_KEY", "label": "Custom API key override", "secret": True,
+         "help": "Optional. If blank, Miko uses the provider key from the AI Models section."},
+    ]},
     {"category": "Discord", "fields": [
         {"key": "DISCORD_TOKEN", "label": "Bot token", "secret": True},
         {"key": "DISCORD_GUILD_ID", "label": "Server (guild) ID"},
@@ -273,6 +283,7 @@ def settings_schema() -> dict:
             fields.append({
                 "key": f["key"], "label": f["label"], "secret": bool(f.get("secret")),
                 "placeholder": f.get("placeholder", ""), "help": f.get("help", ""),
+                "options": f.get("options", []),
                 "set": bool(v), "value": ("" if f.get("secret") else v),
             })
         groups.append({"category": g["category"], "fields": fields})
@@ -1108,6 +1119,7 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
         try:
             from modules import agent_jobs
             agent_jobs.set_current_session(session_id)
+            agent_jobs.set_current_model(provider, model, key, base)
         except Exception:
             pass
 
