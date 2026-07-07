@@ -212,8 +212,20 @@
   .empty .sub   { font-size: 13px; color: var(--text3); text-align: center; }
 
   .row { display: flex; gap: 14px; padding: 11px 0; }
+  .row.msg-row { position: relative; }
   .row.bot  { border-bottom: 1px solid var(--borderMid); }
   .row.user { flex-direction: row-reverse; margin-bottom: 3px; }
+  .msg-actions { position: absolute; right: 0; bottom: -7px; display: flex; gap: 4px;
+    opacity: 0; pointer-events: none; transition: opacity 120ms; z-index: 2; }
+  .row.bot .msg-actions { right: 2px; }
+  .row.msg-row:hover .msg-actions { opacity: 1; pointer-events: auto; }
+  .msg-actions.in-bubble { position: static; display: inline-flex; margin-left: 8px;
+    vertical-align: text-bottom; transform: translateY(4px); }
+  .msg-act { width: 23px; height: 23px; display: inline-flex; align-items: center; justify-content: center;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text3);
+    border-radius: 4px; cursor: pointer; padding: 0; }
+  .msg-act:hover { border-color: var(--amber); color: var(--amber); }
+  .msg-act:disabled { opacity: .45; cursor: default; }
   .glyph {
     flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--amberDim);
     display: flex; align-items: center; justify-content: center;
@@ -227,6 +239,8 @@
     border-radius: 3px; padding: 9px 13px; font-size: 14px; line-height: 1.65;
     color: var(--text); white-space: pre-wrap; word-break: break-word;
   }
+  .row.user.queued .user-bubble { border-color: var(--amberDim); opacity: .82; }
+  .row.user.queued .stamp { color: var(--amber); }
   .bot-text { display: flex; flex-direction: column; gap: 9px; }
   .bot-text .para { display: flex; flex-direction: column; gap: 2px; }
   .bot-text .line { line-height: 1.7; color: var(--text); word-wrap: break-word; }
@@ -331,6 +345,10 @@
   .agent-batch-head .ab-cancel { margin-left: auto; background: none; border: 1px solid var(--border);
     color: var(--text3); border-radius: 4px; font-size: 10px; padding: 2px 8px; cursor: pointer; }
   .agent-batch-head .ab-cancel:hover { border-color: var(--red, #e06c75); color: var(--red, #e06c75); }
+  .agent-batch-head .ab-retry { margin-left: auto; background: none; border: 1px solid var(--amberDim, var(--border));
+    color: var(--amber); border-radius: 4px; font-size: 10px; padding: 2px 8px; cursor: pointer; }
+  .agent-batch-head .ab-retry:hover { border-color: var(--amber); color: var(--amber); }
+  .agent-batch-head .ab-retry + .ab-cancel { margin-left: 0; }
   .agent-card { border: 1px solid var(--border); border-radius: 6px; margin: 5px 0; overflow: hidden; }
   .agent-card-head { display: flex; align-items: center; gap: 8px; padding: 6px 9px; cursor: pointer;
     background: var(--bg); }
@@ -843,6 +861,12 @@
   .set-field input { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 6px 9px; font: inherit; font-size: 12px; }
   .set-field input:focus { outline: none; border-color: var(--amber); }
+  .set-options { display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 5px; }
+  .set-opt { min-width: 82px; background: none; border: none; color: var(--text3);
+    border-radius: 3px; padding: 6px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+  .set-opt:hover { color: var(--text); }
+  .set-opt.active { background: var(--amber); color: #0b0b0b; font-weight: 600; }
   .set-badge { font-family: var(--mono); font-size: 9px; color: var(--green); margin-left: 6px; }
   .modal-foot { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); }
   .settings-status { font-size: 11px; color: var(--text3); flex: 1; }
@@ -1630,6 +1654,28 @@ function stampFrom(ts) { const d = ts ? new Date(ts) : new Date(); return isNaN(
 
 const _FILE_IC = { document: '📄', pdf: '📄', text: '📄', image: '🖼', unreadable: '📎' };
 
+function addMessageActions(row, msg) {
+  if (!row || !msg || !msg.id) return;
+  row.classList.add('msg-row');
+  row.dataset.messageId = msg.id;
+  const acts = document.createElement('div');
+  acts.className = 'msg-actions';
+  const host = row.classList.contains('user') ? row.querySelector('.user-bubble') : row;
+  if (host !== row) acts.classList.add('in-bubble');
+  const undo = document.createElement('button');
+  undo.className = 'msg-act';
+  undo.type = 'button';
+  undo.title = 'Undo conversation and workspace changes up to this point';
+  undo.setAttribute('aria-label', 'Undo to this message');
+  undo.innerHTML = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6.2 4.1H3.1V1.2M3.4 4.1a5.8 5.8 0 1 1-.2 7.1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  undo.addEventListener('click', e => {
+    e.stopPropagation();
+    undoToMessage(msg.id, undo);
+  });
+  acts.appendChild(undo);
+  host.appendChild(acts);
+}
+
 // Build one attachment chip. Non-image files become a chip you click to expand an
 // overview of the extracted text (so a long CV shows as a chip, not a wall of text).
 function buildAttChip(a) {
@@ -1659,7 +1705,7 @@ function buildAttChip(a) {
   return { el: wrap, setOverview };
 }
 
-function addUser(text, ts, atts) {
+function addUser(text, ts, atts, msg) {
   const row = document.createElement('div'); row.className = 'row user';
   const c = document.createElement('div'); c.className = 'content';
   const wrap = document.createElement('div'); wrap.className = 'user-bubble-wrap';
@@ -1686,11 +1732,12 @@ function addUser(text, ts, atts) {
   wrap.appendChild(b); c.appendChild(wrap);
   const st = document.createElement('div'); st.className = 'stamp'; st.textContent = fmtTime(stampFrom(ts));
   c.appendChild(st); row.appendChild(c);
+  addMessageActions(row, msg);
   messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
-  return { row, setAttMeta: attCtl };
+  return { row, stamp: st, setAttMeta: attCtl };
 }
 
-function addBot() {
+function addBot(msg) {
   const row = document.createElement('div'); row.className = 'row bot';
   const g = document.createElement('div'); g.className = 'glyph'; g.textContent = 'M';
   const c = document.createElement('div'); c.className = 'content';
@@ -1700,8 +1747,9 @@ function addBot() {
   const pn = document.createElement('div'); pn.className = 'pending-wrap';
   const st = document.createElement('div'); st.className = 'stamp';
   c.append(tx, tl, fl, pn, st); row.append(g, c);
+  addMessageActions(row, msg);
   messagesEl.appendChild(row); chatEl.scrollTop = chatEl.scrollHeight;
-  return { tx, tl, fl, pn, st };
+  return { row, tx, tl, fl, pn, st };
 }
 
 function renderFileChips(host, files) {
@@ -1822,6 +1870,89 @@ function greeting() {
 
 // ── Send (streamed: live activity + Stop) ──────────────────
 let curAbort = null;
+let _chatQueue = [];
+let _drainingChatQueue = false;
+
+function captureChatConfig() {
+  return {
+    session_id: sessionId,
+    provider: curProvider,
+    model: $('#model').value,
+    api_key: $('#api-key').value,
+    base_url: $('#base-url').value,
+    allow_actions: $('#allow-actions').classList.contains('on'),
+    workspace: workspace,
+    agent: asAgent,
+    skills: asSkills.slice(),
+    effort: asEffort,
+    approval: approveMode,
+    thinking: thinkMode,
+  };
+}
+
+function queueChatTurn(text, atts, cfgSnap) {
+  if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
+  const userHandle = addUser(text, null, atts);
+  userHandle.row.classList.add('queued');
+  userHandle.stamp.textContent = 'queued';
+  _chatQueue.push({ text, attachments: atts || [], cfg: cfgSnap || captureChatConfig(), userHandle });
+  refreshSend();
+}
+
+function markQueuedSending(item) {
+  if (!item || !item.userHandle) return;
+  item.userHandle.row.classList.remove('queued');
+  item.userHandle.stamp.textContent = fmtTime(new Date());
+}
+
+function drainChatQueue() {
+  if (_drainingChatQueue || !_chatQueue.length || $('#send-btn').dataset.busy === '1' || pairStreaming) return;
+  const next = _chatQueue.shift();
+  _drainingChatQueue = true;
+  setTimeout(() => {
+    send(next).finally(() => { _drainingChatQueue = false; drainChatQueue(); });
+  }, 60);
+}
+
+function addRetryButton(host, item) {
+  if (!host || !item || !item.text) return;
+  const box = document.createElement('div');
+  box.className = 'pc-ckpt';
+  const label = document.createElement('span');
+  label.textContent = 'This turn failed or was interrupted.';
+  const btn = document.createElement('button');
+  btn.className = 'pc-revert';
+  btn.type = 'button';
+  btn.textContent = 'Retry';
+  btn.addEventListener('click', () => {
+    box.remove();
+    queueChatTurn(item.text, item.attachments || [], item.cfg || captureChatConfig());
+    drainChatQueue();
+  });
+  box.append(label, btn);
+  host.appendChild(box);
+}
+
+function addInterruptedResume() {
+  const c = addBot();
+  const box = document.createElement('div');
+  box.className = 'pc-ckpt';
+  const label = document.createElement('span');
+  label.textContent = 'This task was interrupted before Miko replied.';
+  const btn = document.createElement('button');
+  btn.className = 'pc-revert';
+  btn.type = 'button';
+  btn.textContent = 'Continue';
+  btn.addEventListener('click', () => {
+    c.row.remove();
+    const msg = 'Continue the interrupted task from my previous message. Inspect the current state first, then proceed without repeating completed work.';
+    queueChatTurn(msg, [], captureChatConfig());
+    drainChatQueue();
+  });
+  box.append(label, btn);
+  c.pn.appendChild(box);
+  c.st.textContent = fmtTime(new Date());
+}
 
 function setBusy(on) {
   const b = $('#send-btn');
@@ -1928,33 +2059,52 @@ function handleChatEvent(c, ev) {
     c.st.textContent = fmtTime(new Date());
   } else if (ev.type === 'error') {
     finishActivity(c, 'failed');
+    addRetryButton(c.pn, c._retry);
     c.tx.className = 'bot-text err'; renderBotText(c.tx, '⚠ ' + ev.error);
     c.st.textContent = fmtTime(new Date());
   }
   chatEl.scrollTop = chatEl.scrollHeight;
 }
 
-async function send() {
-  const input = $('#input'), typed = input.value.trim();
-  if (!typed && !_attach.length) return;
-  const text = typed || 'Take a look at the attached file(s).';
-  // Mid-run pair session: queue the message for Miko instead of being blocked by busy.
-  if (pairMode && pairStreaming && curCodeToken) {
-    input.value = ''; input.style.height = 'auto'; refreshSend();
-    queueCode(text);
-    return;
+async function send(queuedItem) {
+  const input = $('#input');
+  let text, atts, req, userHandle;
+  if (queuedItem) {
+    text = queuedItem.text;
+    atts = queuedItem.attachments || [];
+    req = queuedItem.cfg || captureChatConfig();
+    userHandle = queuedItem.userHandle;
+    markQueuedSending(queuedItem);
+  } else {
+    const typed = input.value.trim();
+    if (!typed && !_attach.length) return;
+    text = typed || 'Take a look at the attached file(s).';
+    atts = _attach.slice();
+    req = captureChatConfig();
+    // Mid-run pair session: queue the message for Miko instead of being blocked by busy.
+    if (pairMode && pairStreaming && curCodeToken) {
+      input.value = ''; input.style.height = 'auto'; _attach = []; renderAttach(); refreshSend();
+      queueCode(text);
+      return;
+    }
+    if ($('#send-btn').dataset.busy === '1') {
+      input.value = ''; input.style.height = 'auto'; _attach = []; renderAttach();
+      queueChatTurn(text, atts, req);
+      return;
+    }
+    saveCfg();
+    req = captureChatConfig();
+    if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
+    input.value = ''; input.style.height = 'auto';
+    _attach = []; renderAttach(); refreshSend();
+    userHandle = addUser(text, null, atts); // keep a handle to fill in file overviews on reply
   }
-  if ($('#send-btn').dataset.busy === '1') return;
-  saveCfg();
-  if (messagesEl.querySelector('.empty')) messagesEl.innerHTML = '';
-  input.value = ''; input.style.height = 'auto';
-  const turnSession = sessionId;         // the conversation this turn belongs to
-  const atts = _attach.slice();          // snapshot, then clear the composer
-  _attach = []; renderAttach(); refreshSend();
-  _lastUser = addUser(text, null, atts); // keep a handle to fill in file overviews on reply
-  if (pairMode) { sendCode(text); return; }
-  if (asSkills.includes('deep-research')) { sendResearch(text); return; }
+  const turnSession = req.session_id;         // the conversation this turn belongs to
+  _lastUser = userHandle;
+  if (!queuedItem && pairMode) { sendCode(text); return; }
+  if (!queuedItem && asSkills.includes('deep-research')) { sendResearch(text); return; }
   const c = addActivityCard();
+  c._retry = { text, attachments: atts, cfg: req };
   _activeTurn = { session: turnSession, card: c };   // keep the live status across switches
   setBusy(true);
   curAbort = new AbortController();
@@ -1964,12 +2114,12 @@ async function send() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       signal: curAbort.signal,
       body: JSON.stringify({
-        session_id: sessionId, message: text,
-        provider: curProvider, model: $('#model').value,
-        api_key: $('#api-key').value, base_url: $('#base-url').value,
-        allow_actions: $('#allow-actions').classList.contains('on'),
-        workspace: workspace,
-        agent: asAgent, skills: asSkills, effort: asEffort, approval: approveMode, thinking: thinkMode,
+        session_id: req.session_id, message: text,
+        provider: req.provider, model: req.model,
+        api_key: req.api_key, base_url: req.base_url,
+        allow_actions: req.allow_actions,
+        workspace: req.workspace,
+        agent: req.agent, skills: req.skills, effort: req.effort, approval: req.approval, thinking: req.thinking,
         attachments: atts.map(a => ({ name: a.name, mime: a.mime, data: a.data })),
       }),
     });
@@ -1992,7 +2142,7 @@ async function send() {
         } catch (e) { /* skip partial */ }
       }
     }
-    if (!gotFinal) handleChatEvent(c, { type: 'cancelled' });
+    if (!gotFinal) handleChatEvent(c, { type: 'error', error: 'Stream ended before Miko returned a final reply.' });
   } catch (e) {
     if (e.name === 'AbortError') handleChatEvent(c, { type: 'cancelled' });
     else handleChatEvent(c, { type: 'error', error: 'Network error: ' + e.message });
@@ -2005,6 +2155,7 @@ async function send() {
     // and the reply landed in orphaned nodes — re-render this conversation from the
     // server so the reply actually shows (no manual refresh needed).
     if (turnSession === sessionId && !document.body.contains(c.card)) openConversation(sessionId, true);
+    drainChatQueue();
   }
 }
 
@@ -2311,6 +2462,10 @@ function updateAgentsHint() {
 }
 const _STEP_IC = { ok: '✓', running: '◴', warning: '!', info: '·' };
 
+function canRetryAgents(view) {
+  return view && view.status !== 'running' && (view.agents || []).some(a => a.status !== 'done');
+}
+
 async function launchAgents() {
   const tasks = $('#agents-tasks').value.split('\n').map(s => s.trim()).filter(Boolean).slice(0, 5);
   if (!tasks.length) { $('#agents-hint').textContent = 'Add at least one task.'; return; }
@@ -2360,12 +2515,16 @@ function renderPanelBatch(view, prepend) {
   cancelAll.textContent = 'stop all';
   cancelAll.addEventListener('click', () => cancelAgents({ batch_id: view.batch_id }));
   if (view.status !== 'running') cancelAll.style.display = 'none';
+  const retry = document.createElement('button'); retry.className = 'ab-retry';
+  retry.textContent = 'retry failed';
+  retry.addEventListener('click', () => retryAgents(view.batch_id));
+  if (!canRetryAgents(view)) retry.style.display = 'none';
   const del = document.createElement('button'); del.className = 'ap-del';
   del.textContent = '✕'; del.title = 'Remove this run';
   del.addEventListener('click', () => deleteBatch(view.batch_id));
-  head.append(lbl, source, cap, time, cancelAll, del);
+  head.append(lbl, source, cap, time, retry, cancelAll, del);
   batch.appendChild(head);
-  const refs = { batch, agents: {}, cancelAll };
+  const refs = { batch, agents: {}, cancelAll, retry };
   view.agents.forEach(a => {
     const card = buildAgentCard(a);
     batch.appendChild(card.el); refs.agents[a.id] = card;
@@ -2398,6 +2557,7 @@ async function loadAgentPanel(rebuild) {
     } else {
       (v.agents || []).forEach(a => { const c = known.refs.agents[a.id]; if (c) paintAgent(c, a); });
       if (v.status !== 'running' && known.refs.cancelAll) known.refs.cancelAll.style.display = 'none';
+      if (known.refs.retry) known.refs.retry.style.display = canRetryAgents(v) ? '' : 'none';
     }
   });
   const empty = $('#agents-panel-empty');
@@ -2521,6 +2681,7 @@ function streamAgents(batchId, refs) {
         if (ev.type === 'batch') {
           (ev.agents || []).forEach(a => { const card = refs.agents[a.id]; if (card) paintAgent(card, a); });
           if (ev.status !== 'running' && refs.cancelAll) refs.cancelAll.style.display = 'none';
+          if (refs.retry) refs.retry.style.display = canRetryAgents(ev) ? '' : 'none';
           updateAgentRail();
         } else if (ev.type === 'done') {
           if (refs.cancelAll) refs.cancelAll.style.display = 'none';
@@ -2529,6 +2690,29 @@ function streamAgents(batchId, refs) {
       }
     }
   }).catch(() => {});
+}
+
+async function retryAgents(batchId) {
+  try {
+    const r = await fetch('/chat/agents/retry', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        batch_id: batchId,
+        provider: curProvider,
+        model: $('#model').value,
+        api_key: $('#api-key').value,
+        base_url: $('#base-url').value,
+        failed_only: true,
+      }),
+    });
+    const view = await r.json();
+    if (!r.ok || view.error) return;
+    const refs = renderPanelBatch(view, true);
+    _panelRefs[view.batch_id] = { refs, view };
+    openAgentPanel();
+    if (view.status === 'running') streamAgents(view.batch_id, refs);
+    updateAgentRail();
+  } catch (e) {}
 }
 
 async function cancelAgents(body) {
@@ -2822,16 +3006,19 @@ async function openConversation(id, force) {
   if (conv.error) return;
   sessionId = id; localStorage.setItem('miko_session', sessionId);
   messagesEl.innerHTML = '';
+  let lastMsg = null;
   (conv.messages || []).forEach(m => {
-    if (m.role === 'user') addUser(m.content, m.ts, m.attachments);
+    lastMsg = m;
+    if (m.role === 'user') addUser(m.content, m.ts, m.attachments, m);
     else {
-      const { tx, tl, fl, st } = addBot();
+      const { tx, tl, fl, st } = addBot(m);
       renderBotText(tx, m.content || '');
       if (m.tools && m.tools.length) tl.innerHTML = m.tools.map(t => `<span class="chip"><span class="di">◈</span>${t}</span>`).join('');
       renderFileChips(fl, m.files);
       st.textContent = fmtTime(stampFrom(m.ts));
     }
   });
+  if (lastMsg && lastMsg.role === 'user' && !(_activeTurn && _activeTurn.session === id)) addInterruptedResume();
   // If a turn for THIS conversation is still running, re-attach its live "Working /
   // thinking…" card so the status survives the switch and keeps updating in place.
   _pairCards = {};        // pair cards aren't part of the transcript; drop stale refs first
@@ -2846,6 +3033,32 @@ async function openConversation(id, force) {
   loadConversations();
   closeAgentPanel();
   loadAgentPanel(true);   // this conversation's sub-agents
+}
+
+async function undoToMessage(messageId, btn) {
+  if (_activeTurn && _activeTurn.session === sessionId) {
+    alert('Stop the running turn before undoing this conversation.');
+    return;
+  }
+  if (!confirm('Undo the conversation to this message and restore workspace changes when a checkpoint is available?')) return;
+  const oldText = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    const res = await (await fetch('/chat/conversation/undo', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: sessionId, message_id: messageId }),
+    })).json();
+    if (res.error) {
+      alert(res.error);
+      if (btn) { btn.disabled = false; btn.innerHTML = oldText; }
+      return;
+    }
+    await openConversation(sessionId, true);
+    loadConversations();
+  } catch (e) {
+    alert('Undo failed: ' + e.message);
+    if (btn) { btn.disabled = false; btn.innerHTML = oldText; }
+  }
 }
 
 function newConversation() {
@@ -3519,6 +3732,22 @@ async function openSettings() {
       const lab = document.createElement('label'); lab.textContent = f.label;
       if (f.secret && f.set) { const b = document.createElement('span'); b.className = 'set-badge'; b.textContent = '● set'; lab.appendChild(b); }
       if (f.help) { const h = document.createElement('span'); h.className = 'set-help'; h.textContent = ' — ' + f.help; lab.appendChild(h); }
+      if (f.options && f.options.length) {
+        const opts = document.createElement('div'); opts.className = 'set-options';
+        const inp = document.createElement('input'); inp.type = 'hidden'; inp.dataset.key = f.key;
+        inp.value = f.value || f.placeholder || f.options[0] || '';
+        f.options.forEach(opt => {
+          const b = document.createElement('button'); b.type = 'button'; b.className = 'set-opt';
+          b.textContent = opt.charAt(0).toUpperCase() + opt.slice(1); b.dataset.value = opt;
+          b.classList.toggle('active', opt === inp.value);
+          b.addEventListener('click', () => {
+            inp.value = opt;
+            opts.querySelectorAll('.set-opt').forEach(x => x.classList.toggle('active', x === b));
+          });
+          opts.appendChild(b);
+        });
+        wrap.append(lab, opts, inp); grp.appendChild(wrap);
+      } else {
       const inp = document.createElement('input');
       inp.type = f.secret ? 'password' : 'text';
       inp.dataset.key = f.key; inp.dataset.secret = f.secret ? '1' : '';
@@ -3526,6 +3755,7 @@ async function openSettings() {
       inp.placeholder = f.secret ? (f.set ? '•••••••• (blank = keep)' : (f.placeholder || '')) : (f.placeholder || '');
       inp.autocomplete = 'off'; inp.spellcheck = false;
       wrap.append(lab, inp); grp.appendChild(wrap);
+      }
     });
     body.appendChild(grp);
   });

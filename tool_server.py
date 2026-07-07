@@ -86,7 +86,16 @@ def _ndjson_stream(request, gen_factory, on_event=None, cancel_key=None,
             while True:
                 if cancel_on_disconnect and await request.is_disconnected():
                     cancel.set()
-                item = await loop.run_in_executor(None, _nxt)
+                try:
+                    item = await loop.run_in_executor(None, _nxt)
+                except RuntimeError as e:
+                    if "shutdown" in str(e).lower():
+                        yield _json.dumps({
+                            "type": "error",
+                            "error": "Miko is shutting down; this stream can be retried after restart.",
+                        }) + "\n"
+                        break
+                    raise
                 if item is _SENT:
                     break
                 if on_event:
@@ -262,6 +271,13 @@ def _build_app():
 
         import file_browser
         workspace = (body.get("workspace") or "").strip() or file_browser.get_workspace()
+        import modules.claude_code as CC
+        snap = ""
+        try:
+            if workspace and CC.ensure_git(workspace):
+                snap = CC.checkpoint(workspace)
+        except Exception:
+            snap = ""
 
         # Remember the UI model so the Discord/phone path can borrow it if MiniMax fails.
         try:
@@ -294,6 +310,23 @@ def _build_app():
             thinking=bool(body.get("thinking", False)),
             attachments=body.get("attachments") or [],
         )
+        if snap:
+            try:
+                import conversation_store as convo
+                sid = body.get("session_id", "default")
+                convo.annotate_latest(sid, "user", {
+                    "restore": {"repo": workspace, "snap": snap, "label": "Before this message"}
+                })
+                after = CC.checkpoint(workspace)
+                if after:
+                    convo.annotate_latest(sid, "assistant", {
+                        "restore": {"repo": workspace, "snap": after, "label": "After this message"}
+                    })
+                changed = CC.changed_since(workspace, snap)
+                if changed:
+                    result["revert"] = {"repo": workspace, "snap": snap, "changed": changed}
+            except Exception:
+                pass
         return JSONResponse(result)
 
     @app.post("/chat/message/stream")
@@ -326,12 +359,12 @@ def _build_app():
         if not isinstance(skills, list):
             skills = []
 
-        # Checkpoint the workspace (if it's a git repo) before the turn, so any file
+        # Checkpoint the workspace with git before the turn, so any file
         # changes Miko makes are revertible from the chat card afterwards.
         import modules.claude_code as CC
         snap = ""
         try:
-            if workspace and CC.is_git_repo(workspace):
+            if workspace and CC.ensure_git(workspace):
                 snap = CC.checkpoint(workspace)
         except Exception:
             snap = ""
@@ -357,13 +390,32 @@ def _build_app():
                 body.get("attachments") or [],
                 should_cancel=should_cancel,
             )
+            user_restore_saved = False
             for ev in gen:
+                if snap and not user_restore_saved:
+                    try:
+                        import conversation_store as convo
+                        convo.annotate_latest(body.get("session_id", "default"), "user", {
+                            "restore": {"repo": workspace, "snap": snap, "label": "Before this message"}
+                        })
+                    except Exception:
+                        pass
+                    user_restore_saved = True
                 # On the final event, attach a revert handle if the turn touched files.
                 if snap and ev.get("type") in ("reply", "cancelled"):
                     try:
                         changed = CC.changed_since(workspace, snap)
                     except Exception:
                         changed = []
+                    try:
+                        import conversation_store as convo
+                        after = CC.checkpoint(workspace)
+                        if after:
+                            convo.annotate_latest(body.get("session_id", "default"), "assistant", {
+                                "restore": {"repo": workspace, "snap": after, "label": "After this message"}
+                            })
+                    except Exception:
+                        pass
                     if changed:
                         ev = {**ev, "revert": {"repo": workspace, "snap": snap,
                                                "changed": changed}}
@@ -665,6 +717,29 @@ def _build_app():
         if body.get("batch_id"):
             return agent_jobs.cancel_batch(body["batch_id"].strip())
         return JSONResponse({"error": "Provide batch_id or agent_id."}, status_code=400)
+
+    @app.post("/chat/agents/retry")
+    async def chat_agents_retry(request: Request, _=Depends(_auth)):
+        """Retry failed/interrupted agents from a previous batch as a fresh batch."""
+        from modules import agent_jobs
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        bid = (body.get("batch_id") or "").strip()
+        if not bid:
+            return JSONResponse({"error": "Missing batch_id."}, status_code=400)
+        view = agent_jobs.retry_batch(
+            bid,
+            (body.get("provider") or "").strip(),
+            (body.get("model") or "").strip(),
+            (body.get("api_key") or "").strip(),
+            (body.get("base_url") or "").strip(),
+            bool(body.get("failed_only", True)),
+        )
+        if view.get("error"):
+            return JSONResponse(view, status_code=400)
+        return view
 
     @app.post("/chat/agents/delete")
     async def chat_agents_delete(request: Request, _=Depends(_auth)):
@@ -1161,6 +1236,52 @@ def _build_app():
             body = {}
         convo.delete(body.get("id", ""))
         return {"ok": True}
+
+    @app.post("/chat/conversation/undo")
+    async def chat_conversation_undo(request: Request, _=Depends(_auth)):
+        """Trim a conversation back to a message and restore its workspace checkpoint."""
+        import conversation_store as convo
+        import modules.claude_code as CC
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        cid = (body.get("id") or "").strip()
+        mid = (body.get("message_id") or "").strip()
+        if not cid or not mid:
+            return JSONResponse({"error": "Missing conversation id or message id."}, status_code=400)
+        msg = convo.get_message(cid, mid)
+        if not msg:
+            return JSONResponse({"error": "Message not found."}, status_code=404)
+        include_target = msg.get("role") != "user"
+        extra_paths = []
+        try:
+            conv = convo.get_conversation(cid) or {}
+            msgs = conv.get("messages", [])
+            idx = next((i for i, m in enumerate(msgs) if m.get("id") == mid), -1)
+            if idx >= 0:
+                keep_count = idx + 1 if include_target else idx
+                for dropped in msgs[keep_count:]:
+                    for f in dropped.get("files") or []:
+                        if isinstance(f, dict) and f.get("path"):
+                            extra_paths.append(f["path"])
+        except Exception:
+            extra_paths = []
+        restore = msg.get("restore") or {}
+        reverted = False
+        if restore.get("repo") and restore.get("snap"):
+            try:
+                reverted = bool(CC.revert_to(restore["repo"], restore["snap"], extra_paths=extra_paths))
+            except Exception:
+                reverted = False
+            if not reverted:
+                return JSONResponse({"error": "Workspace revert failed; conversation was not changed."},
+                                    status_code=500)
+        out = convo.truncate_to(cid, mid, include_target=include_target)
+        if out.get("error"):
+            return JSONResponse(out, status_code=404)
+        return {"ok": True, "reverted": reverted,
+                "restore": restore if reverted else {}, "conversation": out.get("conversation")}
 
     @app.post("/chat/reset")
     async def chat_reset(request: Request, _=Depends(_auth)):

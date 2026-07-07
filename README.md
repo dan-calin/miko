@@ -41,14 +41,15 @@ English) and replies in the language you write/speak.
   DeepSeek, Kimi, xAI Grok, or any OpenAI-compatible endpoint), a **live activity view**
   that narrates what Miko is doing in plain language (*Creating app.py*, *Modifying
   styles.css*, *Researching…*) with each tool call as it runs, a **Stop** button, an
-  **approval mode** (review file/command changes as diffs before they apply), **file &
+  **approval mode** (review file/command changes as diffs before they apply),
+  **git-backed per-message undo** for conversations and workspace changes, **file &
   image attachments** (drag, drop, or paste — handled sensibly even on models without
   vision), per-model persona/skill/effort settings, a built-in file explorer + editor, an
   **Inbox viewer**, a **task scheduler with an interactive calendar**, a **Memories** panel
   to import memory from another AI, a side panel of your **sub-agent runs**, an in-UI
   **Settings panel** for every key and credential, and a selectable workspace. Conversations
-  are resumable, and a running turn **keeps going (and its live status keeps updating) if
-  you switch conversations** — it never silently cancels.
+  are resumable, queued messages are sent in order, and a running turn **keeps going (and
+  its live status keeps updating) if you switch conversations** — it never silently cancels.
 - **Email watching** *(optional)* — read, search, triage, and send mail; browse the same
   inbox Miko reads **inside the UI** (rich HTML, inline images, attachments); and set
   **standing inbox watches** — tell Miko *"let me know when Andra emails me"*
@@ -448,6 +449,21 @@ http://localhost:7832/chat
   while browsing). The chosen workspace is where the explorer opens, is told to Miko (so
   *“what workspace are you in?”* and *“create a file here”* follow your choice), and is the
   working directory her `run_command` executes in. It persists across restarts.
+
+**Undo, recovery & queued messages**
+
+- Every normal chat turn is **git-checkpointed** in the selected workspace. If the folder
+  is not already a git repo, Miko initializes one locally so undo can still restore diffs.
+- Hover any saved message to reveal an undo button. On a **user message**, undo rewinds to
+  *before that prompt was sent*; on an assistant message, it rewinds to that reply. The
+  conversation is trimmed and the workspace is restored to the stored git snapshot.
+- Created/modified files are reverted through git, and generated file paths recorded in
+  the dropped messages are removed too, including ignored/untracked generated files.
+- If Miko is already working, new normal chat messages are queued FIFO and sent
+  automatically after the active turn finishes. Failed or interrupted turns show a retry
+  affordance; orphaned prompts after a crash show a **Continue** prompt when reopened.
+- Sub-agent batches persist in the side panel across refresh/restart. Failed, cancelled,
+  or interrupted agents can be retried as a fresh batch using the current provider/key.
 
 **Attachments — send files & images**
 

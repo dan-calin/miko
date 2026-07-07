@@ -22,6 +22,7 @@ loop and tools are in the second half.
 import json
 import logging
 import os
+import pathlib
 import shutil
 import subprocess
 import uuid
@@ -209,7 +210,54 @@ def checkpoint(repo: str) -> str:
     return snap
 
 
-def revert_to(repo: str, snap: str) -> bool:
+def _rel_for_git(repo: str, path: str) -> str:
+    try:
+        root = pathlib.Path(repo).resolve()
+        p = pathlib.Path(path)
+        if not p.is_absolute():
+            p = root / p
+        rel = p.resolve().relative_to(root)
+        return rel.as_posix()
+    except Exception:
+        return ""
+
+
+def _exists_in_snap(repo: str, snap: str, rel: str) -> bool:
+    if not rel:
+        return False
+    return _git(repo, "cat-file", "-e", f"{snap}:{rel}").returncode == 0
+
+
+def _remove_created_paths(repo: str, snap: str, paths: list | None = None) -> None:
+    if not paths:
+        return
+    root = pathlib.Path(repo).resolve()
+    for raw in paths:
+        rel = _rel_for_git(repo, str(raw or ""))
+        if not rel or _exists_in_snap(repo, snap, rel):
+            continue
+        target = (root / rel).resolve()
+        try:
+            target.relative_to(root)
+        except Exception:
+            continue
+        try:
+            if target.is_dir():
+                shutil.rmtree(target)
+            elif target.exists():
+                target.unlink()
+        except Exception:
+            continue
+        parent = target.parent
+        while parent != root:
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent
+
+
+def revert_to(repo: str, snap: str, extra_paths: list | None = None) -> bool:
     """Restore the working tree to a checkpoint snapshot (undo Claude's changes).
     Verifies success by re-diffing, since `checkout` exits non-zero when the only
     change was a new untracked file (which `clean` is what actually removes)."""
@@ -217,6 +265,7 @@ def revert_to(repo: str, snap: str) -> bool:
         return False
     _git(repo, "checkout", "--force", snap, "--", ".")
     _git(repo, "clean", "-fdq")   # remove files created after the snapshot (respects .gitignore)
+    _remove_created_paths(repo, snap, extra_paths)
     return not changed_since(repo, snap)   # success = working tree now matches the snapshot
 
 
@@ -799,4 +848,3 @@ def code_with_claude(project_dir: str, goal: str, research: str = "", max_rounds
             lines.append(f"\n⚠ {ev['error']}")
     lines.append(f"\nTo undo everything, revert the session ({token}).")
     return "\n".join(lines)[:6000]
-

@@ -9,6 +9,7 @@ user can switch between and continue earlier conversations.
 
 import json
 import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -48,10 +49,27 @@ def _load(cid: str) -> dict | None:
 
 
 def _write(conv: dict) -> None:
+    _ensure_message_ids(conv)
     _DIR.mkdir(parents=True, exist_ok=True)
     _path(conv["id"]).write_text(
         json.dumps(conv, ensure_ascii=False, indent=1), encoding="utf-8"
     )
+
+
+def _new_msg_id() -> str:
+    return "msg-" + uuid.uuid4().hex[:10]
+
+
+def _ensure_message_ids(conv: dict) -> bool:
+    changed = False
+    seen = set()
+    for m in conv.get("messages", []):
+        mid = (m.get("id") or "").strip()
+        if not mid or mid in seen:
+            m["id"] = _new_msg_id()
+            changed = True
+        seen.add(m["id"])
+    return changed
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -65,7 +83,7 @@ def append_user(cid: str, user_msg: str, attachments: list | None = None) -> Non
         }
         if not conv.get("title"):
             conv["title"] = _title_from(user_msg)
-        turn = {"role": "user", "content": user_msg, "ts": _now()}
+        turn = {"id": _new_msg_id(), "role": "user", "content": user_msg, "ts": _now()}
         if attachments:
             turn["attachments"] = attachments
         conv["messages"].append(turn)
@@ -82,7 +100,7 @@ def append_assistant(cid: str, assistant_msg: str,
             "created": _now(), "messages": [],
         }
         conv["messages"].append({
-            "role": "assistant", "content": assistant_msg, "ts": _now(),
+            "id": _new_msg_id(), "role": "assistant", "content": assistant_msg, "ts": _now(),
             "tools": tools or [], "files": files or [],
         })
         conv["updated"] = _now()
@@ -104,12 +122,12 @@ def append_turn(cid: str, user_msg: str, assistant_msg: str,
         }
         if not conv.get("title"):
             conv["title"] = _title_from(user_msg)
-        user_turn = {"role": "user", "content": user_msg, "ts": _now()}
+        user_turn = {"id": _new_msg_id(), "role": "user", "content": user_msg, "ts": _now()}
         if attachments:
             user_turn["attachments"] = attachments
         conv["messages"].append(user_turn)
         conv["messages"].append({
-            "role": "assistant", "content": assistant_msg, "ts": _now(),
+            "id": _new_msg_id(), "role": "assistant", "content": assistant_msg, "ts": _now(),
             "tools": tools or [], "files": files or [],
         })
         conv["updated"] = _now()
@@ -169,7 +187,69 @@ def list_conversations() -> list:
 
 def get_conversation(cid: str) -> dict | None:
     """Full conversation (messages with tools/files) for rendering in the UI."""
-    return _load(cid)
+    with _lock:
+        conv = _load(cid)
+        if conv and _ensure_message_ids(conv):
+            _write(conv)
+        return conv
+
+
+def annotate_latest(cid: str, role: str, fields: dict) -> bool:
+    """Attach metadata to the latest message with `role` in a conversation."""
+    if not fields:
+        return False
+    with _lock:
+        conv = _load(cid)
+        if not conv:
+            return False
+        _ensure_message_ids(conv)
+        for m in reversed(conv.get("messages", [])):
+            if m.get("role") == role:
+                m.update(fields)
+                conv["updated"] = _now()
+                _write(conv)
+                return True
+    return False
+
+
+def truncate_to(cid: str, message_id: str, include_target: bool = True) -> dict:
+    """Keep messages through message_id, or before it when include_target is false."""
+    with _lock:
+        conv = _load(cid)
+        if not conv:
+            return {"error": "Conversation not found."}
+        _ensure_message_ids(conv)
+        msgs = conv.get("messages", [])
+        idx = next((i for i, m in enumerate(msgs) if m.get("id") == message_id), -1)
+        if idx < 0:
+            return {"error": "Message not found."}
+        target = dict(msgs[idx])
+        keep_count = idx + 1 if include_target else idx
+        dropped = [dict(m) for m in msgs[keep_count:]]
+        conv["messages"] = msgs[:keep_count]
+        conv["updated"] = _now()
+        if conv["messages"] and not conv.get("title"):
+            conv["title"] = _title_from(conv["messages"][0].get("content", ""))
+        _write(conv)
+        return {"ok": True, "conversation": conv, "message": target, "dropped": dropped}
+
+
+def truncate_after(cid: str, message_id: str) -> dict:
+    """Keep messages through message_id and drop everything after it."""
+    return truncate_to(cid, message_id, include_target=True)
+
+
+def get_message(cid: str, message_id: str) -> dict | None:
+    with _lock:
+        conv = _load(cid)
+        if not conv:
+            return None
+        if _ensure_message_ids(conv):
+            _write(conv)
+        for m in conv.get("messages", []):
+            if m.get("id") == message_id:
+                return dict(m)
+    return None
 
 
 def rename(cid: str, title: str) -> bool:

@@ -266,6 +266,27 @@ def _run_agent(batch: dict, agent: dict) -> None:
         _save()   # persist the terminal state so a refresh/restart keeps it
 
 
+def _submit_agent(batch: dict, agent: dict) -> bool:
+    """Submit one worker unless Python is already shutting down.
+
+    During app/interpreter shutdown ThreadPoolExecutor.submit can raise
+    "cannot schedule new futures after shutdown". Treat that as a failed queued
+    agent and persist it, instead of letting the HTTP stream crash loudly.
+    """
+    try:
+        _POOL.submit(_run_agent, batch, agent)
+        return True
+    except RuntimeError as e:
+        msg = str(e)
+        with _LOCK:
+            agent["status"] = "error"
+            agent["error"] = msg or "Could not start sub-agent."
+            agent["finished"] = _now()
+        _save()
+        logger.warning(f"could not submit sub-agent {agent.get('id')}: {e}")
+        return False
+
+
 def launch(tasks, context: str, provider: str, model: str, key: str, base: str = "",
            session_id: str = "", source: str = "user", source_label: str = "") -> dict:
     """Create a batch and run its agents in the background (non-blocking).
@@ -291,9 +312,47 @@ def launch(tasks, context: str, provider: str, model: str, key: str, base: str =
         _prune_locked()
     _save()
     for agent in batch["agents"]:
-        _POOL.submit(_run_agent, batch, agent)
+        _submit_agent(batch, agent)
     logger.info(f"launched {batch['id']} with {len(tasks)} agent(s), provider={provider} cap={cap}")
     return _batch_view(batch)
+
+
+def retry_batch(batch_id: str, provider: str = "", model: str = "",
+                key: str = "", base: str = "", failed_only: bool = True) -> dict:
+    """Launch a fresh batch for failed/interrupted agents from an older batch.
+
+    Persisted batches are key-free, so the UI supplies the current provider/key when
+    retrying after a restart. Successful agents are skipped by default.
+    """
+    with _LOCK:
+        old = _BATCHES.get((batch_id or "").strip())
+        if not old:
+            return {"error": "Unknown batch."}
+        if failed_only:
+            retry_agents = [a for a in old["agents"] if a["status"] != "done"]
+        else:
+            retry_agents = list(old["agents"])
+        tasks = [a["task"] for a in retry_agents if (a.get("task") or "").strip()]
+        context = old.get("context", "")
+        session_id = old.get("session_id", "")
+        old_provider = old.get("provider", "")
+        old_model = old.get("model", "")
+        old_base = old.get("base", "")
+        old_source = old.get("source", "user")
+        old_label = old.get("source_label", "Agents tab")
+    if not tasks:
+        return {"error": "No failed or interrupted agents to retry."}
+    label = "Retry of " + (old_label or "agent batch")
+    return launch(
+        tasks, context,
+        (provider or old_provider or "gemini").strip(),
+        (model or old_model or "").strip(),
+        (key or "").strip(),
+        (base or old_base or "").strip(),
+        session_id=session_id,
+        source=old_source,
+        source_label=label,
+    )
 
 
 def in_subagent() -> bool:
