@@ -2,14 +2,16 @@
 chat_backend.py — Model-agnostic chat with Miko's tools.
 
 Powers the web Chat UI. Lets the user talk to Miko by text using the provider of
-their choice (Gemini, MiniMax/Anthropic, OpenAI, DeepSeek, Kimi, or a custom
+their choice (Gemini, MiniMax/Anthropic, OpenAI, OpenRouter, NVIDIA, DeepSeek,
+Kimi, or a custom
 OpenAI-compatible endpoint). Miko's full tool set is exposed to the model, so it
 can control the PC, Discord, calendars, etc. — the same tools the voice agent uses.
 
 Three wire protocols cover every provider:
   - "gemini"    → google-genai
   - "anthropic" → anthropic SDK (Messages API)         [MiniMax /anthropic]
-  - "openai"    → openai SDK (Chat Completions)         [OpenAI, DeepSeek, Kimi, custom]
+  - "openai"    → openai SDK (Chat Completions)         [OpenAI, OpenRouter, NVIDIA,
+                                                         DeepSeek, Kimi, custom]
 
 Tool execution goes through CommandRouter. Read-only tools always run; sensitive
 tools (delete, send message, shutdown, …) require the per-session "allow actions"
@@ -48,6 +50,20 @@ PROVIDERS = {
         "base_url": "https://api.openai.com/v1",
         "env_key": "OPENAI_API_KEY",
         "models": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2", "gpt-4.1", "gpt-4o"],
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        "protocol": "openai",
+        "base_url": "https://openrouter.ai/api/v1",
+        "env_key": "OPENROUTER_API_KEY",
+        "models": ["openrouter/free"],
+    },
+    "nvidia": {
+        "label": "NVIDIA NIM",
+        "protocol": "openai",
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "env_key": "NVIDIA_API_KEY",
+        "models": ["z-ai/glm-5.2", "google/diffusiongemma-26b-a4b-it"],
     },
     "anthropic": {
         "label": "Anthropic Claude",
@@ -173,6 +189,8 @@ SETTINGS_GROUPS = [
         {"key": "LLM_API_KEY", "label": "Google Gemini API key", "secret": True,
          "help": "Core model + dictation fallback. aistudio.google.com/apikey"},
         {"key": "OPENAI_API_KEY", "label": "OpenAI API key", "secret": True},
+        {"key": "OPENROUTER_API_KEY", "label": "OpenRouter API key", "secret": True},
+        {"key": "NVIDIA_API_KEY", "label": "NVIDIA NIM API key", "secret": True},
         {"key": "ANTHROPIC_API_KEY", "label": "Anthropic (Claude) API key", "secret": True},
         {"key": "MINIMAX_API_KEY", "label": "MiniMax API key", "secret": True},
         {"key": "MINIMAX_BASE_URL", "label": "MiniMax base URL", "placeholder": "https://api.minimax.io/anthropic"},
@@ -215,6 +233,11 @@ SETTINGS_GROUPS = [
         {"key": "MIKO_DICTATION_LANG", "label": "Dictation language (BCP-47)", "placeholder": "ro-RO"},
         {"key": "MIKO_DICTATION_MODEL", "label": "Dictation fallback model", "placeholder": "gemini-2.5-flash"},
         {"key": "MIKO_VOICE", "label": "Live voice name", "placeholder": "Aoede"},
+        {"key": "MIKO_VOICE_PROVIDER", "label": "Voice chat provider", "placeholder": "custom"},
+        {"key": "MIKO_VOICE_MODEL", "label": "Voice chat model", "placeholder": "qwen3-8b"},
+        {"key": "MIKO_VOICE_BASE_URL", "label": "Voice local base URL", "placeholder": "http://127.0.0.1:1234/v1"},
+        {"key": "MIKO_VOICE_API_KEY", "label": "Voice local API key", "placeholder": "lm-studio", "secret": True},
+        {"key": "MIKO_VOICE_COMPACT_TOOLS", "label": "Voice compact tools", "placeholder": "true"},
     ]},
     {"category": "General", "fields": [
         {"key": "OWNER_NAME", "label": "Your name"},
@@ -233,7 +256,8 @@ _SECRET_KEYS = {f["key"] for g in SETTINGS_GROUPS for f in g["fields"] if f.get(
 # other secrets (Discord token, email password, …) in plaintext — those go through
 # settings_schema(), which masks secret values.
 CHAT_ENV_KEYS = [
-    "LLM_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MINIMAX_API_KEY",
+    "LLM_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "NVIDIA_API_KEY",
+    "ANTHROPIC_API_KEY", "MINIMAX_API_KEY",
     "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "XAI_API_KEY",
 ]
 
@@ -329,6 +353,14 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
             "shell ca să citești un fișier — fără run_command cu 'type', 'cat', 'more', "
             "'Get-Content'; e unealta greșită și cere o aprobare inutilă. Folosește run_command doar "
             "pentru ce nu are o unealtă dedicată. "
+            "VISIBLE SCREEN: browser_open is Miko's private hidden browser; the user cannot see it. "
+            "When the user asks to show/open something on their screen, use open_url for web pages "
+            "or show_email for email messages. Do not claim the user can see a private browser page. "
+            "Dacă userul cere postarea/mesajul/butonul/linkul dintr-un email ('arată-mi postarea', "
+            "'view message', 'deschide postarea Nextdoor'), folosește open_email_link, nu show_email. "
+            "STIL EMAIL: fii scurtă cu emailurile. Pentru căutări/listări, dă doar cel mai bun rezultat "
+            "sau maxim trei rezultate scurte dacă userul nu cere mai mult. Pentru show_email, spune doar "
+            "că e deschis pe ecran; nu rezuma din nou corpul emailului. "
             "ORICE acțiune necesită APELAREA uneltei ei ÎN tura CURENTĂ — trimitere mesaj Discord, "
             "vorbit pe voice, rulat o comandă etc. Să răspunzi 'Gata', 'Zis', 'Trimis' sau 'propus' "
             "FĂRĂ un apel de unealtă în aceeași tură e o halucinație — interzis. Inclusiv REPETĂRILE: "
@@ -396,6 +428,15 @@ def _system_prompt(owner_name: str, language: str, workspace: str = "") -> str:
         "vault notes, read_email for email). NEVER run a shell command to read a file — no "
         "run_command with 'type', 'cat', 'more', 'Get-Content' — that's the wrong tool and forces a "
         "needless approval. Reserve run_command for things with no dedicated tool. "
+        "VISIBLE SCREEN: browser_open is Miko's private hidden browser; the user cannot see it. "
+        "When the user asks to show/open something on their screen, use open_url for web pages "
+        "or show_email for email messages. Do not claim the user can see a private browser page. "
+        "If the user asks for the post/message/button/link inside an email notification "
+        "('show me the post', 'view message', 'open the Nextdoor post'), use open_email_link, "
+        "not show_email. "
+        "EMAIL RESPONSE STYLE: Be terse with email. For searches/lists, give only the best match "
+        "or at most three short matches unless the user asks for more. For show_email, say it is "
+        "open on screen and stop; do not re-summarize the email body. "
         "EVERY action requires CALLING its tool in the CURRENT turn — sending a Discord message, "
         "speaking on voice, running a command, etc. Replying 'Done', 'Sent', 'Zis', or 'proposed' "
         "WITHOUT a matching tool call in the same turn is a hallucination — forbidden. This includes "
@@ -790,6 +831,32 @@ def _create_safe(fn, base_kwargs: dict, extra: dict):
         return fn(**base_kwargs)
 
 
+def _is_tool_support_error(exc: Exception) -> bool:
+    """Provider says this model/route cannot accept tool declarations."""
+    msg = str(exc).lower()
+    return (
+        ("tool" in msg and "support" in msg)
+        or "no endpoints found that support tool use" in msg
+        or "tools are not supported" in msg
+        or "tool use is not supported" in msg
+    )
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Provider quota/rate-limit failure that can be safely retried elsewhere."""
+    msg = str(exc).lower()
+    status = getattr(exc, "status_code", None)
+    code = getattr(exc, "code", None)
+    return (
+        status == 429
+        or code == 429
+        or "rate limit" in msg
+        or "ratelimit" in msg
+        or "quota" in msg
+        or "free-models-per-day" in msg
+    )
+
+
 def _mcp_tools(protocol: str) -> list:
     """Tool declarations for any connected MCP servers, in the given protocol's format.
     Returns [] if MCP isn't configured/available — so it just adds to the base tool set."""
@@ -1010,7 +1077,9 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
          owner_name: str = "Roxan", language: str = "en", workspace: str = "",
          agent: str = "", skills=None, effort: str = "standard", approval: bool = False,
          thinking: bool = False, attachments=None, system_extra: str = "",
-         emit=None, should_cancel=None) -> dict:
+         emit=None, should_cancel=None, compact_tools: bool = False,
+         fallback_provider: str = "", fallback_model: str = "",
+         fallback_api_key: str = "", fallback_base_url: str = "") -> dict:
     """Run one chat turn. Returns {"reply": str, "tools_used": [...], "error": str|None}.
 
     emit: optional callback(event_dict) for live progress (tool_start/tool_end/round).
@@ -1107,25 +1176,59 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
         except Exception as e:
             logger.warning(f"persist user turn failed: {e}")
 
+    def _run_selected(run_provider: str, run_model: str, run_key: str, run_base: str) -> str:
+        run_preset = PROVIDERS.get(run_provider)
+        if not run_preset:
+            raise RuntimeError(f"Unknown fallback provider '{run_provider}'.")
+        run_key = (run_key or "").strip() or os.getenv(run_preset["env_key"], "")
+        if not run_key:
+            raise RuntimeError(f"No API key for {run_preset['label']} fallback.")
+        run_base = (run_base or "").strip() or run_preset["base_url"]
+        run_model = run_model or (run_preset["models"] or [""])[0]
+        if not run_model:
+            raise RuntimeError(f"No fallback model specified for {run_preset['label']}.")
+
+        if run_preset["protocol"] == "gemini":
+            return _run_gemini(router, run_key, run_model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, thinking, media=media)
+        if run_preset["protocol"] == "anthropic":
+            return _run_anthropic(router, run_key, run_base, run_model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, thinking, media=media)
+        return _run_openai(router, run_key, run_base, run_model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, media=media, compact_tools=compact_tools)
+
+    def _failed(err: Exception) -> dict:
+        logger.error(f"chat() error ({provider}/{model}): {err}", exc_info=True)
+        # The user turn is already saved; record the failure so the conversation isn't
+        # left as a lone user message.
+        if not ephemeral:
+            try:
+                import conversation_store as _convo
+                _convo.append_assistant(session_id, f"⚠ {err}", used, files)
+            except Exception:
+                pass
+        return {"reply": "", "tools_used": used, "files": files, "usage": usage,
+                "pending": pending, "error": str(err)}
+
     try:
         if preset["protocol"] == "gemini":
             reply = _run_gemini(router, key, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, thinking, media=media)
         elif preset["protocol"] == "anthropic":
             reply = _run_anthropic(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, thinking, media=media)
         else:
-            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, media=media)
+            reply = _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage, rounds, effort, approval, pending, emit, should_cancel, media=media, compact_tools=compact_tools)
     except Exception as e:
-        logger.error(f"chat() error ({provider}/{model}): {e}", exc_info=True)
-        # The user turn is already saved; record the failure so the conversation isn't
-        # left as a lone user message.
-        if not ephemeral:
-            try:
-                import conversation_store as _convo
-                _convo.append_assistant(session_id, f"⚠ {e}", used, files)
-            except Exception:
-                pass
-        return {"reply": "", "tools_used": used, "files": files, "usage": usage,
-                "pending": pending, "error": str(e)}
+        fp = (fallback_provider or "").strip().lower()
+        if not (fp and fp != provider and _is_rate_limit_error(e)):
+            return _failed(e)
+        try:
+            logger.warning(
+                f"{provider}/{model} rate-limited; retrying with "
+                f"{fp}/{fallback_model or '(default)'}"
+            )
+            reply = _run_selected(fp, fallback_model, fallback_api_key, fallback_base_url)
+            provider, model = fp, fallback_model or (PROVIDERS[fp]["models"] or [model])[0]
+            preset = PROVIDERS[fp]
+        except Exception as fe:
+            logger.error(f"fallback chat() error ({fp}/{fallback_model}): {fe}", exc_info=True)
+            return _failed(fe)
 
     cancelled = _cancelled(should_cancel) or reply == "(cancelled)"
     # The user message was persisted at the start of the turn; now attach the reply.
@@ -1222,9 +1325,39 @@ def _accum_usage(usage: dict, resp, proto: str) -> None:
     usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
 
 
-# ── OpenAI-compatible (OpenAI, DeepSeek, Kimi, custom) ────────────────────────
+# ── OpenAI-compatible (OpenAI, OpenRouter, NVIDIA, DeepSeek, Kimi, custom) ─────
 
-def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None, media=None) -> str:
+_VOICE_TOOL_NAMES = {
+    "set_volume", "media_control", "get_volume", "open_app", "set_reminder",
+    "system_info", "take_screenshot", "clipboard", "window_control",
+    "process_manager", "calculate", "world_time", "type_text", "send_shortcut",
+    "remember", "recall", "create_note", "read_note", "list_notes", "search_notes",
+    "send_discord_dm", "send_discord_channel", "call_discord", "join_voice",
+    "leave_voice", "speak_on_discord", "get_dm_history", "join_voice_as_me",
+    "leave_voice_as_me", "set_my_voice", "get_today_events", "list_events",
+    "create_event", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task",
+    "list_emails", "read_email", "show_email", "open_email_link", "search_emails", "triage_inbox",
+    "watch_email", "list_email_watches", "cancel_email_watch",
+    "weather", "web_search", "open_url",
+}
+
+
+def _compact_openai_tools(tools: list) -> list:
+    return [
+        t for t in (tools or [])
+        if ((t.get("function") or {}).get("name") in _VOICE_TOOL_NAMES)
+    ]
+
+
+def _openai_extra_body(base: str, model: str) -> dict:
+    model_l = (model or "").lower()
+    base_l = (base or "").lower()
+    if "integrate.api.nvidia.com" in base_l and model_l == "google/diffusiongemma-26b-a4b-it":
+        return {"chat_template_kwargs": {"enable_thinking": True}}
+    return {}
+
+
+def _run_openai(router, key, base, model, system, history, message, allow_actions, used, files, usage=None, rounds=_MAX_ROUNDS, effort="standard", approval=False, pending=None, emit=None, should_cancel=None, media=None, compact_tools=False) -> str:
     from openai import OpenAI
     from tools import ALL_TOOL_DECLARATIONS_OPENAI
 
@@ -1239,18 +1372,47 @@ def _run_openai(router, key, base, model, system, history, message, allow_action
         messages.append({"role": "user", "content": content})
     else:
         messages.append({"role": "user", "content": message})
-    tools = (ALL_TOOL_DECLARATIONS_OPENAI + _mcp_tools("openai")) or None
+    tools = ALL_TOOL_DECLARATIONS_OPENAI + ([] if compact_tools else _mcp_tools("openai"))
+    if compact_tools:
+        tools = _compact_openai_tools(tools)
+        logger.info(f"compact OpenAI tool set enabled ({len(tools)} tools)")
+    tools = tools or None
     rk = _reasoning_kwargs("openai", model, effort)   # native reasoning_effort (if supported)
+    extra_body = _openai_extra_body(base, model)
 
     for _r in range(rounds):
         if _cancelled(should_cancel):
             return "(cancelled)"
         _emit(emit, {"type": "round", "n": _r + 1})
         kwargs = {"model": model, "messages": messages}
+        if extra_body:
+            kwargs["extra_body"] = extra_body
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-        resp = _create_safe(client.chat.completions.create, kwargs, rk)
+        try:
+            resp = _create_safe(client.chat.completions.create, kwargs, rk)
+        except Exception as e:
+            if tools and _is_tool_support_error(e):
+                logger.warning(
+                    "model rejected tool declarations; retrying this turn without tools "
+                    f"({model})"
+                )
+                messages[0]["content"] += (
+                    "\n\n[NO TOOLS AVAILABLE]\n"
+                    "The selected model endpoint does not support tool/function calls. "
+                    "Answer conversationally only. Do not claim to run actions, change "
+                    "settings, send messages, read files, or use external tools."
+                )
+                plain = _create_safe(
+                    client.chat.completions.create,
+                    {"model": model, "messages": messages, **({"extra_body": extra_body} if extra_body else {})},
+                    rk,
+                )
+                if usage is not None:
+                    _accum_usage(usage, plain, "openai")
+                return (plain.choices[0].message.content or "").strip() or "(no response)"
+            raise
         if usage is not None:
             _accum_usage(usage, resp, "openai")
         msg = resp.choices[0].message

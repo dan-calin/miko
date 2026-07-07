@@ -57,12 +57,12 @@ English) and replies in the language you write/speak.
 - **Scheduler** — recurring or one-off tasks in plain language ("every morning at 8, DM
   me my calendar") or from an **interactive calendar** in the Tasks panel; results arrive
   as Discord DMs. Miko sets these up herself when you ask in conversation — no forms.
-- **Voice** — real-time voice in/out via **Gemini Live** (ACTIVE / STANDBY / MUTE modes),
-  hardened for the real world: sessions **resume with context intact** after a network
-  drop, long conversations are compressed instead of truncated, and a missing microphone
-  means a retry — not a crash loop. A second engine (`MIKO_VOICE_ENGINE=chat`) runs voice
-  through the same brain as chat on **any provider** (STT → chat → TTS). *Needs a Gemini
-  key.* This is one input mode, not the whole product.
+- **Voice** — two engines: the recommended **chat voice** path
+  (`MIKO_VOICE_ENGINE=chat`) runs mic → STT → the normal Miko chat/tool brain → TTS on
+  OpenRouter, Gemini, MiniMax, OpenAI, LM Studio, Ollama, or any OpenAI-compatible
+  endpoint. The older **Gemini Live** path (`MIKO_VOICE_ENGINE=live`) is still available
+  for realtime native audio. ACTIVE / STANDBY / MUTE modes work across both. *Needs a
+  Gemini key for STT fallback, even when the voice brain is another provider.*
 - **PC control** — open apps, file operations, system info, screenshots, reminders,
   clipboard, volume & media keys. *Windows-specific.*
 - **Project mapping** — point Miko at a project folder; it scans it, writes a profile to
@@ -89,9 +89,10 @@ English) and replies in the language you write/speak.
 7. [Chat UI](#chat-ui)
 8. [Second brain & intelligence](#second-brain--intelligence)
 9. [First run](#first-run)
-10. [Voice commands](#voice-commands)
-11. [Architecture](#architecture)
-12. [Troubleshooting](#troubleshooting)
+10. [Voice model setup](#voice-model-setup)
+11. [Voice commands](#voice-commands)
+12. [Architecture](#architecture)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -139,6 +140,133 @@ supported setting.
 for Romanian. This controls the system prompt, spoken confirmations, and mode
 announcements. Regardless of the setting, Miko will reply in whichever of the two
 languages you actually speak.
+
+---
+
+## Voice model setup
+
+Miko has two voice engines:
+
+- `MIKO_VOICE_ENGINE=chat` — recommended. Uses the same provider-agnostic brain as the
+  Chat UI: microphone audio is segmented with VAD, transcribed, sent to `chat_backend.chat()`,
+  then spoken with edge-tts. This path gets the normal Miko tools, memory, scheduler,
+  Discord, and safety fixes.
+- `MIKO_VOICE_ENGINE=live` — legacy/realtime Gemini Live audio. Lower latency, but tied to
+  the Live preview API and its realtime session behavior.
+
+For long spoken prompts, chat voice records up to `MIKO_VOICE_MAX_UTTER_SECS` seconds per
+STT clip (default `90`) and waits `MIKO_VOICE_TURN_GRACE_SECS` seconds (default `0.8`) to
+merge follow-on chunks before Miko answers. Raise the grace value if Miko still responds
+before you finish a multi-part prompt with longer pauses.
+
+### API voice brain
+
+For the most responsive daily voice mode, use an API provider:
+
+```env
+MIKO_VOICE_ENGINE=chat
+MIKO_VOICE_PROVIDER=openrouter
+MIKO_VOICE_MODEL=openrouter/free
+MIKO_VOICE_BASE_URL=
+MIKO_VOICE_API_KEY=
+```
+
+`MIKO_VOICE_PROVIDER` must be one of the providers in `chat_backend.py` (`gemini`,
+`openrouter`, `nvidia`, `openai`, `anthropic`, `minimax`, `deepseek`, `kimi`, `grok`, or
+`custom`).
+`MIKO_VOICE_MODEL` is passed directly to that provider. For OpenRouter, individual `:free`
+model slugs can disappear or become paid; `openrouter/free` is the safer free-router
+choice. Set `OPENROUTER_API_KEY` in `.env` or via the Settings panel. OpenRouter free
+models still have account/day quota; if that quota returns `429`, voice automatically
+retries the same turn through `MIKO_VOICE_FALLBACK_PROVIDER` (default `gemini`). Set it
+to `off` to disable fallback.
+
+For NVIDIA NIM / build.nvidia.com:
+
+```env
+MIKO_VOICE_ENGINE=chat
+MIKO_VOICE_PROVIDER=nvidia
+MIKO_VOICE_MODEL=z-ai/glm-5.2
+NVIDIA_API_KEY=<your-nvidia-key>
+```
+
+The NVIDIA provider uses `https://integrate.api.nvidia.com/v1`, so you do not need to set
+`MIKO_VOICE_BASE_URL` unless you are overriding it for testing.
+
+To try DiffusionGemma after GLM, keep the same provider/key and switch only the model:
+
+```env
+MIKO_VOICE_MODEL=google/diffusiongemma-26b-a4b-it
+```
+
+Miko sends NVIDIA's `chat_template_kwargs.enable_thinking=true` automatically for that
+model.
+
+If a provider/model rejects tool/function calls, Miko retries that turn without tools.
+That keeps the conversation alive, but the selected model becomes **talk-only** for that
+turn and must not be expected to run actions.
+
+### Local voice brain with LM Studio / Ollama / llama.cpp
+
+For a local OpenAI-compatible server, use `custom` plus the local base URL:
+
+```env
+MIKO_VOICE_ENGINE=chat
+MIKO_VOICE_PROVIDER=custom
+MIKO_VOICE_MODEL=<exact model id shown by LM Studio>
+MIKO_VOICE_BASE_URL=http://127.0.0.1:1234/v1
+MIKO_VOICE_API_KEY=lm-studio
+```
+
+LM Studio's default local server is usually `http://127.0.0.1:1234/v1`. The API key can be
+any non-empty string unless your local server enforces one.
+
+Miko's full tool schema is large. With all tools enabled, the initial prompt can exceed an
+8k local context before the user's utterance is added. Load local models with enough context:
+
+- Full tools: `16384` minimum; `32768` is more comfortable if the GPU can handle the KV cache.
+- Compact tools: works better for 8k-16k contexts and local 7B-14B models.
+
+Compact voice tools are controlled by:
+
+```env
+MIKO_VOICE_COMPACT_TOOLS=true
+```
+
+Compact mode keeps everyday spoken tools (volume/media, app/window control, reminders,
+calendar basics, Discord basics, notes/memory, weather/web search) and omits heavyweight
+schemas (browser automation, deep research, sub-agents, Claude Code, email, file indexing,
+journey planning, and project/memory import tools). Set it to `false` if your local model
+is loaded with a large enough context and you want the full tool list.
+
+Voice interruption is controlled by:
+
+```env
+MIKO_VOICE_INTERRUPT=true
+MIKO_VOICE_INTERRUPT_MODE=speech
+MIKO_VOICE_INTERRUPT_SENSITIVITY=medium
+```
+
+With `MIKO_VOICE_INTERRUPT_MODE=speech`, sustained user speech while Miko is talking cuts off
+current TTS playback, then the captured utterance continues into the normal chat brain.
+That means "No, I solved that" can stop a long answer and become the next turn.
+
+`MIKO_VOICE_INTERRUPT_SENSITIVITY` controls how eager barge-in is:
+
+- `high` — fastest interruption, best for quiet rooms.
+- `medium` — default; requires a stronger sustained signal before stopping TTS.
+- `low` — stricter; use this when fans, speakers, or room noise false-trigger interruption.
+
+For fine tuning, set `MIKO_VOICE_INTERRUPT_MIN_MS` and
+`MIKO_VOICE_INTERRUPT_THRESHOLD_MULTIPLIER` directly.
+
+Set `MIKO_VOICE_INTERRUPT_MODE=phrase` if your speakers cause false interrupts. Phrase mode
+only stops for commands such as "Miko stop", "stop talking", "Miko taci", or "Miko gata";
+other audio captured during TTS is discarded.
+
+Observed local tradeoff: an RX 6750 XT 12 GB can load a 9B Qwen-style model at 32k context,
+but full-tool voice may feel too slow. On that class of GPU, API voice is usually the
+better daily driver; local mode remains useful for testing or for machines with more VRAM.
 
 ---
 
@@ -242,7 +370,7 @@ instead (Anthropic-compatible or OpenAI-compatible endpoints are auto-detected):
 ```
 MINIMAX_API_KEY=<your-key>
 MINIMAX_BASE_URL=https://api.minimax.io/anthropic
-MINIMAX_MODEL=MiniMax-M2.7
+MINIMAX_MODEL=MiniMax-M3
 ```
 
 ### Tool server for external agents
@@ -293,8 +421,8 @@ http://localhost:7832/chat
 **Chat & models**
 
 - **Pick a provider per chat:** Google Gemini, MiniMax (Anthropic-compatible), OpenAI,
-  DeepSeek, Kimi (Moonshot), or a **custom** OpenAI-compatible endpoint (LM Studio,
-  Ollama, etc.) — enter any base URL + model.
+  OpenRouter, NVIDIA NIM, DeepSeek, Kimi (Moonshot), or a **custom**
+  OpenAI-compatible endpoint (LM Studio, Ollama, etc.) — enter any base URL + model.
 - **API keys** can be typed into the UI (kept in your browser) **or saved to `.env`** —
   enter a key and click **“save to .env”** to persist it server-side, no file editing.
 - **Miko's full tool set** is available to the model — it can control the PC, Discord,
@@ -468,17 +596,26 @@ Spoken replies are kept to one or two sentences (no filler). Beyond STANDBY (wak
 follow-up window), there's a stricter **MUTE** mode ("mute yourself" / "complete silence" /
 "leave me alone") — wake-word only, no window — exited with "Miko, wake up".
 
-The default **Gemini Live** engine is hardened where realtime voice actually breaks:
-when the connection drops, the session **resumes with its context intact** (resumption
-handles) instead of starting over; long sessions use **sliding-window context
-compression** instead of hitting a wall; a missing or unplugged microphone gets a warn +
-retry every 30 s instead of a reconnect death-loop; and reconnects back off exponentially.
-A tool-discipline prompt layer keeps voice honest — every claimed action must be a real
-tool call, so "I've sent it" means it was sent.
+The recommended `MIKO_VOICE_ENGINE=chat` path routes voice through the same brain as the
+Chat UI (mic → VAD → STT → `chat()` → neural TTS) on **any provider** — full memory,
+watches, approvals, and tool fixes included — at the cost of a few seconds per turn. It
+also supports local OpenAI-compatible servers such as LM Studio via
+`MIKO_VOICE_BASE_URL` / `MIKO_VOICE_API_KEY`.
 
-Prefer one brain everywhere? `MIKO_VOICE_ENGINE=chat` routes voice through the same
-pipeline as the Chat UI (mic → VAD → STT → `chat()` → neural TTS) on **any provider** —
-full memory, watches, and tool fixes included — at the cost of a few seconds per turn.
+The older **Gemini Live** engine is still available for native realtime audio. It is
+hardened where realtime voice actually breaks: when the connection drops, the session
+**resumes with its context intact** (resumption handles) instead of starting over; long
+sessions use **sliding-window context compression** instead of hitting a wall; a missing
+or unplugged microphone gets a warn + retry every 30 s instead of a reconnect death-loop;
+and reconnects back off exponentially.
+
+A tool-discipline prompt layer keeps voice honest — every claimed action must be a real
+tool call, so "I've sent it" means it was sent. For local/small-context models,
+`MIKO_VOICE_COMPACT_TOOLS=true` trims the voice tool schema to everyday spoken controls;
+set it to `false` for the full tool list when your model has enough context.
+`MIKO_VOICE_INTERRUPT=true` plus `MIKO_VOICE_INTERRUPT_MODE=speech` lets you cut off a long
+spoken answer naturally; lower `MIKO_VOICE_INTERRUPT_SENSITIVITY` or use `phrase` mode for
+noisy rooms.
 
 ### Email, browser, scheduled tasks & MCP
 
@@ -676,10 +813,11 @@ before each event — as long as Miko (or `start_tools_server.py`) is running.
 ```
 main.py
 ├── Voice engine (MIKO_VOICE_ENGINE)
-│   ├── "live" (default): AudioHandler — Gemini Live WebSocket, session-resume,
+│   ├── "chat" (default/recommended): VoiceChat — mic → VAD → STT → chat brain
+│   │     → edge-tts, any provider/local OpenAI-compatible endpoint
+│   │     (core/voice_chat.py; supports compact voice tools)
+│   └── "live": AudioHandler — Gemini Live WebSocket, session-resume,
 │   │     context compression, no-mic resilience (core/audio_handler.py)
-│   └── "chat": VoiceChat — mic → VAD → STT → chat brain → edge-tts, any provider
-│         (core/voice_chat.py)
 │   ├── ModeManager (ACTIVE / STANDBY / AUTO filtering)
 │   └── CommandRouter (tool dispatch + safety)
 ├── DiscordBot thread (own asyncio loop)
@@ -738,7 +876,23 @@ Windows registry are hard-blocked in code.
 ### Miko doesn't respond to voice
 - Check the microphone under Settings → Sound → Input.
 - Make sure `sounddevice` has microphone access.
-- Confirm `LLM_API_KEY` is correct in `.env`.
+- If `MIKO_VOICE_ENGINE=chat`, confirm `LLM_API_KEY` is set for STT fallback and that
+  the voice brain provider key is set (`OPENROUTER_API_KEY`, `NVIDIA_API_KEY`,
+  `LLM_API_KEY`, etc.).
+- If `MIKO_VOICE_PROVIDER=custom`, confirm the local server is running and
+  `MIKO_VOICE_BASE_URL` points at its OpenAI-compatible `/v1` endpoint.
+
+### Local voice model says `n_keep >= n_ctx`
+- The local context length is too small for Miko's prompt plus tool schema.
+- In LM Studio, raise **Context Length** to at least `16384`; use `32768` for full tools
+  if your GPU can handle the KV cache.
+- Or set `MIKO_VOICE_COMPACT_TOOLS=true` to send the smaller voice tool list.
+
+### Voice model says tools/function calling are unsupported
+- Some local/OpenRouter models are chat-only or classifier/guardrail models.
+- Miko retries without tools when possible, but that turn is talk-only: no volume changes,
+  file operations, Discord messages, or other actions.
+- For full Miko behavior, choose a model/runtime that supports OpenAI-style tool calls.
 
 ### `No module named 'pycaw'`
 ```bash

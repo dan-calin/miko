@@ -113,7 +113,7 @@ def start(command_router) -> None:
     port = int(os.getenv("TOOL_SERVER_PORT", "7832"))
     # Loopback by default: the server exposes shell execution, file I/O and API
     # keys, so it must not be LAN-reachable unless explicitly opted into.
-    host = os.getenv("TOOL_SERVER_HOST", "127.0.0.1")
+    host = (os.getenv("TOOL_SERVER_HOST", "") or "127.0.0.1").strip()
     if host not in ("127.0.0.1", "localhost", "::1") and not os.getenv("TOOL_SERVER_KEY", ""):
         logger.error(
             f"TOOL_SERVER_HOST={host} exposes run_command / file read-write / API keys "
@@ -906,6 +906,26 @@ def _build_app():
     def chat_env_get(_=Depends(_auth)):
         from chat_backend import read_env_keys
         return read_env_keys()
+
+    @app.post("/chat/runtime-model")
+    async def chat_runtime_model(request: Request, _=Depends(_auth)):
+        """Remember the browser-local chat model/key in RAM for voice/phone fallback.
+
+        This does not persist secrets. It only mirrors what /chat/message already
+        learns after a chat turn, but lets the WebUI prime it on load/settings
+        changes so voice can borrow the same OpenRouter key immediately.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            from modules import runtime_model
+            runtime_model.remember(body.get("provider", ""), body.get("model", ""),
+                                   body.get("api_key", ""), body.get("base_url", ""))
+        except Exception:
+            pass
+        return {"ok": True}
 
     @app.get("/chat/settings/schema")
     def chat_settings_schema(_=Depends(_auth)):

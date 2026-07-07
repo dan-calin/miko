@@ -53,7 +53,7 @@ def _print_banner():
     print("   ██║ ╚═╝ ██║██║██║  ██╗╚██████╔╝")
     print("   ╚═╝     ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝ ")
     print()
-    engine = os.getenv("MIKO_VOICE_ENGINE", "live").strip().lower()
+    engine = os.getenv("MIKO_VOICE_ENGINE", "chat").strip().lower()
     print(f"   Personal AI Agent v2.0 — {CONFIG.owner_name}'s Assistant")
     if engine == "chat":
         vp = os.getenv("MIKO_VOICE_PROVIDER", "") or ("minimax" if CONFIG.minimax_api_key else "gemini")
@@ -175,10 +175,10 @@ def main():
     mode_manager   = ModeManager(language=CONFIG.language)
     command_router = CommandRouter(CONFIG, speak_callback=None)
 
-    # Voice engine: "live" (default) = Gemini Live realtime audio — lowest latency.
-    # "chat" = STT → chat_backend brain → TTS; shares all chat fixes and runs on any
-    # provider, but each turn costs a few seconds (kept as an option).
-    engine = os.getenv("MIKO_VOICE_ENGINE", "live").strip().lower()
+    # Voice engine: "chat" (default) = STT -> chat_backend brain -> TTS; shares
+    # all chat fixes and runs on any provider, but each turn costs a few seconds.
+    # "live" = Gemini Live realtime audio, lowest latency but more preview-API churn.
+    engine = os.getenv("MIKO_VOICE_ENGINE", "chat").strip().lower()
     if engine == "chat":
         from core.voice_chat import VoiceChat
         audio_handler = VoiceChat(

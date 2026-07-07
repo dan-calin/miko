@@ -20,9 +20,11 @@ TOOL_DECLARATIONS = [
     {
         "name": "browser_open",
         "description": (
-            "Open a URL in Miko's automation browser and return the page title + visible "
+            "Open a URL in Miko's hidden automation browser and return the page title + visible "
             "text. Use to start driving a site (logging in, filling forms, multi-step flows) "
-            "— more capable than web_search/open_url which only fetch or open externally."
+            "when Miko needs to inspect or interact with it herself. The user cannot see this "
+            "browser. If the user asks to show/open something on their screen, use open_url "
+            "or show_email instead."
         ),
         "parameters": {
             "type": "OBJECT",

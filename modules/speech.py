@@ -139,9 +139,9 @@ def transcribe(audio_bytes: bytes, mime_type: str = "", api_key: str = "",
     if not key:
         logger.warning("transcribe: no Gemini key configured")
         return ""
-    # Default to flash; override to gemini-2.5-flash-lite for faster dictation.
+    # Default to flash-lite for lower voice-turn latency; override for accuracy if needed.
     # (`or`-chain so a blank MIKO_DICTATION_MODEL= line in .env doesn't yield "".)
-    model = model or os.getenv("MIKO_DICTATION_MODEL", "").strip() or "gemini-2.5-flash"
+    model = model or os.getenv("MIKO_DICTATION_MODEL", "").strip() or "gemini-2.5-flash-lite"
 
     instr = ("Transcribe this audio exactly as spoken. Output only the transcription "
              "text, with no commentary, labels, or quotation marks.")

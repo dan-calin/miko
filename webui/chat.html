@@ -971,6 +971,11 @@
   .ib-back { background: none; border: 1px solid var(--border); color: var(--text2);
     border-radius: 4px; padding: 4px 11px; font: inherit; font-size: 11px; cursor: pointer; margin-bottom: 10px; }
   .ib-back:hover { border-color: var(--amber); color: var(--amber); }
+  .ib-actions { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .ib-actions .ib-back { margin-bottom: 0; }
+  .ib-gmail { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 11px; color: var(--text2); text-decoration: none; font-size: 11px; }
+  .ib-gmail:hover { border-color: var(--amber); color: var(--amber); }
   .ib-hdr { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
   .ib-hdr .ib-h-subj { font-size: 13.5px; color: var(--text); font-weight: 600; margin-bottom: 5px; }
   .ib-hdr .ib-h-meta { font-size: 11px; color: var(--text3); font-family: var(--mono); line-height: 1.6; }
@@ -1484,6 +1489,22 @@ function saveCfg() {
   localStorage.setItem('miko_cfg', JSON.stringify(cfg));
   keys[curProvider] = $('#api-key').value;
   localStorage.setItem('miko_keys', JSON.stringify(keys));
+  rememberRuntimeModel();
+}
+
+function rememberRuntimeModel() {
+  try {
+    fetch('/chat/runtime-model', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        provider: curProvider,
+        model: ($('#model') && $('#model').value) || '',
+        api_key: ($('#api-key') && $('#api-key').value) || '',
+        base_url: ($('#base-url') && $('#base-url').value) || ''
+      })
+    }).catch(() => {});
+  } catch (e) {}
 }
 
 async function loadModels() {
@@ -1495,6 +1516,7 @@ async function loadModels() {
   if (!MODELS[curProvider]) curProvider = 'gemini';
   buildMenu();
   applyProvider(curProvider, cfg.model);
+  rememberRuntimeModel();
 }
 
 function buildMenu() {
@@ -3782,7 +3804,15 @@ async function openMessage(uid) {
     ? d.from_name + ' <' + d.from_addr + '>' : (d.from_addr || d.from_name || '');
   if (d.to) hdr.querySelector('.m-to').textContent = d.to;
   hdr.querySelector('.m-date').textContent = d.date || '';
-  reader.innerHTML = back; reader.appendChild(hdr);
+  reader.innerHTML = '';
+  const actions = document.createElement('div'); actions.className = 'ib-actions'; actions.innerHTML = back;
+  if (d.gmail_url) {
+    const gmail = document.createElement('a'); gmail.className = 'ib-gmail';
+    gmail.href = d.gmail_url; gmail.target = '_blank'; gmail.rel = 'noopener';
+    gmail.textContent = 'Open in Gmail';
+    actions.appendChild(gmail);
+  }
+  reader.append(actions, hdr);
   $('#ib-back').addEventListener('click', showInboxList);
 
   // Body — render HTML in a sandboxed iframe (no scripts run), with a plain-text

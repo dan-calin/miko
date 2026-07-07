@@ -26,7 +26,8 @@ TOOL_DECLARATIONS = [
         "description": (
             "List recent emails from the inbox (newest first): sender, subject, date. "
             "Use for 'check my email', 'what's in my inbox', 'any new mail'. Set "
-            "unread_only=true for just unread."
+            "unread_only=true for just unread. Keep the user-facing reply compact: "
+            "usually one best match or up to three short matches unless asked for more."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -38,7 +39,11 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "read_email",
-        "description": "Read the full body of an email matched by a subject keyword or sender.",
+        "description": (
+            "Read the full body of an email matched by a subject keyword or sender. "
+            "Returns text to Miko; if the user asks to show/open it on their screen, "
+            "use show_email instead."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
@@ -48,8 +53,49 @@ TOOL_DECLARATIONS = [
         },
     },
     {
+        "name": "show_email",
+        "description": (
+            "Find an email by subject/sender/body keyword and open it in the user's "
+            "visible desktop browser. For Gmail mailboxes this opens the matching "
+            "Gmail conversation link when possible, and also renders a local HTML "
+            "fallback viewer. Use this when the user says 'show me that email', "
+            "'open the email on my screen', or wants to see email details themselves. "
+            "This does NOT use Miko's hidden automation browser. After calling this, "
+            "only confirm it opened; do not summarize the email body unless asked."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "query": {"type": "STRING", "description": "A keyword from the subject, sender, or body."}
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "open_email_link",
+        "description": (
+            "Find an email by subject/sender/body keyword, inspect its original HTML, "
+            "and open a matching button/link from inside it in the user's visible browser. "
+            "Use this when the user says 'show me the post', 'open the View Message button', "
+            "'open the link from that email', 'view the Nextdoor post', or wants the website "
+            "behind an email notification rather than the email itself. For link_text use "
+            "phrases like 'View Message', 'View Post', 'See more', 'Apply', or 'Reply'."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "query": {"type": "STRING", "description": "Keyword to identify the email: subject, sender, or body text."},
+                "link_text": {"type": "STRING", "description": "Optional visible link/button text to prefer, e.g. View Post."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "search_emails",
-        "description": "Search the mailbox for emails matching keywords (subject/body/sender).",
+        "description": (
+            "Search the mailbox for emails matching keywords (subject/body/sender). "
+            "Keep the user-facing reply compact: one best match or up to three short matches."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {"query": {"type": "STRING", "description": "Search terms."}},
@@ -173,11 +219,17 @@ def list_emails(limit: int = 10, unread_only: bool = False, folder: str = "INBOX
             return "No emails found." if not unread_only else "No unread emails."
         lines = [f"{'Unread' if unread_only else 'Recent'} emails:"]
         for n, i in enumerate(ids, 1):
-            typ, md = M.fetch(i, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
-            hdr = _email.message_from_bytes(md[0][1])
+            typ, md = M.fetch(i, "(X-GM-THRID X-GM-MSGID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)])")
+            meta, hdr_bytes = _split_fetch_response(md)
+            hdr = _email.message_from_bytes(hdr_bytes)
             frm = parseaddr(_dec(hdr.get("From", "")))[1] or _dec(hdr.get("From", ""))
             subj = _dec(hdr.get("Subject", "(no subject)"))
+            gmail_url = _gmail_message_url(hdr, _parse_gmail_fetch_attrs(meta))
             date = _dec(hdr.get("Date", ""))[:25]
+            if gmail_url:
+                lines.append(f"{n}. {subj} - {frm} ({date})")
+                lines.append(f"   Gmail: {gmail_url}")
+                continue
             lines.append(f"{n}. {subj} — {frm} ({date})")
         return "\n".join(lines)
     except Exception as e:
@@ -207,11 +259,16 @@ def read_email(query: str) -> str:
             ids = data[0].split()
         if not ids:
             return f"No email matching '{query}'."
-        typ, md = M.fetch(ids[-1], "(RFC822)")
-        msg = _email.message_from_bytes(md[0][1])
+        typ, md = M.fetch(ids[-1], "(X-GM-THRID X-GM-MSGID RFC822)")
+        meta, msg_bytes = _split_fetch_response(md)
+        msg = _email.message_from_bytes(msg_bytes)
+        gmail_ids = _parse_gmail_fetch_attrs(meta)
         frm = _dec(msg.get("From", ""))
         subj = _dec(msg.get("Subject", "(no subject)"))
         body = _body_text(msg).strip()
+        gmail_url = _gmail_message_url(msg, gmail_ids)
+        if gmail_url:
+            body = f"Gmail: {gmail_url}\n\n{body}"
         if len(body) > 2000:
             body = body[:2000] + "\n… (truncated)"
         return f"From: {frm}\nSubject: {subj}\n\n{body}"
@@ -224,6 +281,354 @@ def read_email(query: str) -> str:
                 M.logout()
             except Exception:
                 pass
+
+
+def _find_email_message(query: str):
+    """Return (message, sequence_id, gmail_ids) for the newest email matching query."""
+    import email as _email
+
+    q = (query or "").strip()
+    if not q:
+        return None, None, {}
+
+    M = _imap()
+    try:
+        M.select("INBOX", readonly=True)
+        ids = []
+        for field in ("TEXT", "FROM", "SUBJECT"):
+            try:
+                typ, data = M.search(None, field, f'"{q}"')
+                ids = data[0].split() if data and data[0] else []
+            except Exception:
+                ids = []
+            if ids:
+                break
+        if not ids:
+            return None, None, {}
+        seq_id = ids[-1]
+        typ, md = M.fetch(seq_id, "(X-GM-THRID X-GM-MSGID BODY.PEEK[])")
+        if not md or not md[0]:
+            return None, None, {}
+        meta, msg_bytes = _split_fetch_response(md)
+        return _email.message_from_bytes(msg_bytes), seq_id, _parse_gmail_fetch_attrs(meta)
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+
+
+def _split_fetch_response(md) -> tuple[bytes, bytes]:
+    """Return (metadata, message/header bytes) from imaplib's mixed FETCH response."""
+    meta = b""
+    payload = b""
+    for part in md or []:
+        if isinstance(part, tuple):
+            meta += part[0] or b""
+            payload = part[1] or payload
+        elif isinstance(part, (bytes, bytearray)):
+            meta += bytes(part)
+    return meta, payload
+
+
+def _parse_gmail_fetch_attrs(meta: bytes) -> dict:
+    """Parse Gmail IMAP extension attrs from a FETCH metadata blob."""
+    text = (meta or b"").decode("ascii", "ignore")
+    out = {}
+    for key in ("X-GM-THRID", "X-GM-MSGID"):
+        m = re.search(rf"\b{key}\s+(\d+)", text, flags=re.IGNORECASE)
+        if m:
+            out[key.lower().replace("x-gm-", "")] = m.group(1)
+    return out
+
+
+def _gmail_search_url(msg) -> str:
+    import urllib.parse
+
+    message_id = (msg.get("Message-ID") or msg.get("Message-Id") or "").strip().strip("<>")
+    if message_id:
+        query = f"rfc822msgid:{message_id}"
+    else:
+        subject = _dec(msg.get("Subject", ""))
+        _, addr = parseaddr(_dec(msg.get("From", "")))
+        query = " ".join(x for x in (f'from:{addr}' if addr else "", subject) if x)
+    return "https://mail.google.com/mail/u/0/#search/" + urllib.parse.quote(query, safe="")
+
+
+def _gmail_thread_url(gmail_ids: dict, label: str = "inbox") -> str:
+    try:
+        thrid = int((gmail_ids or {}).get("thrid") or 0)
+    except (TypeError, ValueError):
+        thrid = 0
+    if not thrid:
+        return ""
+    return f"https://mail.google.com/mail/u/0/#{label}/{thrid:x}"
+
+
+def _gmail_message_url(msg, gmail_ids: dict | None = None) -> str:
+    return _gmail_thread_url(gmail_ids or {}) or _gmail_search_url(msg)
+
+
+def _norm_link_text(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _extract_email_links(msg) -> list[dict]:
+    """Extract visible links/buttons from the original HTML part of an email."""
+    from html.parser import HTMLParser
+    from urllib.parse import urljoin
+
+    _text, html, _inline, _atts = _collect(msg)
+    links: list[dict] = []
+
+    class LinkParser(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.current = None
+
+        def handle_starttag(self, tag, attrs):
+            attr = {k.lower(): (v or "") for k, v in attrs}
+            if tag.lower() == "a" and attr.get("href"):
+                self.current = {"url": attr["href"].strip(), "parts": []}
+            elif tag.lower() == "img" and self.current and attr.get("alt"):
+                self.current["parts"].append(attr["alt"])
+
+        def handle_data(self, data):
+            if self.current and data:
+                self.current["parts"].append(data)
+
+        def handle_endtag(self, tag):
+            if tag.lower() == "a" and self.current:
+                url = (self.current.get("url") or "").strip()
+                label = _norm_link_text(" ".join(self.current.get("parts") or []))
+                if url and not url.lower().startswith(("mailto:", "tel:", "cid:")):
+                    links.append({"label": label or url, "url": urljoin("https://mail.google.com/", url)})
+                self.current = None
+
+    if html:
+        try:
+            p = LinkParser()
+            p.feed(html)
+        except Exception:
+            pass
+
+    # Some transactional email HTML is malformed enough that HTMLParser misses hrefs.
+    seen = {x["url"] for x in links}
+    for href in re.findall(r'href\s*=\s*["\']([^"\']+)["\']', html or "", flags=re.IGNORECASE):
+        href = href.strip()
+        if href and href not in seen and not href.lower().startswith(("mailto:", "tel:", "cid:")):
+            links.append({"label": href, "url": href})
+            seen.add(href)
+    return links
+
+
+def _score_email_link(link: dict, wanted: str = "") -> int:
+    label = _norm_link_text(link.get("label", ""))
+    url = (link.get("url") or "").lower()
+    hay = f"{label} {url}"
+    if not url.startswith(("http://", "https://")):
+        return -1000
+    bad = (
+        "unsubscribe", "manage preferences", "email preferences", "notification settings",
+        "privacy", "terms", "help center", "view in browser", "view online",
+    )
+    if any(b in hay for b in bad):
+        return -200
+
+    score = 0
+    wanted = _norm_link_text(wanted)
+    aliases = {
+        "post": ("view post", "post", "see more", "read more", "open post"),
+        "message": ("view message", "message", "reply", "respond"),
+        "reply": ("reply", "respond", "view message"),
+        "apply": ("apply", "view job", "job", "application"),
+    }
+    wanted_terms = aliases.get(wanted, (wanted,)) if wanted else ()
+    if wanted_terms:
+        for term in wanted_terms:
+            if term and term in hay:
+                score += 100
+    else:
+        for term in ("view message", "view post", "see more", "read more", "reply", "apply", "view job", "open"):
+            if term in label:
+                score += 50
+
+    if label in ("view message", "view post", "see more", "read more", "reply", "apply"):
+        score += 40
+    if "button" in hay or any(x in label for x in ("view", "post", "message", "reply", "apply")):
+        score += 10
+    return score
+
+
+def _pick_email_link(links: list[dict], link_text: str = "") -> dict | None:
+    if not links:
+        return None
+    ranked = sorted(links, key=lambda x: _score_email_link(x, link_text), reverse=True)
+    return ranked[0] if _score_email_link(ranked[0], link_text) > -100 else None
+
+
+def _write_visible_email(msg, query: str, gmail_ids: dict | None = None) -> str:
+    import html as _html
+    from datetime import datetime
+    from pathlib import Path
+    from config import CONFIG
+
+    CONFIG.data_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = CONFIG.data_dir / "email_views"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    name, addr = parseaddr(_dec(msg.get("From", "")))
+    subject = _dec(msg.get("Subject", "(no subject)"))
+    date = _dec(msg.get("Date", ""))
+    to = _dec(msg.get("To", ""))
+    body = _body_text(msg).strip() or "(no text content)"
+    if len(body) > 50000:
+        body = body[:50000] + "\n... (truncated)"
+
+    attachments = []
+    try:
+        for part in msg.walk():
+            filename = part.get_filename()
+            if filename:
+                attachments.append(_dec(filename))
+    except Exception:
+        attachments = []
+
+    gmail_url = _gmail_thread_url(gmail_ids or {})
+    gmail_search_url = _gmail_search_url(msg)
+    safe_subject = re.sub(r"[^A-Za-z0-9._-]+", "_", subject).strip("_")[:60] or "email"
+    path = out_dir / f"{datetime.now():%Y%m%d_%H%M%S}_{safe_subject}.html"
+    attachment_html = ""
+    if attachments:
+        items = "\n".join(f"<li>{_html.escape(a)}</li>" for a in attachments)
+        attachment_html = f"<section><h2>Attachments</h2><ul>{items}</ul></section>"
+
+    html_doc = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{_html.escape(subject)}</title>
+<style>
+  :root {{ color-scheme: light; font-family: Segoe UI, Arial, sans-serif; }}
+  body {{ margin: 0; background: #f5f7fb; color: #111827; }}
+  main {{ max-width: 980px; margin: 32px auto; background: #fff; border: 1px solid #d9dee8; border-radius: 8px; padding: 28px; }}
+  h1 {{ font-size: 24px; line-height: 1.25; margin: 0 0 18px; }}
+  h2 {{ font-size: 16px; margin: 24px 0 8px; }}
+  .meta {{ display: grid; gap: 6px; color: #374151; font-size: 14px; border-bottom: 1px solid #e5e7eb; padding-bottom: 18px; }}
+  .meta b {{ color: #111827; }}
+  .body {{ white-space: pre-wrap; font-size: 16px; line-height: 1.55; margin-top: 22px; }}
+  a {{ color: #0f62fe; }}
+</style>
+</head>
+<body>
+<main>
+  <h1>{_html.escape(subject)}</h1>
+  <div class="meta">
+    <div><b>From:</b> {_html.escape(name or addr or _dec(msg.get("From", "")))} {_html.escape(f"<{addr}>" if addr else "")}</div>
+    <div><b>To:</b> {_html.escape(to)}</div>
+    <div><b>Date:</b> {_html.escape(date)}</div>
+    <div><b>Matched query:</b> {_html.escape(query)}</div>
+    {f'<div><b>Gmail:</b> <a href="{_html.escape(gmail_url)}">{_html.escape(gmail_url)}</a></div>' if gmail_url else ''}
+    <div><b>Gmail search:</b> <a href="{_html.escape(gmail_search_url)}">{_html.escape(gmail_search_url)}</a></div>
+  </div>
+  <section class="body">{_html.escape(body)}</section>
+  {attachment_html}
+</main>
+</body>
+</html>
+"""
+    path.write_text(html_doc, encoding="utf-8")
+    return str(path)
+
+
+def show_email(query: str) -> str:
+    cfg = _Cfg()
+    if not cfg.imap_ready():
+        return "Email isn't configured. Set EMAIL_USER / EMAIL_PASS / EMAIL_IMAP_HOST in .env."
+    query = (query or "").strip()
+    if not query:
+        return "Which email should I show?"
+    try:
+        msg, _seq_id, gmail_ids = _find_email_message(query)
+        if msg is None:
+            return f"No email matching '{query}'."
+        path = _write_visible_email(msg, query, gmail_ids)
+        gmail_url = _gmail_message_url(msg, gmail_ids)
+        opened = gmail_url or path
+        try:
+            if os.name == "nt":
+                os.startfile(opened)
+            else:
+                import webbrowser
+                from pathlib import Path
+                webbrowser.open(opened if gmail_url else Path(path).as_uri())
+        except Exception as e:
+            return f"Rendered the email to {path}, but couldn't open it on screen: {e}"
+        subj = _dec(msg.get("Subject", "(no subject)"))
+        frm = _dec(msg.get("From", ""))
+        if gmail_url:
+            return (
+                f"Opened on your screen: {subj} - {frm}\n"
+                f"Gmail: {gmail_url}\nLocal viewer: {path}\n"
+                "Reply guidance: only say that it is open on screen unless the user asks for details. "
+                "If the user asks for a button/link/post/message from this email, call open_email_link "
+                f"with query={subj!r}."
+            )
+        return (
+            f"Opened on your screen: {subj} — {frm}\nLocal viewer: {path}\n"
+            "Reply guidance: only say that it is open on screen unless the user asks for details. "
+            "If the user asks for a button/link/post/message from this email, call open_email_link "
+            f"with query={subj!r}."
+        )
+    except Exception as e:
+        logger.error(f"show_email error: {e}")
+        return f"Couldn't show that email: {e}"
+
+
+def open_email_link(query: str, link_text: str = "") -> str:
+    cfg = _Cfg()
+    if not cfg.imap_ready():
+        return "Email isn't configured. Set EMAIL_USER / EMAIL_PASS / EMAIL_IMAP_HOST in .env."
+    query = (query or "").strip()
+    link_text = (link_text or "").strip()
+    if not query:
+        return "Which email should I inspect for a link?"
+    try:
+        msg, _seq_id, _gmail_ids = _find_email_message(query)
+        if msg is None:
+            return f"No email matching '{query}'."
+        links = _extract_email_links(msg)
+        picked = _pick_email_link(links, link_text)
+        if not picked:
+            shown = []
+            for link in links[:8]:
+                label = (link.get("label") or link.get("url") or "").strip()
+                if label:
+                    shown.append(f"- {label[:80]}")
+            suffix = "\nLinks I found:\n" + "\n".join(shown) if shown else ""
+            return f"I couldn't find a matching link/button in that email.{suffix}"
+
+        url = picked["url"]
+        try:
+            if os.name == "nt":
+                os.startfile(url)
+            else:
+                import webbrowser
+                webbrowser.open(url)
+        except Exception as e:
+            return f"Found the link, but couldn't open it: {e}\n{url}"
+
+        subj = _dec(msg.get("Subject", "(no subject)"))
+        label = picked.get("label") or link_text or "link"
+        return (
+            f"Opened email link on your screen: {label}\n"
+            f"From email: {subj}\nURL: {url}\n"
+            "Reply guidance: only say that it is open on screen unless the user asks for details."
+        )
+    except Exception as e:
+        logger.error(f"open_email_link error: {e}")
+        return f"Couldn't open a link from that email: {e}"
 
 
 def search_emails(query: str) -> str:
@@ -241,10 +646,14 @@ def search_emails(query: str) -> str:
             return f"No emails matching '{query}'."
         lines = [f"Emails matching '{query}':"]
         for i in ids:
-            typ, md = M.fetch(i, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
-            hdr = _email.message_from_bytes(md[0][1])
+            typ, md = M.fetch(i, "(X-GM-THRID X-GM-MSGID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)])")
+            meta, hdr_bytes = _split_fetch_response(md)
+            hdr = _email.message_from_bytes(hdr_bytes)
             frm = parseaddr(_dec(hdr.get("From", "")))[1]
             lines.append(f"- {_dec(hdr.get('Subject', '(no subject)'))} — {frm}")
+            gmail_url = _gmail_message_url(hdr, _parse_gmail_fetch_attrs(meta))
+            if gmail_url:
+                lines.append(f"  Gmail: {gmail_url}")
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"search_emails error: {e}")
@@ -359,20 +768,15 @@ def inbox_view(limit: int = 25, unread_only: bool = False, folder: str = "INBOX"
         uids = (data[0].split() if data and data[0] else [])[-limit:][::-1]
         msgs = []
         for uid in uids:
-            typ, md = M.uid("FETCH", uid, "(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+            typ, md = M.uid("FETCH", uid, "(FLAGS X-GM-THRID X-GM-MSGID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)])")
             if not md:
                 continue
-            meta, hdr_bytes = b"", b""
-            for part in md:
-                if isinstance(part, tuple):
-                    meta += part[0] or b""
-                    hdr_bytes = part[1] or hdr_bytes
-                elif isinstance(part, (bytes, bytearray)):
-                    meta += part
+            meta, hdr_bytes = _split_fetch_response(md)
             unread = "\\Seen" not in meta.decode("utf-8", "replace")
             hdr = _email.message_from_bytes(hdr_bytes)
             name, addr = parseaddr(_dec(hdr.get("From", "")))
             raw_date = _dec(hdr.get("Date", ""))
+            gmail_ids = _parse_gmail_fetch_attrs(meta)
             msgs.append({
                 "uid": uid.decode() if isinstance(uid, (bytes, bytearray)) else str(uid),
                 "from_name": name or addr or _dec(hdr.get("From", "")),
@@ -381,6 +785,7 @@ def inbox_view(limit: int = 25, unread_only: bool = False, folder: str = "INBOX"
                 "date": raw_date[:31],
                 "ts": _parse_ts(hdr.get("Date", "")),
                 "unread": unread,
+                "gmail_url": _gmail_message_url(hdr, gmail_ids),
             })
         return {"messages": msgs, "account": cfg.user, "folder": folder}
     except Exception as e:
@@ -474,10 +879,12 @@ def message_view(uid: str, folder: str = "INBOX") -> dict:
     try:
         M = _imap()
         M.select(folder, readonly=True)
-        typ, md = M.uid("FETCH", uid, "(BODY.PEEK[])")
+        typ, md = M.uid("FETCH", uid, "(X-GM-THRID X-GM-MSGID BODY.PEEK[])")
         if not md or not md[0]:
             return {"error": "Message not found."}
-        msg = _email.message_from_bytes(md[0][1])
+        meta, msg_bytes = _split_fetch_response(md)
+        msg = _email.message_from_bytes(msg_bytes)
+        gmail_ids = _parse_gmail_fetch_attrs(meta)
         name, addr = parseaddr(_dec(msg.get("From", "")))
         text, html, inline, atts = _collect(msg)
         html = _inline_cids(html, inline)
@@ -503,6 +910,7 @@ def message_view(uid: str, folder: str = "INBOX") -> dict:
             "html": html,
             "has_html": bool(html),
             "attachments": atts,
+            "gmail_url": _gmail_message_url(msg, gmail_ids),
         }
     except Exception as e:
         logger.error(f"message_view error: {e}")

@@ -300,6 +300,14 @@ class CommandRouter:
                 from modules.email_box import read_email
                 return read_email(**args)
 
+            if tool_name == "show_email":
+                from modules.email_box import show_email
+                return show_email(**args)
+
+            if tool_name == "open_email_link":
+                from modules.email_box import open_email_link
+                return open_email_link(**args)
+
             if tool_name == "search_emails":
                 from modules.email_box import search_emails
                 return search_emails(**args)
