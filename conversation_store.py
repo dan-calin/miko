@@ -92,17 +92,21 @@ def append_user(cid: str, user_msg: str, attachments: list | None = None) -> Non
 
 
 def append_assistant(cid: str, assistant_msg: str,
-                     tools: list | None = None, files: list | None = None) -> None:
+                     tools: list | None = None, files: list | None = None,
+                     pending: list | None = None) -> None:
     """Attach the assistant's reply to the conversation when the turn completes."""
     with _lock:
         conv = _load(cid) or {
             "id": _safe_id(cid), "title": _title_from(assistant_msg),
             "created": _now(), "messages": [],
         }
-        conv["messages"].append({
+        msg = {
             "id": _new_msg_id(), "role": "assistant", "content": assistant_msg, "ts": _now(),
             "tools": tools or [], "files": files or [],
-        })
+        }
+        if pending:
+            msg["pending"] = pending
+        conv["messages"].append(msg)
         conv["updated"] = _now()
         _write(conv)
 
@@ -152,6 +156,15 @@ def history_for_model(cid: str, limit: int = _MAX_MODEL_HISTORY) -> list:
             names = list(dict.fromkeys(t for t in (m.get("tools") or []) if isinstance(t, str)))
             if names:
                 content = f"{content}\n[Done by calling: {', '.join(names)}]"
+            approvals = []
+            for a in (m.get("pending") or []):
+                if not isinstance(a, dict):
+                    continue
+                aid = a.get("id") or "approval"
+                status = a.get("status") or "pending"
+                approvals.append(f"{aid}: {status}")
+            if approvals:
+                content = f"{content}\n[Approval actions: {', '.join(approvals)}]"
         elif m.get("role") == "user" and m.get("attachments"):
             # The visible content omits extracted file text; fold the overviews back in
             # so the model keeps the document context on follow-up turns.
@@ -206,6 +219,62 @@ def annotate_latest(cid: str, role: str, fields: dict) -> bool:
         for m in reversed(conv.get("messages", [])):
             if m.get("role") == role:
                 m.update(fields)
+                conv["updated"] = _now()
+                _write(conv)
+                return True
+    return False
+
+
+def get_pending_action(cid: str, action_id: str) -> dict | None:
+    """Return a pending approval action by id from a conversation transcript."""
+    action_id = (action_id or "").strip()
+    if not action_id:
+        return None
+    with _lock:
+        conv = _load(cid)
+        if not conv:
+            return None
+        for m in reversed(conv.get("messages", [])):
+            if m.get("role") != "assistant":
+                continue
+            for a in (m.get("pending") or []):
+                if not isinstance(a, dict):
+                    continue
+                if a.get("id") == action_id and (a.get("status") or "pending") == "pending":
+                    return dict(a)
+    return None
+
+
+def mark_pending_action(cid: str, action_id: str, status: str,
+                        result: str = "", files: list | None = None) -> bool:
+    """Persist an approval-card state change so reloads do not resurrect it."""
+    action_id = (action_id or "").strip()
+    status = (status or "").strip()
+    if not action_id or status not in {"applied", "denied", "failed"}:
+        return False
+    with _lock:
+        conv = _load(cid)
+        if not conv:
+            return False
+        _ensure_message_ids(conv)
+        for m in reversed(conv.get("messages", [])):
+            if m.get("role") != "assistant":
+                continue
+            changed = False
+            for a in (m.get("pending") or []):
+                if not isinstance(a, dict) or a.get("id") != action_id:
+                    continue
+                if (a.get("status") or "pending") != "pending":
+                    return False
+                a["status"] = status
+                a["resolved_at"] = _now()
+                if result:
+                    a["result"] = result
+                if files:
+                    a["files"] = files
+                changed = True
+                break
+            if changed:
                 conv["updated"] = _now()
                 _write(conv)
                 return True

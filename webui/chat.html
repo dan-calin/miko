@@ -1792,13 +1792,24 @@ function approvalCard(a) {
   const no = document.createElement('button'); no.className = 'ap-deny'; no.type = 'button'; no.textContent = 'Deny';
   const status = document.createElement('span'); status.className = 'ap-status';
   acts.append(ok, no, status); card.appendChild(acts);
+  const state = a.status || 'pending';
+  if (state !== 'pending') {
+    ok.remove(); no.remove();
+    card.classList.add(state === 'applied' ? 'done' : state);
+    status.textContent = state === 'applied' ? '✓ applied' : state === 'denied' ? '✕ denied' : '✕ failed';
+    if (a.files && a.files.length) {
+      const fl = document.createElement('div'); fl.className = 'files'; card.appendChild(fl);
+      renderFileChips(fl, a.files);
+    }
+    return card;
+  }
 
   ok.addEventListener('click', async () => {
     ok.disabled = no.disabled = true; status.textContent = 'applying…';
     try {
       const res = await (await fetch('/chat/approve', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tool: a.tool, args: a.args }),
+        body: JSON.stringify({ session_id: sessionId, action_id: a.id, tool: a.tool, args: a.args }),
       })).json();
       if (res.error) { status.textContent = '✗ ' + res.error; ok.disabled = no.disabled = false; return; }
       card.classList.add('done'); status.textContent = '✓ applied';
@@ -1809,9 +1820,17 @@ function approvalCard(a) {
       }
     } catch (e) { status.textContent = '✗ ' + e.message; ok.disabled = no.disabled = false; }
   });
-  no.addEventListener('click', () => {
-    card.classList.add('denied'); status.textContent = '✗ denied';
-    acts.querySelectorAll('button').forEach(b => b.remove());
+  no.addEventListener('click', async () => {
+    ok.disabled = no.disabled = true; status.textContent = 'denying…';
+    try {
+      const res = await (await fetch('/chat/deny', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, action_id: a.id }),
+      })).json();
+      if (res.error) { status.textContent = '✗ ' + res.error; ok.disabled = no.disabled = false; return; }
+      card.classList.add('denied'); status.textContent = '✗ denied';
+      acts.querySelectorAll('button').forEach(b => b.remove());
+    } catch (e) { status.textContent = '✗ ' + e.message; ok.disabled = no.disabled = false; }
   });
   return card;
 }
@@ -2154,7 +2173,7 @@ async function send(queuedItem) {
     // If the user switched away and back during this turn, the live card was detached
     // and the reply landed in orphaned nodes — re-render this conversation from the
     // server so the reply actually shows (no manual refresh needed).
-    if (turnSession === sessionId && !document.body.contains(c.card)) openConversation(sessionId, true);
+    if (turnSession === sessionId) await openConversation(sessionId, true);
     drainChatQueue();
   }
 }
@@ -2302,7 +2321,7 @@ async function sendResearch(text) {
     curAbort = null; setBusy(false); chatEl.scrollTop = chatEl.scrollHeight; input.focus();
     _activeTurn = null;
     loadConversations();
-    if (turnSession === sessionId && !document.body.contains(c.card)) openConversation(sessionId, true);
+    if (turnSession === sessionId) await openConversation(sessionId, true);
   }
 }
 
@@ -3011,10 +3030,11 @@ async function openConversation(id, force) {
     lastMsg = m;
     if (m.role === 'user') addUser(m.content, m.ts, m.attachments, m);
     else {
-      const { tx, tl, fl, st } = addBot(m);
+      const { tx, tl, fl, pn, st } = addBot(m);
       renderBotText(tx, m.content || '');
       if (m.tools && m.tools.length) tl.innerHTML = m.tools.map(t => `<span class="chip"><span class="di">◈</span>${t}</span>`).join('');
       renderFileChips(fl, m.files);
+      if (m.pending && m.pending.length) renderPending(pn, m.pending);
       st.textContent = fmtTime(stampFrom(m.ts));
     }
   });

@@ -265,7 +265,12 @@ def revert_to(repo: str, snap: str, extra_paths: list | None = None) -> bool:
         return False
     _git(repo, "checkout", "--force", snap, "--", ".")
     _git(repo, "clean", "-fdq")   # remove files created after the snapshot (respects .gitignore)
-    _remove_created_paths(repo, snap, extra_paths)
+    added_paths = []
+    for item in changed_since(repo, snap):
+        status, _, path = item.partition(" ")
+        if status.startswith("A") and path:
+            added_paths.append(path)
+    _remove_created_paths(repo, snap, list(extra_paths or []) + added_paths)
     return not changed_since(repo, snap)   # success = working tree now matches the snapshot
 
 

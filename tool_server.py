@@ -444,14 +444,20 @@ def _build_app():
     async def chat_approve(request: Request, _=Depends(_auth)):
         """Execute an action the user approved in the Chat UI (file write/command/…)."""
         from chat_backend import _needs_approval, _collect_files
+        import conversation_store as convo
         if _router is None:
             raise HTTPException(status_code=503, detail="Router not initialised")
         try:
             body = await request.json()
         except Exception:
             body = {}
-        name = (body.get("tool") or "").strip()
-        args = body.get("args") or {}
+        sid = (body.get("session_id") or "").strip()
+        action_id = (body.get("action_id") or "").strip()
+        stored = convo.get_pending_action(sid, action_id) if sid and action_id else None
+        if action_id and not stored:
+            return JSONResponse({"error": "This approval is no longer pending."}, status_code=409)
+        name = ((stored or {}).get("tool") or body.get("tool") or "").strip()
+        args = (stored or {}).get("args") or body.get("args") or {}
         if not isinstance(args, dict):
             args = {}
         if not name or not _needs_approval(name, args):
@@ -460,17 +466,39 @@ def _build_app():
         # paths / permanently-blocked tools must still be rejected here.
         safe, reason = _router._safety_check(name, args)
         if not safe:
+            if sid and action_id:
+                convo.mark_pending_action(sid, action_id, "failed", f"Blocked for safety: {reason}")
             return JSONResponse({"error": f"Blocked for safety: {reason}"}, status_code=403)
         try:
             result = str(_router._dispatch_module(name, args))
         except Exception as e:
+            if sid and action_id:
+                convo.mark_pending_action(sid, action_id, "failed", str(e))
             return JSONResponse({"error": str(e)}, status_code=500)
         files: list = []
         try:
             _collect_files(name, args, result, files)
         except Exception:
             pass
+        if sid and action_id:
+            convo.mark_pending_action(sid, action_id, "applied", result, files)
         return {"ok": True, "result": result, "files": files}
+
+    @app.post("/chat/deny")
+    async def chat_deny(request: Request, _=Depends(_auth)):
+        """Mark an approval action denied so it stays denied after reload."""
+        import conversation_store as convo
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        sid = (body.get("session_id") or "").strip()
+        action_id = (body.get("action_id") or "").strip()
+        if not sid or not action_id:
+            return JSONResponse({"error": "Missing session_id or action_id."}, status_code=400)
+        if not convo.mark_pending_action(sid, action_id, "denied"):
+            return JSONResponse({"error": "This approval is no longer pending."}, status_code=409)
+        return {"ok": True}
 
     @app.post("/chat/research")
     async def chat_research(request: Request, _=Depends(_auth)):
@@ -1254,6 +1282,26 @@ def _build_app():
         if not msg:
             return JSONResponse({"error": "Message not found."}, status_code=404)
         include_target = msg.get("role") != "user"
+        def _message_file_paths(m: dict) -> list[str]:
+            paths: list[str] = []
+            for f in m.get("files") or []:
+                if isinstance(f, dict) and f.get("path"):
+                    paths.append(str(f["path"]))
+            for a in m.get("pending") or []:
+                if not isinstance(a, dict):
+                    continue
+                if a.get("path"):
+                    paths.append(str(a["path"]))
+                args = a.get("args") or {}
+                if isinstance(args, dict):
+                    for key in ("path", "destination"):
+                        if args.get(key):
+                            paths.append(str(args[key]))
+                for f in a.get("files") or []:
+                    if isinstance(f, dict) and f.get("path"):
+                        paths.append(str(f["path"]))
+            return paths
+
         extra_paths = []
         try:
             conv = convo.get_conversation(cid) or {}
@@ -1262,9 +1310,7 @@ def _build_app():
             if idx >= 0:
                 keep_count = idx + 1 if include_target else idx
                 for dropped in msgs[keep_count:]:
-                    for f in dropped.get("files") or []:
-                        if isinstance(f, dict) and f.get("path"):
-                            extra_paths.append(f["path"])
+                    extra_paths.extend(_message_file_paths(dropped))
         except Exception:
             extra_paths = []
         restore = msg.get("restore") or {}

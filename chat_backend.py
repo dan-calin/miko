@@ -649,7 +649,7 @@ def _action_preview(name: str, args: dict) -> dict:
     if name == "file_op":
         action = str(args.get("action", "")).lower().strip()
         path = args.get("path", "") or args.get("destination", "")
-        if action == "write":
+        if action in ("write", "create_file"):
             return {"kind": "file", "summary": f"Write {path}", "path": path,
                     "diff": _file_diff(path, args.get("content", ""))}
         if action in ("delete",):
@@ -1274,7 +1274,7 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
         if not ephemeral:
             try:
                 import conversation_store as _convo
-                _convo.append_assistant(session_id, f"⚠ {err}", used, files)
+                _convo.append_assistant(session_id, f"⚠ {err}", used, files, pending)
             except Exception:
                 pass
         return {"reply": "", "tools_used": used, "files": files, "usage": usage,
@@ -1309,7 +1309,7 @@ def chat(router, session_id: str, message: str, provider: str, model: str,
     if not ephemeral:
         try:
             import conversation_store as _convo
-            _convo.append_assistant(session_id, reply or "(stopped)", used, files)
+            _convo.append_assistant(session_id, reply or "(stopped)", used, files, pending)
         except Exception as e:
             logger.warning(f"persist assistant turn failed: {e}")
         if not cancelled:
